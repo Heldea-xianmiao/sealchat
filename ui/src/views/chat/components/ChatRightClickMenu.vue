@@ -1,19 +1,16 @@
 <script setup lang="tsx">
-import { useChatStore } from '@/stores/chat';
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
+import type { User } from '@satorijs/protocol';
+import { useChatStore } from '@/stores/chat';
 import { computed } from 'vue';
 import Element from '@satorijs/element'
-import { db } from '@/models/index';
-import { urlBase } from '@/stores/_config';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
+import { useI18n } from 'vue-i18n';
 
 const chat = useChatStore()
 const message = useMessage()
-
-const alertContextMenuItemClicked = (name: string) => {
-  alert('You clicked ' + name + ' !');
-}
+const { t } = useI18n();
 
 const clickReplyTo = async () => {
   chat.setReplayTo(chat.messageMenu.item)
@@ -70,6 +67,36 @@ const addToMyEmoji = async () => {
     }
   }
 }
+
+const clickWhisper = () => {
+  const data = chat.messageMenu.item as any;
+  if (!data?.user?.id) {
+    message.warning(t('whisper.userUnknown'));
+    return;
+  }
+  if (data.user.id === user.info.id) {
+    message.warning(t('whisper.selfNotAllowed'));
+    return;
+  }
+  const targetUser: User = {
+    id: data.user.id,
+    name: data.user.name || data.user.username || '',
+    nick: data.member?.nick || data.user.nick || data.user.name || '未知成员',
+    avatar: data.member?.avatar || data.user.avatar || '',
+    discriminator: data.user.discriminator || '',
+    is_bot: !!data.user.is_bot,
+  };
+  chat.setWhisperTarget(targetUser);
+  chat.messageMenu.show = false;
+};
+
+const showWhisper = computed(() => {
+  const data = chat.messageMenu.item;
+  if (!data?.user?.id) {
+    return false;
+  }
+  return data.user.id !== user.info.id;
+});
 </script>
 
 <template>
@@ -79,6 +106,7 @@ const addToMyEmoji = async () => {
     <!-- <context-menu-item label="Item with a icon" icon="icon-reload-1" @click="alertContextMenuItemClicked('Item2')" /> -->
     <!-- <context-menu-item label="Test Item" @click="alertContextMenuItemClicked('Item2')" /> -->
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
+    <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
     <context-menu-item label="撤回" @click="clickDelete"
       v-if="chat.messageMenu.item?.user?.id && (chat.messageMenu.item?.user?.id === user.info.id)" />

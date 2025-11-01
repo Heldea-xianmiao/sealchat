@@ -10,10 +10,13 @@ import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
 import Avatar from '@/components/avatar.vue'
+import { Lock } from '@vicons/tabler';
+import { useI18n } from 'vue-i18n';
 
 const user = useUserStore();
 const chat = useChatStore();
 const utils = useUtilsStore();
+const { t } = useI18n();
 
 function timeFormat(time?: string) {
   if (!time) return '未知';
@@ -122,6 +125,30 @@ const props = defineProps({
 const timeText = ref(timeFormat(props.item?.createdAt));
 const timeText2 = ref(timeFormat2(props.item?.createdAt));
 
+const getMemberDisplayName = (item: any) => item?.member?.nick || item?.user?.nick || item?.user?.name || '未知成员';
+const getTargetDisplayName = (item: any) => item?.whisperTo?.nick || item?.whisperTo?.name || '未知成员';
+
+const buildWhisperLabel = (item?: any) => {
+  if (!item?.isWhisper) return '';
+  const senderName = getMemberDisplayName(item);
+  const targetName = getTargetDisplayName(item);
+  const senderLabel = `@${senderName}`;
+  const targetLabel = `@${targetName}`;
+  if (item?.user?.id === user.info.id) {
+    return t('whisper.sendTo', { target: targetLabel });
+  }
+  if (item?.whisperTo?.id === user.info.id) {
+    return t('whisper.from', { sender: senderLabel });
+  }
+  if (item?.whisperTo?.nick || item?.whisperTo?.name) {
+    return t('whisper.sendTo', { target: targetLabel });
+  }
+  return t('whisper.generic');
+};
+
+const whisperLabel = computed(() => buildWhisperLabel(props.item));
+const quoteWhisperLabel = computed(() => buildWhisperLabel((props.item as any)?.quote));
+
 const onContextMenu = (e: MouseEvent, item: any) => {
   e.preventDefault();
   //Set the mouse position
@@ -196,14 +223,26 @@ const nick = computed(() => {
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" @contextmenu="onContextMenu($event, item)">
-        <!-- <div v-html="parseContent(props)" @contextmenu="onContextMenu($event, item)"></div> -->
+      <div class="content break-all relative" @contextmenu="onContextMenu($event, item)"
+        :class="{ 'whisper-content': props.item?.isWhisper }">
         <div>
-          <div v-if="props.item?.quote?.id" class="border-l-4 pl-2 border-blue-500  mb-2">
-            <span v-if="props.item?.quote?.is_revoked" class="text-gray-400">此消息已撤回</span>
-            <span v-else class="text-gray-500">
-              <component :is="parseContent(props.item?.quote)" />
-            </span>
+          <div v-if="whisperLabel" class="whisper-label">
+            <n-icon :component="Lock" size="16" />
+            <span>{{ whisperLabel }}</span>
+          </div>
+          <div v-if="props.item?.quote?.id" class="border-l-4 pl-2 border-blue-500 mb-2">
+            <template v-if="props.item?.quote?.is_revoked">
+              <span class="text-gray-400">此消息已撤回</span>
+            </template>
+            <template v-else>
+              <div v-if="quoteWhisperLabel" class="whisper-label whisper-label--quote">
+                <n-icon :component="Lock" size="14" />
+                <span>{{ quoteWhisperLabel }}</span>
+              </div>
+              <span class="text-gray-500">
+                <component :is="parseContent(props.item?.quote)" />
+              </span>
+            </template>
           </div>
           <component :is="parseContent(props)" />
         </div>
@@ -296,11 +335,65 @@ const nick = computed(() => {
       direction: ltr;
       @apply text-base mt-1 px-4 py-2 relative;
       @apply rounded bg-gray-200 text-gray-900;
+      min-width: 0;
+    }
+
+    >.content.whisper-content {
+      background: linear-gradient(135deg, #1f2937 0%, #312e81 100%);
+      color: #f4f4ff;
+      border: 1px solid rgba(129, 140, 248, 0.4);
+      box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.25);
+    }
+
+    >.content.whisper-content .text-gray-500 {
+      color: #e0e7ff;
     }
   }
 
-  .content img {
-    max-width: min(36vw, 200px);
-  }
+.content img {
+  max-width: min(36vw, 200px);
+}
+}
+
+.whisper-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #1f2937;
+  background: rgba(67, 56, 202, 0.08);
+  border-radius: 9999px;
+  padding: 0.12rem 0.65rem;
+  margin-bottom: 0.4rem;
+}
+
+.whisper-label svg {
+  color: inherit;
+}
+
+.whisper-label--quote {
+  font-size: 0.7rem;
+  color: #4338ca;
+  margin-bottom: 0.25rem;
+}
+
+.whisper-content .whisper-label,
+.whisper-content .whisper-label--quote {
+  color: #f4f4ff;
+  background: rgba(129, 140, 248, 0.22);
+}
+
+.whisper-content .whisper-label--quote {
+  color: #d6bcfa;
+}
+
+.whisper-content .whisper-label svg {
+  color: #ede9fe;
+}
+
+.whisper-content .text-gray-400 {
+  color: #e0e7ff;
 }
 </style>

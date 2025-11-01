@@ -12,7 +12,15 @@
     "placeholder": "type here...",
     "send": "Send",
     "upload": "upload image",
-    "emojiTitle": "Emoji"
+    "emojiTitle": "Emoji",
+    "whisperButton": "Whisper",
+    "whisperTooltip": "Choose a whisper target",
+    "whisperPanelTitle": "Whisper to",
+    "whisperSearchPlaceholder": "Search online members",
+    "whisperEmpty": "No matching members",
+    "whisperPillPrefix": "To:",
+    "whisperPlaceholder": "Whisper to {target}...",
+    "whisperNoOnline": "No members are online in this channel"
   },
   "connectState": {
     "connecting": "Connecting...",
@@ -48,5 +56,13 @@
     "content": "Are you sure you want to log out?",
     "positiveText": "Confirm",
     "negativeText": "Cancel"
+  },
+  "whisper": {
+    "menu": "Send Whisper",
+    "selfNotAllowed": "You can't whisper to yourself",
+    "userUnknown": "Unable to identify this member",
+    "sendTo": "[Whisper] to {target}",
+    "from": "[Whisper] from {sender}",
+    "generic": "[Whisper] private message"
   }
 }

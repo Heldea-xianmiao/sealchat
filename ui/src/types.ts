@@ -14,6 +14,8 @@ export interface SatoriMessage {
   updatedAt?: number;
 
   sender_member_name?: string;
+  isWhisper?: boolean;
+  whisperTo?: User | null;
 }
 
 export interface ServerConfig {

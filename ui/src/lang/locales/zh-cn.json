@@ -25,7 +25,15 @@
     "placeholder": "请输入...",
     "send": "发送",
     "upload": "上传图片",
-    "emojiTitle": "表情"
+    "emojiTitle": "表情",
+    "whisperButton": "悄悄话",
+    "whisperTooltip": "选择悄悄话对象",
+    "whisperPanelTitle": "选择悄悄话对象",
+    "whisperSearchPlaceholder": "搜索在线成员",
+    "whisperEmpty": "暂无匹配成员",
+    "whisperPillPrefix": "发送给:",
+    "whisperPlaceholder": "向 {target} 发送悄悄话...",
+    "whisperNoOnline": "当前频道暂无在线成员在线"
   },
   "connectState": {
     "connecting": "连接中 ...",
@@ -62,5 +70,13 @@
     "content": "确定要退出登录吗？",
     "positiveText": "确定",
     "negativeText": "取消"
+  },
+  "whisper": {
+    "menu": "发送悄悄话",
+    "selfNotAllowed": "不能给自己发送悄悄话",
+    "userUnknown": "无法识别该成员",
+    "sendTo": "[悄悄话] 发送给 {target}",
+    "from": "[悄悄话] 来自 {sender}",
+    "generic": "[悄悄话] 私密消息"
   }
 }

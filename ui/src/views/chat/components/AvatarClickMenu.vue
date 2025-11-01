@@ -1,19 +1,16 @@
 <script setup lang="tsx">
-import { useChatStore } from '@/stores/chat';
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
+import type { User } from '@satorijs/protocol';
+import { useChatStore } from '@/stores/chat';
 import { computed, nextTick } from 'vue';
-import Element from '@satorijs/element'
-import { db } from '@/models/index';
-import { urlBase } from '@/stores/_config';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
+import { useI18n } from 'vue-i18n';
 
 const chat = useChatStore()
 const message = useMessage()
-
-const alertContextMenuItemClicked = (name: string) => {
-  alert('You clicked ' + name + ' !');
-}
+const { t } = useI18n();
+const user = useUserStore()
 
 const clickTalkTo = async () => {
   const data = chat.avatarMenu.item;
@@ -30,7 +27,27 @@ const clickTalkTo = async () => {
   }
 }
 
-const user = useUserStore()
+const clickWhisper = () => {
+  const data = chat.avatarMenu.item as any;
+  if (!data?.user?.id) {
+    message.warning(t('whisper.userUnknown'));
+    return;
+  }
+  if (data.user.id === user.info.id) {
+    message.warning(t('whisper.selfNotAllowed'));
+    return;
+  }
+  const targetUser: User = {
+    id: data.user.id,
+    name: data.user.name || data.user.username || '',
+    nick: data.member?.nick || data.user.nick || data.user.name || '未知成员',
+    avatar: data.member?.avatar || data.user.avatar || '',
+    discriminator: data.user.discriminator || '',
+    is_bot: !!data.user.is_bot,
+  };
+  chat.setWhisperTarget(targetUser);
+  chat.avatarMenu.show = false;
+};
 
 const clickFriendAdd = async () => {
   const data = chat.avatarMenu.item;
@@ -79,6 +96,14 @@ const showFriendAdd = computed(() => {
   return false;
 });
 
+const showWhisper = computed(() => {
+  const data = chat.avatarMenu.item;
+  if (!data?.user?.id) {
+    return false;
+  }
+  return data.user.id !== user.info.id;
+});
+
 
 const nick = computed(() => {
   const item = chat.avatarMenu.item;
@@ -106,6 +131,7 @@ const nick = computed(() => {
     </div>
 
     <context-menu-sperator />
+    <context-menu-item v-if="showWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="私聊" @click="clickTalkTo" />
     <context-menu-item v-if="showFriendAdd" label="加好友" @click="clickFriendAdd" />
   </context-menu>

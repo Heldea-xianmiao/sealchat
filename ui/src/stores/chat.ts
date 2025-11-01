@@ -30,6 +30,8 @@ interface ChatState {
   // 频道未读: id - 数量
   unreadCountMap: { [key: string]: number },
 
+  whisperTarget: User | null,
+
   messageMenu: {
     show: boolean
     optionsComponent: MenuOptions
@@ -74,6 +76,8 @@ export const useChatStore = defineStore({
 
     // 太遮挡视线，先关闭了
     atOptionsOn: false,
+
+    whisperTarget: null,
 
     messageMenu: {
       show: false,
@@ -291,6 +295,7 @@ export const useChatStore = defineStore({
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
       this.curChannelUsers = resp2.data.data;
+      this.whisperTarget = null;
 
       chatEvent.emit('channel-switch-to', undefined);
       this.channelList();
@@ -395,10 +400,19 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageCreate(content: string, quote_id?: string) {
-      // const resp = await this.sendAPI('message.create', { channel_id: this.curChannel?.id, content });
-      const resp = await this.sendAPI('message.create', { channel_id: this.curChannel?.id, content, quote_id });
-      // console.log(1111, resp)
+    async messageCreate(content: string, quote_id?: string, whisper_to?: string) {
+      const payload: Record<string, any> = {
+        channel_id: this.curChannel?.id,
+        content,
+      };
+      if (quote_id) {
+        payload.quote_id = quote_id;
+      }
+      const whisperId = whisper_to ?? this.whisperTarget?.id;
+      if (whisperId) {
+        payload.whisper_to = whisperId;
+      }
+      const resp = await this.sendAPI('message.create', payload);
       return resp?.data;
     },
 
@@ -416,6 +430,14 @@ export const useChatStore = defineStore({
       } catch (error) {
         console.warn('message.typing 调用失败', error);
       }
+    },
+
+    setWhisperTarget(target?: User | null) {
+      this.whisperTarget = target ?? null;
+    },
+
+    clearWhisperTarget() {
+      this.whisperTarget = null;
     },
 
     // friend

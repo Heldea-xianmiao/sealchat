@@ -3,9 +3,9 @@ import ChatItem from './components/chat-item.vue';
 import { computed, ref, watch, h, onMounted, onBeforeMount, onBeforeUnmount, nextTick, type Component, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
-import type { Event, Message } from '@satorijs/protocol'
+import type { Event, Message, User } from '@satorijs/protocol'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Eye, EyeOff } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Eye, EyeOff, Lock } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import UploadSupport from './components/upload.vue'
@@ -26,6 +26,7 @@ import { computedAsync } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { Settings } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
+import { useI18n } from 'vue-i18n';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -45,6 +46,7 @@ const uploadImages = computedAsync(async () => {
 
 const message = useMessage()
 const dialog = useDialog()
+const { t } = useI18n();
 
 // const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null);
 const uploadSupportRef = ref<any>(null);
@@ -52,6 +54,24 @@ const messagesListRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 
 const rows = ref<Message[]>([]);
+
+const upsertMessage = (incoming?: Message) => {
+  if (!incoming || !incoming.id) {
+    return;
+  }
+  const index = rows.value.findIndex((msg) => msg.id === incoming.id);
+  if (index >= 0) {
+    const merged = {
+      ...rows.value[index],
+      ...incoming,
+    };
+    rows.value.splice(index, 1, merged);
+  } else {
+    rows.value.push(incoming);
+  }
+  // 重新赋值触发渲染更新，避免在部分浏览器中出现静默不刷新的情况
+  rows.value = rows.value.slice();
+};
 
 async function replaceUsernames(text: string) {
   const resp = await chat.guildMemberList('');
@@ -147,6 +167,180 @@ const toggleTypingPreview = () => {
 };
 
 const textToSend = ref('');
+const whisperPanelVisible = ref(false);
+const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
+const whisperQuery = ref('');
+const whisperSelectionIndex = ref(0);
+const whisperSearchInputRef = ref<any>(null);
+
+interface WhisperCandidate {
+  raw: any;
+  id: string;
+  avatar: string;
+  displayName: string;
+  secondaryName: string;
+}
+
+const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
+  .filter((i: any) => i?.id && i.id !== user.info.id)
+  .map((candidate: any) => ({
+    raw: candidate,
+    id: candidate.id,
+    avatar: candidate.avatar || '',
+    displayName: candidateDisplayName(candidate),
+    secondaryName: candidateSecondaryName(candidate),
+  }))
+);
+
+const candidateDisplayName = (candidate: any) => candidate?.nick || candidate?.name || candidate?.username || '未知成员';
+const candidateSecondaryName = (candidate: any) => {
+  const primary = candidateDisplayName(candidate);
+  const backup = candidate?.username || candidate?.name || '';
+  if (backup && backup !== primary) {
+    return backup;
+  }
+  return '';
+};
+
+const filteredWhisperCandidates = computed(() => {
+  const keyword = whisperQuery.value.trim().toLowerCase();
+  if (!keyword) {
+    return whisperCandidates.value;
+  }
+  return whisperCandidates.value.filter((candidate) => {
+    const candidates = [
+      candidate.displayName,
+      candidate.secondaryName,
+      candidate.id,
+    ].filter(Boolean).map((str) => String(str).toLowerCase());
+    return candidates.some((name) => name.includes(keyword));
+  });
+});
+
+const canOpenWhisperPanel = computed(() => whisperCandidates.value.length > 0);
+const whisperMode = computed(() => !!chat.whisperTarget);
+const whisperTargetDisplay = computed(() => chat.whisperTarget?.nick || chat.whisperTarget?.name || '未知成员');
+const whisperPlaceholderText = computed(() => t('inputBox.whisperPlaceholder', { target: `@${whisperTargetDisplay.value}` }));
+
+const ensureInputFocus = () => {
+  nextTick(() => {
+    textInputRef.value?.focus?.();
+  });
+};
+
+function openWhisperPanel(source: 'slash' | 'manual') {
+  whisperPickerSource.value = source;
+  whisperPanelVisible.value = true;
+  whisperSelectionIndex.value = 0;
+  if (source === 'manual') {
+    whisperQuery.value = '';
+    nextTick(() => {
+      whisperSearchInputRef.value?.focus?.();
+    });
+  }
+}
+
+function closeWhisperPanel() {
+  whisperPanelVisible.value = false;
+  whisperSelectionIndex.value = 0;
+  whisperQuery.value = '';
+  whisperPickerSource.value = null;
+}
+
+const applyWhisperTarget = (candidate: WhisperCandidate) => {
+  if (!candidate?.id) {
+    return;
+  }
+  const raw = candidate.raw || {};
+  const targetUser: User = {
+    id: candidate.id,
+    name: raw.name || raw.username || raw.nick || candidate.displayName,
+    nick: candidate.displayName,
+    avatar: candidate.avatar,
+    discriminator: raw.discriminator || '',
+    is_bot: !!raw.is_bot,
+  };
+  chat.setWhisperTarget(targetUser);
+  const source = whisperPickerSource.value;
+  closeWhisperPanel();
+  if (source === 'slash') {
+    textToSend.value = '';
+  }
+  ensureInputFocus();
+};
+
+const handleWhisperCommand = (value: string) => {
+  const match = value.match(/^\/(w|whisper)\s*(.*)$/i);
+  if (match) {
+    const query = match[2]?.trim() || '';
+    if (!whisperPanelVisible.value || whisperPickerSource.value !== 'slash') {
+      openWhisperPanel('slash');
+    }
+    whisperQuery.value = query;
+    return;
+  }
+  if (whisperPickerSource.value === 'slash') {
+    closeWhisperPanel();
+  }
+};
+
+const handleWhisperKeydown = (event: KeyboardEvent) => {
+  if (!whisperPanelVisible.value) {
+    return false;
+  }
+  const list = filteredWhisperCandidates.value;
+  if (event.key === 'ArrowDown') {
+    if (list.length) {
+      whisperSelectionIndex.value = (whisperSelectionIndex.value + 1) % list.length;
+    }
+    event.preventDefault();
+    return true;
+  }
+  if (event.key === 'ArrowUp') {
+    if (list.length) {
+      whisperSelectionIndex.value = (whisperSelectionIndex.value - 1 + list.length) % list.length;
+    }
+    event.preventDefault();
+    return true;
+  }
+  if (event.key === 'Enter' || event.key === 'Tab') {
+    const selected = list[whisperSelectionIndex.value];
+    if (selected) {
+      applyWhisperTarget(selected);
+    }
+    event.preventDefault();
+    return true;
+  }
+  if (event.key === 'Escape') {
+    const source = whisperPickerSource.value;
+    closeWhisperPanel();
+    if (source === 'slash') {
+      textToSend.value = '';
+    }
+    event.preventDefault();
+    return true;
+  }
+  return false;
+};
+
+const startWhisperSelection = () => {
+  if (!canOpenWhisperPanel.value) {
+    message.warning(t('inputBox.whisperNoOnline'));
+    return;
+  }
+  openWhisperPanel('manual');
+};
+
+const clearWhisperTarget = () => {
+  chat.clearWhisperTarget();
+  ensureInputFocus();
+};
+
+const getTextarea = () => {
+  const el = textInputRef.value?.$el?.getElementsByTagName('textarea')[0];
+  return el as HTMLTextAreaElement | undefined;
+};
+
 const send = throttle(async () => {
   if (chat.connectState !== 'connected') {
     message.error('尚未连接，请稍等');
@@ -161,41 +355,43 @@ const send = throttle(async () => {
     message.error('消息过长，请分段发送');
     return;
   }
-  let replyTo = chat.curReplyTo || undefined;
+  const replyTo = chat.curReplyTo || undefined;
   stopTypingPreviewNow();
   textToSend.value = '';
   chat.curReplyTo = null;
 
   const now = Date.now();
   const tmpMsg: Message = {
-    "id": nanoid(),
-    "createdAt": now,
-    "updatedAt": now,
-    "content": t,
-    "user": user.info,
-    "member": chat.curMember || undefined,
-    "quote": replyTo,
+    id: nanoid(),
+    createdAt: now,
+    updatedAt: now,
+    content: t,
+    user: user.info,
+    member: chat.curMember || undefined,
+    quote: replyTo,
   };
+
+  const whisperTargetForSend = chat.whisperTarget;
+  if (whisperTargetForSend) {
+    (tmpMsg as any).isWhisper = true;
+    (tmpMsg as any).whisperTo = whisperTargetForSend;
+  }
 
   (tmpMsg as any).failed = false;
   rows.value.push(tmpMsg);
   instantMessages.add(tmpMsg);
 
   try {
-    t = contentEscape(t)
-    t = await replaceUsernames(t)
+    t = contentEscape(t);
+    t = await replaceUsernames(t);
 
     tmpMsg.content = t;
-    const newMsg = await chat.messageCreate(t, replyTo?.id);
-    for (let [k, v] of Object.entries(newMsg)) {
+    const newMsg = await chat.messageCreate(t, replyTo?.id, whisperTargetForSend?.id);
+    for (const [k, v] of Object.entries(newMsg)) {
       (tmpMsg as any)[k] = v;
     }
     instantMessages.delete(tmpMsg);
-    // 从rows中删除tmpMsg，用id做匹配
-    const index = rows.value.findIndex(msg => msg.id === tmpMsg.id);
-    if (index !== -1) {
-      rows.value.splice(index, 1);
-    }
+    upsertMessage(tmpMsg);
   } catch (e) {
     message.error('发送失败,您可能没有权限在此频道发送消息');
     console.error('消息发送失败', e);
@@ -210,8 +406,30 @@ const send = throttle(async () => {
   scrollToBottom();
 }, 500);
 
-watch(textToSend, () => {
+watch(textToSend, (value) => {
+  handleWhisperCommand(value);
   emitTypingPreview();
+});
+
+watch(filteredWhisperCandidates, (list) => {
+  if (!list.length) {
+    whisperSelectionIndex.value = 0;
+  } else if (whisperSelectionIndex.value > list.length - 1) {
+    whisperSelectionIndex.value = 0;
+  }
+});
+
+watch(canOpenWhisperPanel, (canOpen) => {
+  if (!canOpen && whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
+    closeWhisperPanel();
+  }
+});
+
+watch(() => chat.whisperTarget, (target) => {
+  if (target) {
+    closeWhisperPanel();
+    ensureInputFocus();
+  }
 });
 
 watch(typingPreviewEnabled, (enabled) => {
@@ -293,26 +511,20 @@ onMounted(async () => {
 
   chatEvent.off('message-created', '*');
   chatEvent.on('message-created', (e?: Event) => {
-    if (e && e.message && e.channel?.id == chat.curChannel?.id) {
+    if (e && e.message && e.channel?.id === chat.curChannel?.id) {
       if (e.message.user?.id !== user.info.id) {
-        // 不是自己发的消息，播放声音
+        // 不是自己发的消息，播放提示音
         sound.play();
-        rows.value.push(e.message);
       } else {
-        // 自己发的消息，校准一下instantMessages
-        let postByCurrentClient = false;
-        for (let i of instantMessages) {
-          if (i.id === e.message.id) {
-            postByCurrentClient = true;
-            instantMessages.delete(i);
+        // 自己发出的消息需要清理本地的待确认集合，避免重复渲染
+        for (const pending of instantMessages) {
+          if (pending.id === e.message.id) {
+            instantMessages.delete(pending);
             break;
           }
         }
-        // 这里可能遇到多端登录情况
-        if (!postByCurrentClient) {
-          rows.value.push(e.message);
-        }
       }
+      upsertMessage(e.message);
       removeTypingPreview(e.message.user?.id);
       if (!showButton.value) {
         scrollToBottom();
@@ -424,6 +636,7 @@ const loadMessages = async () => {
   const messages = await chat.messageList(chat.curChannel?.id || '');
   messagesNextFlag.value = messages.next || "";
   rows.value.push(...messages.data);
+  rows.value = rows.value.slice();
 
   nextTick(() => {
     scrollToBottom();
@@ -457,19 +670,28 @@ const pauseKeydown = ref(false);
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
+  if (handleWhisperKeydown(e)) {
+    return;
+  }
+
   // 检查是否为移动端
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
     // 如果是移动端,直接返回,不执行后续代码
     return;
   }
 
+  if (e.key === 'Backspace' && chat.whisperTarget) {
+    const textarea = getTextarea();
+    if (textarea && textarea.selectionStart === 0 && textarea.selectionEnd === 0 && textToSend.value.length === 0) {
+      clearWhisperTarget();
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (e.key === 'Enter' && (!e.ctrlKey) && (!e.shiftKey)) {
     send();
     e.preventDefault();
-
-    // if (textInputRef.value?.blur) {
-    //   (textInputRef.value as any).blur()
-    // }
   }
 }
 
@@ -587,6 +809,7 @@ const reachTop = throttle(async (evt: any) => {
     }
 
     rows.value.unshift(...messages.data);
+    rows.value = rows.value.slice();
 
     nextTick(() => {
       // 注意: el会变，如果不在下一帧取的话
@@ -785,7 +1008,19 @@ const isManagingEmoji = ref(false);
           </n-popover>
         </div>
 
-        <div class="absolute flex items-center space-x-1" style="z-index: 1; right: 0.6rem; top: .55rem;">
+        <div class="absolute flex items-center space-x-2" style="z-index: 1; right: 0.6rem; top: .55rem;">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
+                @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
+                <template #icon>
+                  <n-icon :component="Lock" size="20" />
+                </template>
+              </n-button>
+            </template>
+            {{ t('inputBox.whisperTooltip') }}
+          </n-tooltip>
+
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text class="typing-toggle" :class="{ 'typing-toggle--active': typingPreviewEnabled }"
@@ -810,14 +1045,42 @@ const isManagingEmoji = ref(false);
           </n-popover>
         </div>
 
+        <transition name="fade">
+          <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop>
+            <div class="whisper-panel__title">{{ t('inputBox.whisperPanelTitle') }}</div>
+            <n-input v-if="whisperPickerSource === 'manual'" ref="whisperSearchInputRef"
+              v-model:value="whisperQuery" size="small" :placeholder="t('inputBox.whisperSearchPlaceholder')" clearable
+              @keydown="handleWhisperKeydown" />
+            <div class="whisper-panel__list" @keydown="handleWhisperKeydown">
+              <div v-for="(candidate, idx) in filteredWhisperCandidates" :key="candidate.id"
+                class="whisper-panel__item" :class="{ 'is-active': idx === whisperSelectionIndex }"
+                @mousedown.prevent @mouseenter="whisperSelectionIndex = idx"
+                @click="applyWhisperTarget(candidate)">
+                <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
+                <div class="whisper-panel__meta">
+                  <div class="whisper-panel__name">{{ candidate.displayName }}</div>
+                  <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
+                </div>
+              </div>
+              <div v-if="!filteredWhisperCandidates.length" class="whisper-panel__empty">{{ t('inputBox.whisperEmpty') }}</div>
+            </div>
+          </div>
+        </transition>
+
+        <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
+          <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
+          <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
+        </div>
+
         <n-mention type="textarea" :rows="1" autosize v-model:value="textToSend" :on-keydown="keyDown"
-          ref="textInputRef" class="chat-text" :placeholder="$t('inputBox.placeholder')" :options="atOptions"
+          ref="textInputRef" :class="['chat-text', { 'whisper-mode': whisperMode }]"
+          :placeholder="whisperMode ? whisperPlaceholderText : $t('inputBox.placeholder')" :options="atOptions"
           :loading="atLoading" @search="atHandleSearch" @select="pauseKeydown = false" placement="top-start"
           :prefix="atPrefix" :render-label="atRenderLabel">
         </n-mention>
       </div>
       <div class="flex" style="align-items: end; padding-bottom: 1px;">
-        <n-button class="" type="primary" @click="send" :disabled="chat.connectState !== 'connected'">{{
+        <n-button class="" type="primary" @click="send" :disabled="chat.connectState !== 'connected'">{{ 
           $t('inputBox.send') }}</n-button>
       </div>
     </div>
@@ -958,6 +1221,141 @@ const isManagingEmoji = ref(false);
   color: #3b82f6;
 }
 
+.chat-text :deep(textarea) {
+  padding-left: 2.4rem;
+  padding-right: 3rem;
+  padding-top: 1.6rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, padding-top 0.2s ease;
+}
+
+.chat-text.whisper-mode :deep(textarea) {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35);
+  background-color: rgba(250, 245, 255, 0.92);
+  padding-top: 2.8rem;
+}
+
+.whisper-pill {
+  position: absolute;
+  top: 0.4rem;
+  left: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  background-color: rgba(124, 58, 237, 0.14);
+  color: #5b21b6;
+  font-size: 0.85rem;
+  font-weight: 500;
+  z-index: 2;
+}
+
+.whisper-pill__close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.whisper-pill__close:hover {
+  color: #4c1d95;
+}
+
+.whisper-panel {
+  position: absolute;
+  bottom: calc(100% + 0.75rem);
+  left: 2.5rem;
+  right: 2.5rem;
+  margin: 0 auto;
+  max-width: 340px;
+  background: #ffffff;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  box-shadow: 0 18px 40px rgba(99, 102, 241, 0.18);
+  padding: 0.75rem;
+  z-index: 6;
+}
+
+.whisper-panel__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #5b21b6;
+  margin-bottom: 0.4rem;
+}
+
+.whisper-panel__list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 0.4rem;
+  padding-right: 0.2rem;
+}
+
+.whisper-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.65rem;
+  cursor: pointer;
+  transition: background-color 0.16s ease;
+}
+
+.whisper-panel__item:hover,
+.whisper-panel__item.is-active {
+  background: rgba(124, 58, 237, 0.14);
+}
+
+.whisper-panel__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.whisper-panel__name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+.whisper-panel__sub {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.whisper-panel__empty {
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+
+.whisper-toggle-button {
+  color: #6b7280;
+}
+
+.whisper-toggle-button--active {
+  color: #7c3aed;
+}
+
+.whisper-toggle-button:disabled {
+  color: #c5c5c5;
+  cursor: not-allowed;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
 @keyframes typing-dots {
   0%, 80%, 100% {
     transform: scale(0.4);
@@ -979,10 +1377,11 @@ const isManagingEmoji = ref(false);
 
 .chat-text>.n-input>.n-input-wrapper {
   @apply bg-gray-200;
+  padding-top: 1.6rem;
 }
 
 .chat-text>.n-input>.n-input-wrapper {
-  padding-left: 2rem;
-  padding-right: 4rem;
+  padding-left: 2.4rem;
+  padding-right: 3rem;
 }
 </style>

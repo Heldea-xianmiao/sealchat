@@ -12,7 +12,15 @@
     "placeholder": "入力してください...",
     "send": "送信",
     "upload": "画像をアップロード",
-    "emojiTitle": "絵文字"
+    "emojiTitle": "絵文字",
+    "whisperButton": "ささやき",
+    "whisperTooltip": "ささやき相手を選択",
+    "whisperPanelTitle": "ささやき相手",
+    "whisperSearchPlaceholder": "オンラインメンバーを検索",
+    "whisperEmpty": "該当するメンバーはいません",
+    "whisperPillPrefix": "宛先:",
+    "whisperPlaceholder": "{target} にささやきを送信...",
+    "whisperNoOnline": "このチャンネルにはオンラインのメンバーがいません"
   },
   "connectState": {
     "connecting": "接続中...",
@@ -48,5 +56,13 @@
     "content": "ログアウトしますか？",
     "positiveText": "確定",
     "negativeText": "キャンセル"
+  },
+  "whisper": {
+    "menu": "ささやきを送る",
+    "selfNotAllowed": "自分にささやきを送ることはできません",
+    "userUnknown": "メンバーを特定できません",
+    "sendTo": "[ささやき] {target} へ",
+    "from": "[ささやき] {sender} から",
+    "generic": "[ささやき] プライベートメッセージ"
   }
 }
