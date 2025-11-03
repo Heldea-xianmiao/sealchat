@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, computed } from 'vue';
 import type { MentionOption } from 'naive-ui';
+import InlineImagePreview from './InlineImagePreview.vue';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -14,6 +15,7 @@ const props = withDefaults(defineProps<{
   autosize?: boolean | { minRows?: number; maxRows?: number }
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
+  inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
 }>(), {
   modelValue: '',
   placeholder: '',
@@ -25,6 +27,7 @@ const props = withDefaults(defineProps<{
   autosize: true,
   rows: 1,
   inputClass: () => [],
+  inlineImages: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -34,6 +37,7 @@ const emit = defineEmits<{
   (event: 'keydown', e: KeyboardEvent): void
   (event: 'focus'): void
   (event: 'blur'): void
+  (event: 'remove-image', markerId: string): void
 }>();
 
 const mentionRef = ref<any>(null);
@@ -78,6 +82,10 @@ const handleKeydown = (event: KeyboardEvent) => {
   emit('keydown', event);
 };
 
+const handleRemoveImage = (markerId: string) => {
+  emit('remove-image', markerId);
+};
+
 const focus = () => {
   nextTick(() => {
     mentionRef.value?.focus?.();
@@ -107,24 +115,36 @@ defineExpose({
 </script>
 
 <template>
-  <n-mention
-    ref="mentionRef"
-    type="textarea"
-    :rows="rows"
-    :autosize="autosize"
-    :placeholder="placeholder"
-    :disabled="disabled"
-    v-model:value="valueBinder"
-    :options="mentionOptions"
-    :loading="mentionLoading"
-    :prefix="mentionPrefix"
-    :render-label="mentionRenderLabel"
-    placement="top-start"
-    :class="classList"
-    @search="handleSearch"
-    @select="handleSelect"
-    @keydown="handleKeydown"
-    @focus="emit('focus')"
-    @blur="emit('blur')"
-  />
+  <div class="chat-input-plain-wrapper">
+    <n-mention
+      ref="mentionRef"
+      type="textarea"
+      :rows="rows"
+      :autosize="autosize"
+      :placeholder="placeholder"
+      :disabled="disabled"
+      v-model:value="valueBinder"
+      :options="mentionOptions"
+      :loading="mentionLoading"
+      :prefix="mentionPrefix"
+      :render-label="mentionRenderLabel"
+      placement="top-start"
+      :class="classList"
+      @search="handleSearch"
+      @select="handleSelect"
+      @keydown="handleKeydown"
+      @focus="emit('focus')"
+      @blur="emit('blur')"
+    />
+    <InlineImagePreview
+      :images="inlineImages"
+      @remove="handleRemoveImage"
+    />
+  </div>
 </template>
+
+<style lang="scss" scoped>
+.chat-input-plain-wrapper {
+  width: 100%;
+}
+</style>

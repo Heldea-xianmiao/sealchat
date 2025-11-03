@@ -12,6 +12,7 @@ import { useMessage } from 'naive-ui';
 import Avatar from '@/components/avatar.vue'
 import { Lock, Edit } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
+import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -44,6 +45,26 @@ let hasImage = ref(false);
 
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  // 检测是否为 TipTap JSON 格式
+  if (isTipTapJson(content)) {
+    try {
+      const html = tiptapJsonToHtml(content, {
+        baseUrl: urlBase,
+        imageClass: 'inline-image',
+        linkClass: 'text-blue-500',
+      });
+      const sanitizedHtml = DOMPurify.sanitize(html);
+      hasImage.value = html.includes('<img');
+      return <span v-html={sanitizedHtml}></span>;
+    } catch (error) {
+      console.error('TipTap JSON 渲染失败:', error);
+      // 降级处理：显示错误消息
+      return <span class="text-red-500">内容格式错误</span>;
+    }
+  }
+
+  // 使用原有的 Element.parse 逻辑
   const items = Element.parse(content);
   let textItems = []
   hasImage.value = false;
@@ -447,6 +468,128 @@ watch(() => props.item?.updatedAt, () => {
 
 .content img {
   max-width: min(36vw, 200px);
+}
+
+.content .inline-image {
+  max-height: 6rem;
+  width: auto;
+  border-radius: 0.375rem;
+  vertical-align: middle;
+  margin: 0 0.25rem;
+}
+
+.content .rich-inline-image {
+  max-width: 100%;
+  max-height: 12rem;
+  height: auto;
+  border-radius: 0.5rem;
+  vertical-align: middle;
+  margin: 0.5rem 0.25rem;
+  display: inline-block;
+  object-fit: contain;
+}
+
+/* 富文本内容样式 */
+.content h1,
+.content h2,
+.content h3 {
+  margin: 0.75rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.content h1 {
+  font-size: 1.5rem;
+}
+
+.content h2 {
+  font-size: 1.25rem;
+}
+
+.content h3 {
+  font-size: 1.1rem;
+}
+
+.content ul,
+.content ol {
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.content li {
+  margin: 0.25rem 0;
+}
+
+.content blockquote {
+  border-left: 3px solid #3b82f6;
+  padding-left: 1rem;
+  margin: 0.5rem 0;
+  color: #6b7280;
+}
+
+.content code {
+  background-color: #f3f4f6;
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.content pre {
+  background-color: #1f2937;
+  color: #f9fafb;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.content pre code {
+  background-color: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.content strong {
+  font-weight: 600;
+}
+
+.content em {
+  font-style: italic;
+}
+
+.content u {
+  text-decoration: underline;
+}
+
+.content s {
+  text-decoration: line-through;
+}
+
+.content mark {
+  background-color: #fef08a;
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.125rem;
+}
+
+.content a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.content hr {
+  border: none;
+  border-top: 2px solid #e5e7eb;
+  margin: 1rem 0;
+}
+
+.content p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.content p + p {
+  margin-top: 0.5rem;
 }
 }
 

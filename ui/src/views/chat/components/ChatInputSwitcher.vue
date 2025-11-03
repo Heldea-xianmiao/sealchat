@@ -2,6 +2,7 @@
 import { computed, ref, watch, nextTick } from 'vue';
 import type { MentionOption } from 'naive-ui';
 import ChatInputPlain from './inputs/ChatInputPlain.vue';
+import ChatInputRich from './inputs/ChatInputRich.vue';
 
 type EditorMode = 'plain' | 'rich';
 
@@ -18,6 +19,7 @@ const props = withDefaults(defineProps<{
   autosize?: boolean | { minRows?: number; maxRows?: number }
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
+  inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
 }>(), {
   modelValue: '',
   mode: 'plain',
@@ -30,6 +32,7 @@ const props = withDefaults(defineProps<{
   autosize: true,
   rows: 1,
   inputClass: () => [],
+  inlineImages: () => ({}),
 });
 
 const emit = defineEmits<{
@@ -41,6 +44,10 @@ const emit = defineEmits<{
   (event: 'focus'): void
   (event: 'blur'): void
   (event: 'rich-needed'): void
+  (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
+  (event: 'upload-button-click'): void
+  (event: 'remove-image', markerId: string): void
 }>();
 
 const modeRef = ref<EditorMode>(props.mode);
@@ -88,6 +95,22 @@ const handleBlur = () => {
   emit('blur');
 };
 
+const handlePasteImage = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
+  emit('paste-image', payload);
+};
+
+const handleDropFiles = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
+  emit('drop-files', payload);
+};
+
+const handleUploadButtonClick = () => {
+  emit('upload-button-click');
+};
+
+const handleRemoveImage = (markerId: string) => {
+  emit('remove-image', markerId);
+};
+
 const focus = () => {
   nextTick(() => {
     if (modeRef.value === 'plain') {
@@ -113,10 +136,18 @@ const getTextarea = () => {
   return undefined;
 };
 
+const getEditor = () => {
+  if (modeRef.value === 'rich') {
+    return richRef.value?.getEditor?.();
+  }
+  return undefined;
+};
+
 defineExpose({
   focus,
   blur,
   getTextarea,
+  getEditor,
   getMode: () => modeRef.value,
   switchMode,
 });
@@ -137,16 +168,36 @@ defineExpose({
     :autosize="autosize"
     :rows="rows"
     :input-class="inputClass"
+    :inline-images="inlineImages"
     @mention-search="handleSearch"
     @mention-select="handleSelect"
     @keydown="handleKeydown"
     @focus="handleFocus"
     @blur="handleBlur"
+    @remove-image="handleRemoveImage"
   />
-  <div
+  <ChatInputRich
     v-else
-    class="rounded border border-gray-300 py-2 px-3 text-sm text-gray-500 bg-gray-50"
-  >
-    富文本模式即将上线，请稍后重试。
-  </div>
+    ref="richRef"
+    v-model="valueBinder"
+    :placeholder="placeholder"
+    :disabled="disabled"
+    :whisper-mode="whisperMode"
+    :mention-options="mentionOptions"
+    :mention-loading="mentionLoading"
+    :mention-prefix="mentionPrefix"
+    :mention-render-label="mentionRenderLabel"
+    :autosize="autosize"
+    :rows="rows"
+    :input-class="inputClass"
+    :inline-images="inlineImages"
+    @mention-search="handleSearch"
+    @mention-select="handleSelect"
+    @keydown="handleKeydown"
+    @focus="handleFocus"
+    @blur="handleBlur"
+    @paste-image="handlePasteImage"
+    @drop-files="handleDropFiles"
+    @upload-button-click="handleUploadButtonClick"
+  />
 </template>

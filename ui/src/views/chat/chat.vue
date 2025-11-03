@@ -1024,6 +1024,18 @@ const revokeInlineImage = (draft?: InlineImageDraft) => {
   }
 };
 
+const removeInlineImage = (markerId: string) => {
+  const draft = inlineImages.get(markerId);
+  if (draft) {
+    revokeInlineImage(draft);
+    inlineImages.delete(markerId);
+
+    // 从文本中移除对应的标记
+    const marker = `[[图片:${markerId}]]`;
+    textToSend.value = textToSend.value.replace(marker, '');
+  }
+};
+
 const resetInlineImages = () => {
   inlineImages.forEach((draft) => revokeInlineImage(draft));
   inlineImages.clear();
@@ -1135,11 +1147,83 @@ const insertInlineImages = (files: File[], selection?: SelectionRange) => {
 };
 
 const handlePlainPasteImage = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
-  insertInlineImages(payload.files, { start: payload.selectionStart, end: payload.selectionEnd });
+  if (inputMode.value === 'rich') {
+    // 富文本模式下的图片粘贴
+    handleRichImageInsert(payload.files);
+  } else {
+    // 纯文本模式下的图片粘贴
+    insertInlineImages(payload.files, { start: payload.selectionStart, end: payload.selectionEnd });
+  }
 };
 
 const handlePlainDropFiles = (payload: { files: File[]; selectionStart: number; selectionEnd: number }) => {
-  insertInlineImages(payload.files, { start: payload.selectionStart, end: payload.selectionEnd });
+  if (inputMode.value === 'rich') {
+    // 富文本模式下的图片拖拽
+    handleRichImageInsert(payload.files);
+  } else {
+    // 纯文本模式下的图片拖拽
+    insertInlineImages(payload.files, { start: payload.selectionStart, end: payload.selectionEnd });
+  }
+};
+
+const handleRichImageInsert = async (files: File[]) => {
+  if (!files.length) return;
+
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+  if (!imageFiles.length) {
+    message.warning('当前仅支持插入图片文件');
+    return;
+  }
+
+  const editor = textInputRef.value?.getEditor?.();
+  if (!editor) return;
+
+  for (const file of imageFiles) {
+    const markerId = nanoid();
+    const objectUrl = URL.createObjectURL(file);
+
+    // 在编辑器中插入临时图片（使用 base64 或 object URL）
+    editor.chain().focus().setImage({ src: objectUrl, alt: `图片-${markerId}` }).run();
+
+    // 创建上传记录
+    const draftRecord: InlineImageDraft = reactive({
+      id: markerId,
+      token: `[[图片:${markerId}]]`,
+      status: 'uploading',
+      objectUrl,
+      file,
+    });
+    inlineImages.set(markerId, draftRecord);
+
+    // 开始上传
+    try {
+      const result = await uploadImageAttachment(file, { channelId: chat.curChannel?.id });
+      draftRecord.attachmentId = result.attachmentId;
+      draftRecord.status = 'uploaded';
+      draftRecord.error = '';
+
+      // 更新编辑器中的图片 URL
+      const { state } = editor;
+      const { doc } = state;
+      doc.descendants((node, pos) => {
+        if (node.type.name === 'image' && node.attrs.src === objectUrl) {
+          const tr = state.tr.setNodeMarkup(pos, undefined, {
+            ...node.attrs,
+            src: result.attachmentId,
+          });
+          editor.view.dispatch(tr);
+          return false;
+        }
+      });
+
+      // 释放临时 URL
+      URL.revokeObjectURL(objectUrl);
+    } catch (error: any) {
+      draftRecord.status = 'failed';
+      draftRecord.error = error?.message || '上传失败';
+      message.error(`图片上传失败: ${draftRecord.error}`);
+    }
+  }
 };
 
 const handleInlineFileChange = (event: Event) => {
@@ -1188,7 +1272,11 @@ const send = throttle(async () => {
     return;
   }
   const draft = textToSend.value;
-  const hasImages = containsInlineImageMarker(draft);
+
+  // 检查是否为富文本模式
+  const isRichMode = inputMode.value === 'rich';
+  const hasImages = isRichMode ? false : containsInlineImageMarker(draft);
+
   if (draft.trim() === '' && !hasImages) {
     message.error('不能发送空消息');
     return;
@@ -1197,14 +1285,19 @@ const send = throttle(async () => {
     message.error('消息过长，请分段发送');
     return;
   }
-  if (hasUploadingInlineImages.value) {
-    message.warning('仍有图片正在上传，请稍后再试');
-    return;
+
+  // 仅在 Plain 模式检查图片上传状态
+  if (!isRichMode) {
+    if (hasUploadingInlineImages.value) {
+      message.warning('仍有图片正在上传，请稍后再试');
+      return;
+    }
+    if (hasFailedInlineImages.value) {
+      message.error('存在上传失败的图片，请删除后重试');
+      return;
+    }
   }
-  if (hasFailedInlineImages.value) {
-    message.error('存在上传失败的图片，请删除后重试');
-    return;
-  }
+
   const replyTo = chat.curReplyTo || undefined;
   stopTypingPreviewNow();
   suspendInlineSync = true;
@@ -1240,7 +1333,16 @@ const send = throttle(async () => {
   instantMessages.add(tmpMsg);
 
   try {
-    const finalContent = await buildMessageHtml(draft);
+    let finalContent: string;
+
+    if (isRichMode) {
+      // 富文本模式：直接发送 JSON
+      finalContent = draft;
+    } else {
+      // 纯文本模式：转换为 HTML
+      finalContent = await buildMessageHtml(draft);
+    }
+
     tmpMsg.content = finalContent;
     const newMsg = await chat.messageCreate(finalContent, replyTo?.id, whisperTargetForSend?.id, clientId);
     for (const [k, v] of Object.entries(newMsg)) {
@@ -1349,6 +1451,22 @@ const toBottom = () => {
 const doUpload = () => {
   pendingInlineSelection = captureSelectionRange();
   inlineImageInputRef.value?.click?.();
+}
+
+const handleRichUploadButtonClick = () => {
+  // 富文本编辑器内的上传按钮点击事件
+  doUpload();
+}
+
+const toggleInputMode = () => {
+  if (inputMode.value === 'plain') {
+    inputMode.value = 'rich';
+    message.info('已切换至富文本模式');
+  } else {
+    inputMode.value = 'plain';
+    message.info('已切换至纯文本模式');
+  }
+  ensureInputFocus();
 }
 
 const isMe = (item: Message) => {
@@ -2001,6 +2119,8 @@ const isManagingEmoji = ref(false);
           @keydown="keyDown"
           @paste-image="handlePlainPasteImage"
           @drop-files="handlePlainDropFiles"
+          @upload-button-click="handleRichUploadButtonClick"
+          @remove-image="removeInlineImage"
         />
             <input
               ref="inlineImageInputRef"
@@ -2115,11 +2235,17 @@ const isManagingEmoji = ref(false);
             <div class="chat-input-actions__cell">
               <n-tooltip trigger="hover">
                 <template #trigger>
-                  <n-button quaternary circle disabled>
-                    R
+                  <n-button
+                    quaternary
+                    circle
+                    :type="inputMode === 'rich' ? 'primary' : 'default'"
+                    @click="toggleInputMode"
+                    :disabled="isEditing"
+                  >
+                    <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
                   </n-button>
                 </template>
-                富文本编辑器（即将上线）
+                {{ inputMode === 'rich' ? '切换到纯文本模式' : '切换到富文本模式' }}
               </n-tooltip>
             </div>
           </div>
