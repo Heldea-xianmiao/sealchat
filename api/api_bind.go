@@ -79,6 +79,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/attachment-upload-quick", AttachmentUploadQuick)
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
 	v1Auth.Post("/attachments-delete", AttachmentDelete)
+	v1Auth.Get("/attachment/:id/meta", AttachmentMeta)
 	v1Auth.Get("/attachment/:id", AttachmentGet)
 
 	v1Auth.Get("/channel-identities", ChannelIdentityList)

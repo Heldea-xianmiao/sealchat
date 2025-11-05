@@ -185,6 +185,35 @@ func AttachmentGet(c *fiber.Ctx) error {
 	return c.SendFile(fullPath)
 }
 
+func AttachmentMeta(c *fiber.Ctx) error {
+	attachmentID := c.Params("id")
+	if attachmentID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "无效的附件ID",
+		})
+	}
+
+	var att model.AttachmentModel
+	if err := model.GetDB().Where("id = ?", attachmentID).Limit(1).Find(&att).Error; err != nil {
+		return wrapError(c, err, "读取附件失败")
+	}
+	if att.ID == "" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"message": "附件不存在",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "ok",
+		"item": fiber.Map{
+			"id":       att.ID,
+			"filename": att.Filename,
+			"size":     att.Size,
+			"hash":     att.Hash,
+		},
+	})
+}
+
 func wrapError(c *fiber.Ctx, err error, s string) error {
 	m := fiber.Map{
 		"message": s,

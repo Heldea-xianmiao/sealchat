@@ -6,13 +6,13 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User } from '@satorijs/protocol'
 import type { ChannelIdentity } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Users } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Users, Download } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
-import { urlBase } from '@/stores/_config';
+import { api, urlBase } from '@/stores/_config';
 import { liveQuery } from "dexie";
 import { useObservable } from "@vueuse/rxjs";
 import { db, getSrc, type Thumb } from '@/models';
@@ -24,7 +24,7 @@ import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { useUtilsStore } from '@/stores/utils';
-import { contentEscape, contentUnescape } from '@/utils/tools'
+import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import IconNumber from '@/components/icons/IconNumber.vue'
 import { computedAsync } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
@@ -134,6 +134,267 @@ const currentChannelIdentities = computed(() => chat.channelIdentities[chat.curC
 let identityAvatarObjectURL: string | null = null;
 let identityAvatarFile: File | null = null;
 const identityAvatarDisplay = computed(() => identityAvatarPreview.value || resolveAttachmentUrl(identityForm.avatarAttachmentId));
+
+const identityImportInputRef = ref<HTMLInputElement | null>(null);
+const identityExporting = ref(false);
+const identityImporting = ref(false);
+
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v1';
+
+interface IdentityAvatarPayload {
+  attachmentId?: string;
+  hash: string;
+  size: number;
+  filename?: string;
+  mimeType?: string;
+  data: string;
+}
+
+interface IdentityExportItem {
+  sourceId: string;
+  displayName: string;
+  color: string;
+  isDefault: boolean;
+  sortOrder: number;
+  avatar?: IdentityAvatarPayload;
+}
+
+interface IdentityExportFile {
+  version: string;
+  generatedAt: string;
+  source?: {
+    channelId?: string;
+    channelName?: string;
+    guildId?: string;
+  };
+  items: IdentityExportItem[];
+}
+
+interface AttachmentMeta {
+  id: string;
+  filename: string;
+  size: number;
+  hash: string;
+}
+
+const attachmentMetaCache = new Map<string, AttachmentMeta>();
+
+const fetchAttachmentMeta = async (attachmentId: string): Promise<AttachmentMeta | null> => {
+  const normalized = normalizeAttachmentId(attachmentId);
+  if (!normalized) {
+    return null;
+  }
+  if (attachmentMetaCache.has(normalized)) {
+    return attachmentMetaCache.get(normalized)!;
+  }
+  try {
+    const resp = await api.get<{ item: AttachmentMeta }>(`api/v1/attachment/${normalized}/meta`);
+    const meta = resp.data?.item;
+    if (meta) {
+      attachmentMetaCache.set(normalized, meta);
+      return meta;
+    }
+  } catch (error) {
+    console.warn('获取附件信息失败', error);
+  }
+  return null;
+};
+
+const safeFilename = (value: string) => (value || 'channel').replace(/[\\/:*?"<>|]/g, '_');
+
+const handleIdentityExport = async () => {
+  if (identityExporting.value) {
+    return;
+  }
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  const identities = currentChannelIdentities.value;
+  if (!identities.length) {
+    message.warning('当前频道暂无可导出的角色');
+    return;
+  }
+  identityExporting.value = true;
+  try {
+    const items: IdentityExportItem[] = [];
+    for (const identity of identities) {
+      const item: IdentityExportItem = {
+        sourceId: identity.id,
+        displayName: identity.displayName,
+        color: identity.color,
+        isDefault: identity.isDefault,
+        sortOrder: identity.sortOrder,
+      };
+      if (identity.avatarAttachmentId) {
+        const normalizedId = normalizeAttachmentId(identity.avatarAttachmentId);
+        if (normalizedId) {
+          const meta = await fetchAttachmentMeta(identity.avatarAttachmentId);
+          if (meta) {
+            const resp = await fetch(`${urlBase}/api/v1/attachment/${normalizedId}`, {
+              headers: { Authorization: user.token || '' },
+            });
+            if (!resp.ok) {
+              throw new Error(`下载身份头像失败：${resp.status} ${resp.statusText}`);
+            }
+            const buffer = await resp.arrayBuffer();
+            item.avatar = {
+              attachmentId: normalizedId,
+              hash: meta.hash,
+              size: meta.size ?? buffer.byteLength,
+              filename: meta.filename || `${safeFilename(identity.displayName || 'identity')}.png`,
+              mimeType: resp.headers.get('content-type') || 'application/octet-stream',
+              data: arrayBufferToBase64(buffer),
+            };
+          }
+        }
+      }
+      items.push(item);
+    }
+
+    const payload: IdentityExportFile = {
+      version: IDENTITY_EXPORT_VERSION,
+      generatedAt: new Date().toISOString(),
+      source: {
+        channelId: chat.curChannel.id,
+        channelName: chat.curChannel?.name || '',
+        guildId: (chat.curChannel as any)?.guildId || '',
+      },
+      items,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const timestamp = payload.generatedAt.replace(/[:.]/g, '-');
+    const filename = `channel-identities-${safeFilename(chat.curChannel?.name || chat.curChannel?.id || 'channel')}-${timestamp}.json`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    message.success('频道角色导出完成');
+  } catch (error: any) {
+    console.error('导出频道角色失败', error);
+    message.error(error?.message || '导出失败，请稍后重试');
+  } finally {
+    identityExporting.value = false;
+  }
+};
+
+const triggerIdentityImport = () => {
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (identityImporting.value) {
+    return;
+  }
+  identityImportInputRef.value?.click();
+};
+
+const ensureImportAttachment = async (avatar?: IdentityAvatarPayload | null): Promise<string> => {
+  if (!avatar) {
+    return '';
+  }
+  if (!avatar.hash || !avatar.data || !avatar.size) {
+    return normalizeAttachmentId(avatar.attachmentId || '');
+  }
+  try {
+    const quickResp = await api.post('api/v1/attachment-upload-quick', {
+      hash: avatar.hash,
+      size: avatar.size,
+      extra: 'channel-identity-avatar',
+    });
+    const quickId = quickResp.data?.file?.id;
+    if (quickId) {
+      return quickId;
+    }
+  } catch (error: any) {
+    const msg = error?.response?.data?.message;
+    if (!msg || msg !== '此项数据无法进行快速上传') {
+      throw error;
+    }
+  }
+
+  try {
+    const bytes = base64ToUint8Array(avatar.data);
+    const blob = new Blob([bytes], { type: avatar.mimeType || 'application/octet-stream' });
+    const fileName = avatar.filename || `identity-avatar-${avatar.hash.slice(0, 8)}`;
+    const file = new File([blob], fileName, { type: avatar.mimeType || 'application/octet-stream' });
+    const uploadResult = await uploadImageAttachment(file, { channelId: chat.curChannel?.id });
+    return normalizeAttachmentId(uploadResult.attachmentId);
+  } catch (error) {
+    console.error('上传身份头像失败', error);
+    throw error;
+  }
+};
+
+const handleIdentityImportChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (input) {
+    input.value = '';
+  }
+  if (!file) {
+    return;
+  }
+  if (!chat.curChannel?.id) {
+    message.warning('请先选择频道');
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    const payload = JSON.parse(text) as IdentityExportFile;
+    if (payload.version !== IDENTITY_EXPORT_VERSION) {
+      throw new Error('无法识别的导入文件版本');
+    }
+    const items = payload.items || [];
+    if (!items.length) {
+      message.warning('导入文件中没有可用的频道角色');
+      return;
+    }
+    const confirmed = await dialogAskConfirm(dialog, {
+      title: '导入频道角色',
+      content: `检测到 ${items.length} 个角色配置，确定导入到当前频道吗？`,
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    identityImporting.value = true;
+    let successCount = 0;
+    for (const item of items) {
+      try {
+        const avatarId = await ensureImportAttachment(item.avatar);
+        await chat.channelIdentityCreate({
+          channelId: chat.curChannel.id,
+          displayName: item.displayName || '',
+          color: item.color || '',
+          avatarAttachmentId: avatarId,
+          isDefault: !!item.isDefault,
+        });
+        successCount += 1;
+      } catch (error) {
+        console.warn('单个角色导入失败', error);
+      }
+    }
+
+    await chat.loadChannelIdentities(chat.curChannel.id, true);
+    if (successCount > 0) {
+      message.success(`成功导入 ${successCount} 个频道角色`);
+    } else {
+      message.warning('未导入任何角色，请检查文件内容');
+    }
+  } catch (error: any) {
+    console.error('导入频道角色失败', error);
+    message.error(error?.message || '导入失败，请检查文件内容');
+  } finally {
+    identityImporting.value = false;
+  }
+};
 
 const normalizeAttachmentId = (value: string) => {
   if (!value) {
@@ -3344,8 +3605,48 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityAvatarInputRef" class="hidden" type="file" accept="image/*" @change="handleIdentityAvatarChange">
-  <n-drawer v-model:show="identityManageVisible" placement="right" :width="340">
-    <n-drawer-content title="频道角色管理">
+  <n-drawer v-model:show="identityManageVisible" placement="right" :width="360">
+    <n-drawer-content>
+      <template #header>
+        <div class="identity-drawer__header">
+          <div>
+            <div class="identity-drawer__title">频道角色管理</div>
+            <div class="identity-drawer__subtitle">支持导入/导出，便于跨频道迁移</div>
+          </div>
+          <n-space>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  size="small"
+                  @click="handleIdentityExport"
+                  :disabled="identityExporting || !currentChannelIdentities.length"
+                  :loading="identityExporting"
+                >
+                  <n-icon :component="Download" size="16" />
+                </n-button>
+              </template>
+              导出当前频道角色
+            </n-tooltip>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  size="small"
+                  @click="triggerIdentityImport"
+                  :disabled="identityImporting"
+                  :loading="identityImporting"
+                >
+                  <n-icon :component="Upload" size="16" />
+                </n-button>
+              </template>
+              导入角色配置
+            </n-tooltip>
+          </n-space>
+        </div>
+      </template>
       <div v-if="currentChannelIdentities.length" class="identity-list">
         <div v-for="identity in currentChannelIdentities" :key="identity.id" class="identity-list__item">
           <AvatarVue
@@ -3377,6 +3678,7 @@ onBeforeUnmount(() => {
       </template>
     </n-drawer-content>
   </n-drawer>
+  <input ref="identityImportInputRef" class="hidden" type="file" accept="application/json" @change="handleIdentityImportChange">
 </template>
 
 <style lang="scss" scoped>
@@ -3386,6 +3688,26 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   position: relative;
   padding-left: 0.25rem;
+}
+
+.identity-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-right: 0.25rem;
+}
+
+.identity-drawer__title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.identity-drawer__subtitle {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: #6b7280;
 }
 
 .message-row--self {
