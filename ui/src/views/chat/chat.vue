@@ -3657,14 +3657,18 @@ onBeforeUnmount(() => {
     <div class="edit-area flex justify-between space-x-2 my-2 px-2 relative">
 
       <!-- 左下，快捷指令栏 -->
-      <div class="absolute  px-4 py-2" style="top: -2.7rem; left: 0rem" v-if="true">
-        <div class="bg-white">
-          <n-button @click="emit('drawer-show')" size="small" v-if="utils.isSmallPage">
-            <template #icon>
-              <n-icon :component="IconNumber"></n-icon>
-            </template>
-          </n-button>
-        </div>
+      <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
+        <n-button
+          circle
+          quaternary
+          size="small"
+          aria-label="切换频道列表"
+          @click="emit('drawer-show')"
+        >
+          <template #icon>
+            <n-icon :component="IconNumber"></n-icon>
+          </template>
+        </n-button>
       </div>
 
       <div class="absolute bg-sky-300 rounded px-4 py-2" style="top: -4rem; right: 1rem" v-if="chat.curReplyTo">
@@ -4232,6 +4236,24 @@ onBeforeUnmount(() => {
 
 .chat-item {
   @apply pb-8; // margin会抖动，pb不会
+}
+
+.channel-switch-trigger {
+  position: fixed;
+  top: 5.5rem;
+  left: 0.5rem;
+  z-index: 40;
+  pointer-events: auto;
+}
+
+.channel-switch-trigger .n-button {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+}
+
+@media (min-width: 1024px) {
+  .channel-switch-trigger {
+    display: none;
+  }
 }
 
 .typing-preview-item {
