@@ -2,7 +2,7 @@
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { Plus, Users, Link, Refresh } from '@vicons/tabler';
-import { AppsOutline, UnlinkOutline } from '@vicons/ionicons5';
+import { AppsOutline, UnlinkOutline, SearchOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
 import Notif from '../notif.vue'
@@ -11,6 +11,7 @@ import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import UserPresencePopover from '../chat/components/UserPresencePopover.vue';
+import { useChannelSearchStore } from '@/stores/channelSearch';
 
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
@@ -21,6 +22,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const channelSearch = useChannelSearchStore();
 
 const channelTitle = computed(() => {
   const raw = chat.curChannel?.name;
@@ -243,6 +245,11 @@ const handlePresenceRefresh = async (options?: { silent?: boolean }) => {
   }
 };
 
+const searchPanelActive = computed(() => channelSearch.panelVisible);
+const toggleChannelSearch = () => {
+  channelSearch.togglePanel();
+};
+
 watch(presencePopoverVisible, (visible, oldVisible) => {
   if (visible && !oldVisible) {
     handlePresenceRefresh({ silent: true });
@@ -327,6 +334,21 @@ onBeforeUnmount(() => {
           @request-refresh="handlePresenceRefresh" />
       </n-popover>
 
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button sc-search-button"
+            :class="{ 'is-active': searchPanelActive }"
+            aria-label="搜索频道消息"
+            @click="toggleChannelSearch"
+          >
+            <n-icon :component="SearchOutline" size="18" />
+          </button>
+        </template>
+        <span>搜索频道消息</span>
+      </n-tooltip>
+
       <button type="button" class="sc-icon-button action-toggle-button" :class="{ 'is-active': actionRibbonActive }"
         @click="toggleActionRibbon" :aria-pressed="actionRibbonActive" aria-label="切换功能面板">
         <n-icon :component="AppsOutline" size="20" />
@@ -409,6 +431,12 @@ onBeforeUnmount(() => {
   color: #0369a1;
   background-color: rgba(14, 165, 233, 0.28);
   box-shadow: 0 10px 30px rgba(14, 165, 233, 0.35);
+}
+
+.sc-search-button.is-active {
+  color: #0369a1;
+  background-color: rgba(14, 165, 233, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.35);
 }
 
 .online-badge {

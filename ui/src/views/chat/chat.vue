@@ -15,6 +15,7 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
@@ -1397,6 +1398,25 @@ const sortRowsByDisplayOrder = () => {
 const localReorderOps = new Set<string>();
 
 const messageRowRefs = new Map<string, HTMLElement>();
+const searchHighlightIds = ref(new Set<string>());
+const searchHighlightTimers = new Map<string, number>();
+
+const setMessageHighlight = (messageId: string, duration = 4000) => {
+  if (!messageId) return;
+  if (searchHighlightTimers.has(messageId)) {
+    window.clearTimeout(searchHighlightTimers.get(messageId));
+  }
+  const next = new Set(searchHighlightIds.value);
+  next.add(messageId);
+  searchHighlightIds.value = next;
+  const timer = window.setTimeout(() => {
+    const updated = new Set(searchHighlightIds.value);
+    updated.delete(messageId);
+    searchHighlightIds.value = updated;
+    searchHighlightTimers.delete(messageId);
+  }, duration);
+  searchHighlightTimers.set(messageId, timer);
+};
 const registerMessageRow = (el: HTMLElement | null, id: string) => {
   if (!id) {
     return;
@@ -1406,6 +1426,27 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   } else {
     messageRowRefs.delete(id);
   }
+};
+
+const handleSearchJump = async (payload: { messageId: string; displayOrder?: number }) => {
+  const targetId = payload?.messageId;
+  if (!targetId) {
+    message.warning('未找到要跳转的消息');
+    return;
+  }
+  await nextTick();
+  const target = messageRowRefs.get(targetId);
+  if (target && messagesListRef.value) {
+    VueScrollTo.scrollTo(target, {
+      container: messagesListRef.value,
+      duration: 350,
+      offset: -60,
+      easing: 'ease-in-out',
+    });
+    setMessageHighlight(targetId);
+    return;
+  }
+  message.info('该消息暂未加载，稍后将支持自动定位');
 };
 
 const dragState = reactive({
@@ -1543,6 +1584,7 @@ const rowClass = (item: Message) => ({
   'draggable-item': canDragMessage(item),
   'message-row--drop-before': dragState.overId === item.id && dragState.position === 'before',
   'message-row--drop-after': dragState.overId === item.id && dragState.position === 'after',
+  'message-row--search-hit': searchHighlightIds.value.has(item.id || ''),
 });
 
 const createGhostElement = (rowEl: HTMLElement) => {
@@ -4077,6 +4119,8 @@ onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
   revokeIdentityObjectURL();
+  searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
+  searchHighlightTimers.clear();
 });
 </script>
 
@@ -4697,6 +4741,8 @@ onBeforeUnmount(() => {
     @refresh="fetchArchivedMessages"
   />
 
+  <ChatSearchPanel @jump-to-message="handleSearchJump" />
+
   <ExportDialog
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
@@ -4793,6 +4839,34 @@ onBeforeUnmount(() => {
 
 .message-row--drop-after::after {
   bottom: -0.3rem;
+}
+
+.message-row--search-hit::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 0.75rem;
+  z-index: -1;
+  background: rgba(14, 165, 233, 0.18);
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.25);
+  animation: search-hit-pulse 2s ease forwards;
+}
+
+@keyframes search-hit-pulse {
+  0% {
+    opacity: 0.9;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+
+  100% {
+    opacity: 0;
+  }
 }
 
 @media (hover: none) {
