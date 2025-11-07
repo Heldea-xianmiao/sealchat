@@ -1,6 +1,8 @@
 package model
 
 import (
+	"sort"
+	"strings"
 	"time"
 
 	"sealchat/protocol"
@@ -54,4 +56,64 @@ func MemberGetByUserIDAndChannelIDBase(userId string, channelId string, defaultN
 
 func MemberGetByUserIDAndChannelID(userId string, channelId string, defaultName string) (*MemberModel, error) {
 	return MemberGetByUserIDAndChannelIDBase(userId, channelId, defaultName, true)
+}
+
+type ChannelMemberOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+func ChannelMemberOptionList(channelID string) ([]*ChannelMemberOption, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return []*ChannelMemberOption{}, nil
+	}
+
+	type rawOption struct {
+		UserID     string
+		MemberNick string
+		UserNick   string
+		Username   string
+	}
+
+	var rows []rawOption
+	db := GetDB()
+	err := db.Table("members AS m").
+		Select("m.user_id AS user_id, m.nickname AS member_nick, u.nickname AS user_nick, u.username AS username").
+		Joins("LEFT JOIN users u ON u.id = m.user_id").
+		Where("m.channel_id = ?", channelID).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	options := make([]*ChannelMemberOption, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if row.UserID == "" {
+			continue
+		}
+		if _, exists := seen[row.UserID]; exists {
+			continue
+		}
+		label := pickMemberDisplayName(row.MemberNick, row.UserNick, row.Username)
+		options = append(options, &ChannelMemberOption{
+			ID:    row.UserID,
+			Label: label,
+		})
+		seen[row.UserID] = struct{}{}
+	}
+
+	sort.Slice(options, func(i, j int) bool {
+		return strings.ToLower(options[i].Label) < strings.ToLower(options[j].Label)
+	})
+	return options, nil
+}
+
+func pickMemberDisplayName(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "未知成员"
 }

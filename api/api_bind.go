@@ -100,6 +100,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
 
+	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
+
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}
 		commandTips.Range(func(key string, value map[string]string) bool {
@@ -113,6 +115,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	v1Auth.Get("/channel-role-list", ChannelRoles)
 	v1Auth.Get("/channel-member-list", ChannelMembers)
+	v1Auth.Get("/channels/:channelId/member-options", ChannelMemberOptions)
 	v1Auth.Post("/channel-info-edit", ChannelInfoEdit)
 	v1Auth.Get("/channel-info", ChannelInfoGet)
 	v1Auth.Get("/channel-perm-tree", ChannelPermTree)

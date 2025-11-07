@@ -1,14 +1,16 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/pm/perm_tree"
 	"sealchat/utils"
-	"strings"
-
-	"github.com/gofiber/fiber/v2"
 )
 
 func ChannelRoles(c *fiber.Ctx) error {
@@ -41,6 +43,51 @@ func ChannelMembers(c *fiber.Ctx) error {
 			i.User = x[0]
 		}, "")
 		return items, total, err
+	})
+}
+
+func ChannelMemberOptions(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"message": "未登录",
+		})
+	}
+
+	channelID := strings.TrimSpace(c.Params("channelId"))
+	if channelID == "" {
+		channelID = strings.TrimSpace(c.Query("id"))
+	}
+	if channelID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+
+	channelRef, err := resolveChannelAccess(user.ID, channelID)
+	if err != nil {
+		switch {
+		case errors.Is(err, fiber.ErrForbidden):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+		case errors.Is(err, fiber.ErrNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"message": "校验频道权限失败"})
+		}
+	}
+
+	options, err := model.ChannelMemberOptionList(channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"message": "获取频道成员失败",
+			"error":   err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"items":   options,
+		"total":   len(options),
+		"channel": channelRef,
 	})
 }
 
