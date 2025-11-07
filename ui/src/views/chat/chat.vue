@@ -96,8 +96,57 @@ const galleryEmojiName = computed(() => gallery.emojiCollection?.name ?? '');
 const hasGalleryEmoji = computed(() => galleryEmojiItems.value.length > 0);
 
 const emojiPopoverShow = ref(false);
+const emojiTriggerButtonRef = ref<HTMLElement | null>(null);
+const emojiAnchorElement = ref<HTMLElement | null>(null);
+const emojiPopoverX = ref<number | null>(null);
+const emojiPopoverY = ref<number | null>(null);
+const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
+const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
 const isManagingEmoji = ref(false);
+
+const resolveEmojiAnchorElement = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const current = emojiAnchorElement.value;
+  if (current && document.body.contains(current)) {
+    return current;
+  }
+  emojiAnchorElement.value = document.querySelector<HTMLElement>('.identity-switcher__avatar');
+  return emojiAnchorElement.value;
+};
+
+const EMOJI_POPOVER_VERTICAL_OFFSET = 10; // 让弹层靠近头像顶部，避免遮挡
+
+const syncEmojiPopoverPosition = () => {
+  const anchor = resolveEmojiAnchorElement() || emojiTriggerButtonRef.value;
+  if (!anchor) {
+    return false;
+  }
+  const rect = anchor.getBoundingClientRect();
+  emojiPopoverX.value = rect.left;
+  emojiPopoverY.value = rect.top + EMOJI_POPOVER_VERTICAL_OFFSET;
+  return true;
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'resize', () => {
+    if (emojiPopoverShow.value) {
+      syncEmojiPopoverPosition();
+    }
+  });
+  useEventListener(
+    window,
+    'scroll',
+    () => {
+      if (emojiPopoverShow.value) {
+        syncEmojiPopoverPosition();
+      }
+    },
+    { passive: true, capture: true },
+  );
+}
 
 const allGalleryItems = computed(() =>
   Object.values(gallery.items).flatMap((entry) => entry?.items ?? [])
@@ -247,6 +296,9 @@ watch(emojiPopoverShow, (show) => {
     isManagingEmoji.value = false;
     emojiSearchQuery.value = '';
   } else {
+    nextTick(() => {
+      syncEmojiPopoverPosition();
+    });
     gallery.loadEmojiCollection();
   }
 });
@@ -278,6 +330,15 @@ const handleEmojiManageClick = async () => {
     emojiPopoverShow.value = false;
     await openGalleryPanel();
   }
+};
+
+const handleEmojiTriggerClick = () => {
+  if (emojiPopoverShow.value) {
+    emojiPopoverShow.value = false;
+    return;
+  }
+  syncEmojiPopoverPosition();
+  emojiPopoverShow.value = true;
 };
 
 
@@ -4118,7 +4179,7 @@ onBeforeUnmount(() => {
           </div>
         </transition>
 
-        <div class="chat-input-area relative flex-1">
+          <div class="chat-input-area relative flex-1">
             <div class="input-floating-toolbar">
               <ChannelIdentitySwitcher
                 v-if="chat.curChannel"
@@ -4128,15 +4189,25 @@ onBeforeUnmount(() => {
                 @identity-changed="emitTypingPreview"
               />
               <div class="emoji-trigger">
-                <n-popover v-model:show="emojiPopoverShow" trigger="click" placement="top-start">
-                  <template #trigger>
-                    <n-button quaternary circle :disabled="isEditing">
-                      <template #icon>
-                        <n-icon :component="Plus" size="18" />
-                      </template>
-                    </n-button>
+                <n-button
+                  quaternary
+                  circle
+                  :disabled="isEditing"
+                  ref="emojiTriggerButtonRef"
+                  @click="handleEmojiTriggerClick"
+                >
+                  <template #icon>
+                    <n-icon :component="Plus" size="18" />
                   </template>
+                </n-button>
 
+                <n-popover
+                  v-model:show="emojiPopoverShow"
+                  trigger="click"
+                  placement="bottom-start"
+                  :x="emojiPopoverXCoord"
+                  :y="emojiPopoverYCoord"
+                >
                   <div class="emoji-panel">
                     <div class="emoji-panel__header">
                       <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
