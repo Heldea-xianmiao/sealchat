@@ -988,14 +988,21 @@ const resolveUserNameById = (userId: string): string => {
   return candidate?.nick || candidate?.name || userId;
 };
 
+const toIsoStringOrEmpty = (value: any): string => {
+  const timestamp = normalizeTimestamp(value);
+  if (timestamp === null) {
+    return '';
+  }
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+};
+
 const toArchivedPanelEntry = (message: Message): ArchivedPanelMessage => {
-  const createdAt = Number((message as any).createdAt ?? message.createdAt ?? Date.now());
-  const archivedAt = Number((message as any).archivedAt ?? message.archivedAt ?? Date.now());
   return {
     id: message.id || '',
     content: message.content || '',
-    createdAt: new Date(createdAt).toISOString(),
-    archivedAt: new Date(archivedAt).toISOString(),
+    createdAt: toIsoStringOrEmpty((message as any).createdAt ?? message.createdAt),
+    archivedAt: toIsoStringOrEmpty((message as any).archivedAt ?? message.archivedAt),
     archivedBy: resolveUserNameById((message as any).archivedBy || ''),
     sender: {
       name: getMessageDisplayName(message),
@@ -1085,18 +1092,16 @@ const fetchArchivedMessages = async () => {
   }
   archivedLoading.value = true;
   try {
-    const resp = await chat.sendAPI('message.list', {
-      channel_id: chat.curChannel.id,
-      archived_only: true,
-      include_archived: true,
-      include_ooc: true,
+    const resp = await chat.messageList(chat.curChannel.id, undefined, {
+      includeArchived: true,
+      archivedOnly: true,
+      includeOoc: true,
     });
-    const payload = resp?.data as { data?: any[] } | undefined;
-    const items = payload?.data ?? [];
+    const items = resp?.data ?? [];
     archivedMessages.value = items
       .map((item: any) => normalizeMessageShape(item))
       .map((item: Message) => toArchivedPanelEntry(item))
-      .sort((a, b) => new Date(b.archivedAt).getTime() - new Date(a.archivedAt).getTime());
+      .sort((a, b) => (normalizeTimestamp(b.archivedAt) ?? 0) - (normalizeTimestamp(a.archivedAt) ?? 0));
   } catch (error) {
     console.error('加载归档消息失败', error);
     if (archiveDrawerVisible.value) {
@@ -1146,6 +1151,32 @@ const visibleRows = computed(() => {
   });
 });
 
+const normalizeTimestamp = (value: any): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric)) {
+      return numeric;
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+  return null;
+};
+
 const normalizeMessageShape = (msg: any): Message => {
   if (!msg) {
     return msg as Message;
@@ -1179,6 +1210,14 @@ const normalizeMessageShape = (msg: any): Message => {
   } else if ((msg as any).displayOrder !== undefined) {
     (msg as any).displayOrder = Number((msg as any).displayOrder);
   }
+
+  const normalizedCreatedAt = normalizeTimestamp(msg.createdAt);
+  msg.createdAt = normalizedCreatedAt ?? undefined;
+  const normalizedUpdatedAt = normalizeTimestamp(msg.updatedAt);
+  msg.updatedAt = normalizedUpdatedAt ?? undefined;
+  const normalizedArchivedAt = normalizeTimestamp(msg.archivedAt);
+  msg.archivedAt = normalizedArchivedAt ?? undefined;
+
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
   }

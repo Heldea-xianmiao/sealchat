@@ -48,7 +48,14 @@ const formatContent = (content: string) => {
 }
 
 const formatDate = (dateStr: string) => {
-  return new Date(dateStr).toLocaleString()
+  if (!dateStr) {
+    return '未知时间'
+  }
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) {
+    return '未知时间'
+  }
+  return date.toLocaleString()
 }
 
 const handleUnarchive = async () => {
@@ -60,7 +67,6 @@ const handleUnarchive = async () => {
   try {
     emit('unarchive', selectedIds.value)
     selectedIds.value = []
-    message.success('消息已恢复')
   } catch (error) {
     message.error('恢复失败')
   }
@@ -76,7 +82,6 @@ const handleDelete = async () => {
   try {
     emit('delete', selectedIds.value)
     selectedIds.value = []
-    message.success('消息已删除')
   } catch (error) {
     message.error('删除失败')
   }
