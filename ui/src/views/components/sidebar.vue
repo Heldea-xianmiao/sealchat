@@ -5,7 +5,7 @@ import { useUserStore } from '@/stores/user';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, type Component, h, defineAsyncComponent, watch, onMounted } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -385,4 +385,6 @@ const aaa = ref(false);
     @apply hidden;
   }
 }
+
+
 </style>

@@ -1,10 +1,10 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { Plus, Users, Link, Refresh } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh } from '@vicons/tabler';
 import { AppsOutline, UnlinkOutline, SearchOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 // import AdminSettings from './admin-settings.vue'
@@ -16,6 +16,16 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 const AdminSettings = defineAsyncComponent(() => import('../admin/admin-settings.vue'));
 
 const { t } = useI18n()
+
+const props = withDefaults(defineProps<{ sidebarCollapsed?: boolean }>(), {
+  sidebarCollapsed: false,
+})
+
+const sidebarCollapsed = computed(() => props.sidebarCollapsed)
+
+const emit = defineEmits<{
+  (e: 'toggle-sidebar'): void
+}>()
 
 const notifShow = ref(false)
 const userProfileShow = ref(false)
@@ -283,15 +293,23 @@ onMounted(() => {
 onBeforeUnmount(() => {
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
 });
+
+const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarLeftExpand : LayoutSidebarLeftCollapse)
 </script>
 
 <template>
   <div class="sc-header border-b flex justify-between items-center w-full px-2" style="height: 3.5rem;">
     <div>
       <div class="flex items-center">
-        <n-icon size="36" class="mr-2">
-          <img src="@/assets/head3.png" />
-        </n-icon>
+        <button
+          type="button"
+          class="sc-icon-button sc-sidebar-toggle-button mr-2"
+          :class="{ 'is-collapsed': sidebarCollapsed }"
+          aria-label="切换频道栏"
+          @click="emit('toggle-sidebar')"
+        >
+          <n-icon :component="sidebarToggleIcon" size="20" />
+        </button>
         <span class="text-sm font-bold sm:text-xl">{{ channelTitle }}</span>
       </div>
 
@@ -438,6 +456,7 @@ onBeforeUnmount(() => {
   background-color: rgba(14, 165, 233, 0.2);
   box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.35);
 }
+
 
 .online-badge {
   position: absolute;

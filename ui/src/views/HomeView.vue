@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import Chat from './chat/chat.vue'
 import ChatHeader from './components/header.vue'
 import ChatSidebar from './components/sidebar.vue'
@@ -8,17 +8,37 @@ import { useWindowSize } from '@vueuse/core'
 const { width } = useWindowSize()
 
 const active = ref(false)
+const isSidebarCollapsed = ref(false)
+
+const isMobileViewport = computed(() => width.value < 700)
+const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value)
+const collapsedWidth = computed(() => 0)
+
+const toggleSidebar = () => {
+  if (isMobileViewport.value) {
+    active.value = true
+    return
+  }
+  isSidebarCollapsed.value = !isSidebarCollapsed.value
+}
+
 </script>
 
 <template>
   <main class="h-screen">
     <n-layout-header bordered>
-      <chat-header />
+      <chat-header :sidebar-collapsed="computedCollapsed" @toggle-sidebar="toggleSidebar" />
     </n-layout-header>
 
     <n-layout has-sider position="absolute" style="margin-top: 3.5rem;">
-      <n-layout-sider :collapsed-width="0" :collapsed="width < 700" content-style="" :native-scrollbar="false" bordered>
-        <ChatSidebar v-if="width >= 700" />
+      <n-layout-sider
+        collapse-mode="width"
+        :collapsed="computedCollapsed"
+        :collapsed-width="collapsedWidth"
+        :native-scrollbar="false"
+        bordered
+      >
+        <ChatSidebar v-if="!isMobileViewport && !isSidebarCollapsed" />
       </n-layout-sider>
 
       <n-layout>
@@ -45,4 +65,5 @@ const active = ref(false)
     display: block;
   }
 }
+
 </style>
