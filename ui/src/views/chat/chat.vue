@@ -49,6 +49,7 @@ import DOMPurify from 'dompurify';
 const chat = useChatStore();
 const user = useUserStore();
 const gallery = useGalleryStore();
+const utils = useUtilsStore();
 const isEditing = computed(() => !!chat.editing);
 
 // 新增状态
@@ -1211,6 +1212,9 @@ const handleUnarchiveMessages = async (messageIds: string[]) => {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const logUploadConfig = computed(() => utils.config?.logUpload);
+const canUseCloudUpload = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false);
+
 const triggerBlobDownload = (blob: Blob, fileName: string) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -1222,7 +1226,38 @@ const triggerBlobDownload = (blob: Blob, fileName: string) => {
   URL.revokeObjectURL(url);
 };
 
-const pollExportTask = async (taskId: string) => {
+type CloudUploadResult = {
+  url?: string;
+  name?: string;
+  file_name?: string;
+  uploaded_at?: number;
+};
+
+const showCloudUploadDialog = (payload: CloudUploadResult) => {
+  if (!payload?.url) {
+    return;
+  }
+  const fileLabel = payload.name || payload.file_name || 'log-zlib-compressed';
+  const uploadedLabel = payload.uploaded_at ? new Date(payload.uploaded_at).toLocaleString() : '';
+  dialog.success({
+    title: '云端日志已上传',
+    positiveText: '知道了',
+    content: () => (
+      <div class="cloud-upload-result">
+        <p>文件：{fileLabel}</p>
+        <p>
+          链接：
+          <a href={payload.url} target="_blank" rel="noopener">
+            {payload.url}
+          </a>
+        </p>
+        {uploadedLabel ? <p>上传时间：{uploadedLabel}</p> : null}
+      </div>
+    ),
+  });
+};
+
+const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; format?: string }) => {
   const maxAttempts = 30;
   const interval = 2000;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -1232,6 +1267,19 @@ const pollExportTask = async (taskId: string) => {
         message.success('导出完成，正在下载文件');
         const { blob, fileName } = await chat.downloadExportResult(taskId, status.file_name);
         triggerBlobDownload(blob, fileName);
+        if (opts?.autoUpload) {
+          try {
+            const uploadResp = await chat.uploadExportTask(taskId);
+            if (uploadResp?.url) {
+              showCloudUploadDialog(uploadResp);
+            } else {
+              message.warning('云端染色返回结果异常，未提供链接');
+            }
+          } catch (error: any) {
+            const errMsg = error?.response?.data?.error || (error as Error)?.message || '未知错误';
+            message.warning(`云端染色上传失败：${errMsg}`);
+          }
+        }
         return;
       }
       if (status.status === 'failed') {
@@ -1253,6 +1301,7 @@ const handleExportMessages = async (params: {
   includeArchived: boolean;
   withoutTimestamp: boolean;
   mergeMessages: boolean;
+  autoUpload: boolean;
 }) => {
   if (!chat.curChannel?.id) {
     message.error('请选择需要导出的频道');
@@ -1271,7 +1320,8 @@ const handleExportMessages = async (params: {
     const result = await chat.createExportTask(payload);
     message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);
     exportDialogVisible.value = false;
-    void pollExportTask(result.task_id);
+    const shouldAutoUpload = Boolean(params.autoUpload && params.format === 'json' && canUseCloudUpload.value);
+    void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, format: params.format });
   } catch (error: any) {
     console.error('导出失败', error);
     const errMsg = error?.response?.data?.error || (error as Error)?.message || '导出失败';
@@ -3709,8 +3759,6 @@ const scrollToBottom = () => {
   });
 }
 
-const utils = useUtilsStore();
-
 const emit = defineEmits(['drawer-show'])
 
 let firstLoad = false;
@@ -5070,6 +5118,15 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   position: relative;
   padding-left: 0.25rem;
+}
+
+.cloud-upload-result {
+  line-height: 1.6;
+}
+
+.cloud-upload-result a {
+  color: var(--primary-color);
+  word-break: break-all;
 }
 
 .identity-drawer__header {

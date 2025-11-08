@@ -39,6 +39,15 @@ export interface SatoriMessage {
   whisperTo?: User | null;
 }
 
+export interface LogUploadConfig {
+  enabled?: boolean;
+  endpoint?: string;
+  client?: string;
+  uniformId?: string;
+  version?: number;
+  note?: string;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -48,6 +57,7 @@ export interface ServerConfig {
   imageSizeLimit: number;
   imageCompress: boolean;
   builtInSealBotEnable: boolean;
+  logUpload?: LogUploadConfig;
 }
 
 export interface UserInfo {

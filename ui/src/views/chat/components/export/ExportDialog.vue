@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useUtilsStore } from '@/stores/utils'
 
 interface ExportParams {
   format: string
@@ -9,6 +10,7 @@ interface ExportParams {
   includeArchived: boolean
   withoutTimestamp: boolean
   mergeMessages: boolean
+  autoUpload: boolean
 }
 
 interface Props {
@@ -25,6 +27,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const message = useMessage()
+const utils = useUtilsStore()
 const loading = ref(false)
 
 const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
@@ -36,12 +39,20 @@ const form = reactive<ExportParams>({
   includeArchived: false,
   withoutTimestamp: false,
   mergeMessages: true,
+  autoUpload: false,
 })
+
+const logUploadConfig = computed(() => utils.config?.logUpload)
+const cloudUploadEnabled = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false)
+const cloudUploadHint = computed(() => logUploadConfig.value?.note || '可上传到 DicePP 云端，获得海豹染色器 BBcode/Docx 文件。')
+const showCloudUploadOption = computed(() => cloudUploadEnabled.value && form.format === 'json')
+const cloudUploadDefaultName = '频道名_时间范围（例如：新的_20251107-20251108）'
+const isSealFormatter = computed(() => form.format === 'json')
 
 const formatOptions = [
   { label: '纯文本 (.txt)', value: 'txt' },
   { label: 'HTML (.html)', value: 'html' },
-  { label: 'JSON (.json)', value: 'json' },
+  { label: '海豹染色器 (BBcode/Docx)', value: 'json' },
 ]
 
 const timePresets = [
@@ -99,6 +110,15 @@ watch(
   }
 )
 
+watch(
+  () => form.format,
+  (newFormat) => {
+    if (newFormat !== 'json') {
+      form.autoUpload = false
+    }
+  }
+)
+
 const handleExport = async () => {
   if (!props.channelId) {
     message.error('未选择频道')
@@ -124,6 +144,7 @@ const handleClose = () => {
   form.includeArchived = false
   form.withoutTimestamp = false
   form.mergeMessages = true
+  form.autoUpload = false
   timePreset.value = 'none'
 }
 
@@ -163,7 +184,10 @@ const shortcuts = {
         <template #header>
           导出说明
         </template>
-        提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。
+        <p>提交后系统会在后台生成文件，完成后自动下载。范围越大耗时越久，请耐心等待。</p>
+        <p v-if="cloudUploadEnabled" class="cloud-tip">
+          云端染色已开放：JSON 导出可一键上传到 DicePP 云端，生成 docx/BBcode 渲染结果。
+        </p>
       </n-alert>
     </div>
 
@@ -174,6 +198,11 @@ const shortcuts = {
           :options="formatOptions"
           placeholder="选择导出格式"
         />
+        <template #feedback>
+          <div v-if="isSealFormatter" class="seal-tip">
+            JSON 导出会生成海豹染色器专用格式，可在云端转换为 BBcode 或 Docx。
+          </div>
+        </template>
       </n-form-item>
 
       <n-form-item label="时间范围">
@@ -236,6 +265,16 @@ const shortcuts = {
           </n-tooltip>
         </n-space>
       </n-form-item>
+
+      <n-form-item v-if="showCloudUploadOption" label="云端染色">
+        <n-space vertical>
+          <n-checkbox v-model:checked="form.autoUpload">
+            导出完成后自动上传到云端染色服务
+          </n-checkbox>
+          <n-text depth="3">{{ cloudUploadHint }}</n-text>
+          <n-text depth="3">默认名称：{{ cloudUploadDefaultName }}</n-text>
+        </n-space>
+      </n-form-item>
     </n-form>
 
     <template #footer>
@@ -283,5 +322,16 @@ const shortcuts = {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.cloud-tip {
+  margin-top: 0.5rem;
+  line-height: 1.4;
+}
+
+.seal-tip {
+  margin-top: 0.5rem;
+  font-size: 12px;
+  color: var(--primary-color);
 }
 </style>

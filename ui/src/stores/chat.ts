@@ -1301,6 +1301,16 @@ export const useChatStore = defineStore({
         fileName,
       };
     },
+
+    async uploadExportTask(taskId: string, payload?: { name?: string }) {
+      const resp = await api.post(`api/v1/chat/export/${taskId}/upload`, payload ?? {});
+      return resp.data as {
+        url: string;
+        name?: string;
+        file_name?: string;
+        uploaded_at?: number;
+      };
+    },
   }
 });
 
