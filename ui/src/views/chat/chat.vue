@@ -1409,6 +1409,11 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
     msg.whisperTo = msg.whisper_to;
   }
+  if (msg.isWhisper === undefined && msg.is_whisper !== undefined) {
+    msg.isWhisper = Boolean(msg.is_whisper);
+  } else if (msg.isWhisper !== undefined) {
+    msg.isWhisper = Boolean(msg.isWhisper);
+  }
   if (msg.isArchived === undefined && msg.is_archived !== undefined) {
     msg.isArchived = msg.is_archived;
   }
