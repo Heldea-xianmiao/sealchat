@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"html/template"
+	htmltemplate "html/template"
 	"io"
 	"strings"
 	"time"
 
 	"sealchat/model"
+
+	htmlnode "golang.org/x/net/html"
+	"html"
 )
 
 type exportFormatter interface {
@@ -58,6 +61,7 @@ func getFormatter(name string) (exportFormatter, bool) {
 }
 
 func buildExportPayload(job *model.MessageExportJobModel, channelName string, messages []*model.MessageModel) *ExportPayload {
+	identityResolver := newIdentityResolver(job.ChannelID)
 	exportMessages := make([]ExportMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
@@ -73,7 +77,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			IsArchived:     msg.IsArchived,
 			CreatedAt:      msg.CreatedAt,
 			Content:        msg.Content,
-			WhisperTargets: extractWhisperTargets(msg),
+			WhisperTargets: extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
 	}
 
@@ -95,7 +99,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 	}
 }
 
-func extractWhisperTargets(msg *model.MessageModel) []string {
+func extractWhisperTargets(msg *model.MessageModel, channelID string, resolver *identityResolver) []string {
 	if msg == nil || !msg.IsWhisper {
 		return nil
 	}
@@ -113,14 +117,16 @@ func extractWhisperTargets(msg *model.MessageModel) []string {
 		targets = append(targets, name)
 	}
 	if msg.WhisperTarget != nil {
-		addName(resolveUserDisplayName(msg.WhisperTarget))
+		addName(resolveMemberDisplayName(channelID, msg.WhisperTarget.ID, resolver))
 	}
 	for _, id := range parseWhisperIDs(msg.WhisperTo) {
-		if user := model.UserGet(id); user != nil {
-			addName(resolveUserDisplayName(user))
-		} else {
-			addName(id)
+		if resolver != nil {
+			if name := resolver.resolveIdentityName(id); name != "" {
+				addName(name)
+				continue
+			}
 		}
+		addName(resolveMemberDisplayName(channelID, id, resolver))
 	}
 	return targets
 }
@@ -138,6 +144,128 @@ func parseWhisperIDs(raw string) []string {
 		}
 	}
 	return ids
+}
+
+type identityResolver struct {
+	channelID string
+	byID      map[string]string
+}
+
+func newIdentityResolver(channelID string) *identityResolver {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	items, err := model.ChannelIdentityList(channelID, "")
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		name := strings.TrimSpace(item.DisplayName)
+		if name == "" {
+			continue
+		}
+		m[strings.TrimSpace(item.ID)] = name
+	}
+	return &identityResolver{channelID: channelID, byID: m}
+}
+
+func (r *identityResolver) resolveIdentityName(identityID string) string {
+	if r == nil {
+		return ""
+	}
+	identityID = strings.TrimSpace(identityID)
+	if identityID == "" {
+		return ""
+	}
+	if name, ok := r.byID[identityID]; ok {
+		return name
+	}
+	return ""
+}
+
+func stripRichText(input string) string {
+	if input == "" {
+		return ""
+	}
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return ""
+	}
+	if !strings.ContainsAny(s, "<>&") {
+		return normalizePlainText(s)
+	}
+	tokenizer := htmlnode.NewTokenizer(strings.NewReader(s))
+	var sb strings.Builder
+	lastWasNewline := false
+	writeText := func(text string) {
+		if text == "" {
+			return
+		}
+		text = html.UnescapeString(text)
+		text = strings.ReplaceAll(text, "\u00a0", " ")
+		sb.WriteString(text)
+		lastWasNewline = strings.HasSuffix(text, "\n")
+	}
+	writeNewline := func() {
+		if sb.Len() == 0 || lastWasNewline {
+			return
+		}
+		sb.WriteByte('\n')
+		lastWasNewline = true
+	}
+	for {
+		switch tokenizer.Next() {
+		case htmlnode.ErrorToken:
+			return normalizePlainText(sb.String())
+		case htmlnode.TextToken:
+			writeText(string(tokenizer.Text()))
+		case htmlnode.StartTagToken:
+			name, _ := tokenizer.TagName()
+			tag := strings.ToLower(string(name))
+			if tag == "img" {
+				continue
+			}
+			if shouldInsertLineBreak(tag) {
+				writeNewline()
+			}
+		case htmlnode.EndTagToken:
+			name, _ := tokenizer.TagName()
+			tag := strings.ToLower(string(name))
+			if shouldInsertLineBreak(tag) {
+				writeNewline()
+			}
+		case htmlnode.SelfClosingTagToken:
+			name, _ := tokenizer.TagName()
+			tag := strings.ToLower(string(name))
+			if tag == "img" {
+				continue
+			}
+			if shouldInsertLineBreak(tag) {
+				writeNewline()
+			}
+		}
+	}
+}
+
+func shouldInsertLineBreak(tag string) bool {
+	switch tag {
+	case "br", "p", "div", "li":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizePlainText(s string) string {
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return strings.TrimSpace(s)
 }
 
 func resolveSenderName(msg *model.MessageModel) string {
@@ -178,6 +306,27 @@ func resolveUserDisplayName(u *model.UserModel) string {
 		return v
 	}
 	return strings.TrimSpace(u.ID)
+}
+
+func resolveMemberDisplayName(channelID, userID string, resolver *identityResolver) string {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ""
+	}
+	if resolver != nil {
+		if name := resolver.resolveIdentityName(userID); name != "" {
+			return name
+		}
+	}
+	if member, _ := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false); member != nil {
+		if v := strings.TrimSpace(member.Nickname); v != "" {
+			return v
+		}
+	}
+	if user := model.UserGet(userID); user != nil {
+		return resolveUserDisplayName(user)
+	}
+	return userID
 }
 
 func fallbackIcMode(value string) string {
@@ -231,23 +380,22 @@ func (textFormatter) Build(payload *ExportPayload) ([]byte, error) {
 		if !payload.WithoutTimestamp {
 			prefixParts = append(prefixParts, fmt.Sprintf("[%s]", msg.CreatedAt.Format("2006-01-02 15:04:05")))
 		}
-		var whisperLabel string
-		if msg.IsWhisper {
-			whisperLabel = formatWhisperTargets(msg.WhisperTargets)
-		}
 		var header string
 		if len(prefixParts) > 0 {
 			header = strings.Join(prefixParts, " ")
 		}
 		namePart := fmt.Sprintf("<%s>", msg.SenderName)
-		content := wrapOOCContent(msg.IcMode, msg.Content)
+		cleanContent := stripRichText(msg.Content)
+		content := wrapOOCContent(msg.IcMode, cleanContent)
 		parts := []string{}
 		if header != "" {
 			parts = append(parts, header)
 		}
 		parts = append(parts, namePart)
-		if whisperLabel != "" {
-			parts = append(parts, whisperLabel)
+		if msg.IsWhisper {
+			if label := formatWhisperTargets(msg.WhisperTargets); label != "" {
+				parts = append(parts, label)
+			}
 		}
 		parts = append(parts, content)
 		sb.WriteString(strings.Join(parts, " ") + "\n")
@@ -284,7 +432,7 @@ func (htmlFormatter) ContentType() string {
 	return "text/html; charset=utf-8"
 }
 
-var exportHTMLTemplate = template.Must(template.New("export_html").Funcs(template.FuncMap{
+var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs(htmltemplate.FuncMap{
 	"formatTime": func(t time.Time) string {
 		if t.IsZero() {
 			return ""
