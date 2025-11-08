@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -166,6 +167,9 @@ func AttachmentGet(c *fiber.Ctx) error {
 		return wrapError(c, err, "读取附件失败")
 	}
 	if att.ID == "" {
+		if served, err := trySendUploadFile(c, attachmentID); served {
+			return err
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"message": "附件不存在",
 		})
@@ -226,6 +230,29 @@ func wrapErrorStatus(c *fiber.Ctx, status int, err error, s string) error {
 
 func wrapError(c *fiber.Ctx, err error, s string) error {
 	return wrapErrorStatus(c, fiber.StatusBadRequest, err, s)
+}
+
+var attachmentFileTokenPattern = regexp.MustCompile(`^[0-9a-fA-F]{32,}_[0-9]+$`)
+
+func trySendUploadFile(c *fiber.Ctx, token string) (bool, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false, nil
+	}
+	if strings.ContainsAny(token, "/\\") {
+		return false, nil
+	}
+	if !attachmentFileTokenPattern.MatchString(token) {
+		return false, nil
+	}
+	fullPath := filepath.Join("./data/upload", token)
+	if _, err := os.Stat(fullPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return true, wrapError(c, err, "读取附件失败")
+	}
+	return true, c.SendFile(fullPath)
 }
 
 func getHeader(c *fiber.Ctx, name string) string {

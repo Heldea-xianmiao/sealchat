@@ -53,3 +53,27 @@ func TestStripRichTextFallbackHTML(t *testing.T) {
 		t.Fatalf("stripRichText() = %q, want %q", got, want)
 	}
 }
+
+func TestStripRichTextImageTipTap(t *testing.T) {
+	attachmentBaseURLOverride = "https://seal.test"
+	t.Cleanup(func() {
+		attachmentBaseURLOverride = ""
+	})
+	input := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"图像"},{"type":"image","attrs":{"src":"id:abc123"}}]}]}`
+	want := "图像[CQ:image,file=image,url=https://seal.test/api/v1/attachment/abc123]"
+	if got := stripRichText(input); got != want {
+		t.Fatalf("stripRichText() = %q, want %q", got, want)
+	}
+}
+
+func TestStripRichTextImageHTML(t *testing.T) {
+	attachmentBaseURLOverride = "https://seal.test"
+	t.Cleanup(func() {
+		attachmentBaseURLOverride = ""
+	})
+	input := `<p>示例<img src="/api/v1/attachment/xyz" /></p>`
+	want := "示例[CQ:image,file=image,url=https://seal.test/api/v1/attachment/xyz]"
+	if got := stripRichText(input); got != want {
+		t.Fatalf("stripRichText() = %q, want %q", got, want)
+	}
+}

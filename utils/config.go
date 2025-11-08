@@ -2,7 +2,9 @@ package utils
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -25,6 +27,7 @@ type LogUploadConfig struct {
 type AppConfig struct {
 	ServeAt                   string          `json:"serveAt" yaml:"serveAt"`
 	Domain                    string          `json:"domain" yaml:"domain"`
+	ImageBaseURL              string          `json:"imageBaseUrl" yaml:"imageBaseUrl"`
 	RegisterOpen              bool            `json:"registerOpen" yaml:"registerOpen"`
 	WebUrl                    string          `json:"webUrl" yaml:"webUrl"`
 	ChatHistoryPersistentDays int64           `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
@@ -38,7 +41,14 @@ type AppConfig struct {
 }
 
 // 注: 实验型使用koanf，其实从需求上讲目前并无必要
-var k = koanf.New(".")
+var (
+	k             = koanf.New(".")
+	currentConfig *AppConfig
+)
+
+func GetConfig() *AppConfig {
+	return currentConfig
+}
 
 func ReadConfig() *AppConfig {
 	config := AppConfig{
@@ -62,6 +72,10 @@ func ReadConfig() *AppConfig {
 			Version:        105,
 			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
 		},
+	}
+
+	if strings.TrimSpace(config.ImageBaseURL) == "" {
+		config.ImageBaseURL = defaultImageBaseURL(config.ServeAt)
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -100,8 +114,13 @@ func ReadConfig() *AppConfig {
 		}
 	}
 
+	if strings.TrimSpace(config.ImageBaseURL) == "" {
+		config.ImageBaseURL = defaultImageBaseURL(config.ServeAt)
+	}
+
 	k.Print()
-	return &config
+	currentConfig = &config
+	return currentConfig
 }
 
 func WriteConfig(config *AppConfig) {
@@ -119,6 +138,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("imageCompress", config.ImageCompress)
 		_ = k.Set("builtInSealBotEnable", config.BuiltInSealBotEnable)
 		_ = k.Set("galleryQuotaMB", config.GalleryQuotaMB)
+		_ = k.Set("imageBaseUrl", config.ImageBaseURL)
 		_ = k.Set("logUpload.enabled", config.LogUpload.Enabled)
 		_ = k.Set("logUpload.endpoint", config.LogUpload.Endpoint)
 		_ = k.Set("logUpload.token", config.LogUpload.Token)
@@ -132,6 +152,7 @@ func WriteConfig(config *AppConfig) {
 			fmt.Printf("配置解析失败: %v\n", err)
 			os.Exit(-1)
 		}
+		currentConfig = config
 	}
 
 	content, err := yaml.Parser().Marshal(k.Raw())
@@ -143,4 +164,64 @@ func WriteConfig(config *AppConfig) {
 	if err != nil {
 		fmt.Println("错误: 配置文件写入失败")
 	}
+}
+
+func defaultImageBaseURL(serveAt string) string {
+	host, port := splitHostPort(serveAt)
+	if port == "" {
+		port = "3212"
+	}
+	ip := host
+	if ip == "" || ip == "0.0.0.0" || ip == "::" || ip == "[::]" {
+		if detected := detectLocalIPv4(); detected != "" {
+			ip = detected
+		} else {
+			ip = "127.0.0.1"
+		}
+	}
+	return fmt.Sprintf("%s:%s", ip, port)
+}
+
+func splitHostPort(addr string) (string, string) {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return "", ""
+	}
+	if !strings.Contains(trimmed, ":") {
+		return trimmed, ""
+	}
+	host, port, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return trimmed, ""
+	}
+	return host, port
+}
+
+func detectLocalIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				if ip := v.IP.To4(); ip != nil {
+					return ip.String()
+				}
+			case *net.IPAddr:
+				if ip := v.IP.To4(); ip != nil {
+					return ip.String()
+				}
+			}
+		}
+	}
+	return ""
 }

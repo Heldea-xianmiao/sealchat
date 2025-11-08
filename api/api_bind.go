@@ -61,6 +61,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		return c.Status(http.StatusOK).JSON(ret)
 	})
 
+	v1.Get("/attachment/:id", AttachmentGet)
+
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
 	v1Auth.Post("/user-password-change", UserChangePassword)
@@ -94,7 +96,6 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
 	v1Auth.Post("/attachments-delete", AttachmentDelete)
 	v1Auth.Get("/attachment/:id/meta", AttachmentMeta)
-	v1Auth.Get("/attachment/:id", AttachmentGet)
 
 	v1Auth.Get("/channel-identities", ChannelIdentityList)
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)

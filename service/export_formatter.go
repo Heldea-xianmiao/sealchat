@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sealchat/model"
+	"sealchat/utils"
 
 	htmlnode "golang.org/x/net/html"
 	"html"
@@ -264,6 +265,10 @@ func stripRichText(input string) string {
 			name, _ := tokenizer.TagName()
 			tag := strings.ToLower(string(name))
 			if tag == "img" {
+				attrs := readTagAttributes(tokenizer)
+				if placeholder := buildCQImageMarkup(firstNonEmptyAttr(attrs, "src", "data-src", "data-original")); placeholder != "" {
+					writeText(placeholder)
+				}
 				continue
 			}
 			if shouldInsertLineBreak(tag) {
@@ -279,6 +284,10 @@ func stripRichText(input string) string {
 			name, _ := tokenizer.TagName()
 			tag := strings.ToLower(string(name))
 			if tag == "img" {
+				attrs := readTagAttributes(tokenizer)
+				if placeholder := buildCQImageMarkup(firstNonEmptyAttr(attrs, "src", "data-src", "data-original")); placeholder != "" {
+					writeText(placeholder)
+				}
 				continue
 			}
 			if shouldInsertLineBreak(tag) {
@@ -414,6 +423,16 @@ func writeTipTapNode(w *plainTextWriter, node *tiptapNode) {
 			w.write(text)
 		}
 		return
+	case "image":
+		src := firstNonEmpty(
+			node.attrString("src"),
+			node.attrString("dataSrc"),
+			node.attrString("attachmentId"),
+		)
+		if placeholder := buildCQImageMarkup(src); placeholder != "" {
+			w.write(placeholder)
+		}
+		return
 	}
 	if len(node.Content) > 0 {
 		for _, child := range node.Content {
@@ -443,6 +462,150 @@ func normalizePlainText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return strings.TrimSpace(s)
+}
+
+var (
+	attachmentTokenPattern    = regexp.MustCompile(`^[0-9A-Za-z_-]+$`)
+	attachmentBaseURLOverride string
+)
+
+func buildCQImageMarkup(raw string) string {
+	url := resolveImageURL(raw)
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf("[CQ:image,file=image,url=%s]", url)
+}
+
+func resolveImageURL(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return value
+	}
+	if strings.HasPrefix(value, "//") {
+		return "https:" + value
+	}
+	if len(value) >= 3 && strings.EqualFold(value[:3], "id:") {
+		value = value[3:]
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return value
+	}
+	if strings.HasPrefix(value, "/") {
+		if base := resolveAttachmentBaseURL(); base != "" {
+			return base + value
+		}
+		return value
+	}
+	if attachmentTokenPattern.MatchString(value) {
+		return buildAttachmentDownloadURL(value)
+	}
+	return value
+}
+
+func buildAttachmentDownloadURL(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	path := "/api/v1/attachment/" + token
+	if base := resolveAttachmentBaseURL(); base != "" {
+		return base + path
+	}
+	return path
+}
+
+func resolveAttachmentBaseURL() string {
+	if base := strings.TrimSpace(attachmentBaseURLOverride); base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	if cfg := utils.GetConfig(); cfg != nil {
+		if base := strings.TrimSpace(cfg.ImageBaseURL); base != "" {
+			return normalizeDomainToURL(base)
+		}
+		domain := strings.TrimSpace(cfg.Domain)
+		if domain != "" {
+			return normalizeDomainToURL(domain)
+		}
+	}
+	return ""
+}
+
+func normalizeDomainToURL(domain string) string {
+	trimmed := strings.TrimSpace(domain)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return trimmed
+	}
+	scheme := "https"
+	if isLikelyLocalDomain(trimmed) {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://%s", scheme, trimmed)
+}
+
+func isLikelyLocalDomain(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return false
+	}
+	parts := strings.Split(host, ":")
+	lower := strings.ToLower(parts[0])
+	if lower == "localhost" {
+		return true
+	}
+	if strings.HasPrefix(lower, "127.") || strings.HasPrefix(lower, "10.") || strings.HasPrefix(lower, "192.168.") {
+		return true
+	}
+	if strings.HasPrefix(lower, "172.") {
+		return true
+	}
+	return false
+}
+
+func readTagAttributes(tokenizer *htmlnode.Tokenizer) map[string]string {
+	attrs := make(map[string]string)
+	for {
+		key, val, more := tokenizer.TagAttr()
+		if len(key) == 0 && len(val) == 0 && !more {
+			break
+		}
+		name := strings.ToLower(string(key))
+		attrs[name] = string(val)
+		if !more {
+			break
+		}
+	}
+	return attrs
+}
+
+func firstNonEmptyAttr(attrs map[string]string, keys ...string) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if v := strings.TrimSpace(attrs[strings.ToLower(key)]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func resolveSenderName(msg *model.MessageModel) string {
