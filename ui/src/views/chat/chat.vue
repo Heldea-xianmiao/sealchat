@@ -4614,7 +4614,7 @@ onBeforeUnmount(() => {
               tabindex="-1"
               @pointerdown="onDragHandlePointerDown($event, itemData)"
             >
-              <span class="message-row__dot" v-for="n in 6" :key="n"></span>
+              <span class="message-row__dot" v-for="n in 3" :key="n"></span>
             </div>
             <chat-item
               :avatar="getMessageAvatar(itemData)"
@@ -5258,7 +5258,7 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row__surface {
-  padding: 0.2rem 0.5rem;
+  padding: 0.1rem 0.35rem;
   border-radius: 0;
   background: transparent;
 }
@@ -5276,7 +5276,8 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row__handle {
-  margin-top: 0.25rem;
+  margin-top: 0.1rem;
+  width: 1rem;
 }
 
 .chat--layout-compact .typing-preview-item {
@@ -5350,6 +5351,10 @@ onBeforeUnmount(() => {
   margin: 0.12rem 0;
   background-color: #9ca3af;
   border-radius: 50%;
+}
+
+.chat--layout-compact .message-row__dot {
+  margin: 0.08rem 0;
 }
 
 .message-row--drag-source {
@@ -5434,7 +5439,7 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .chat-item {
-  padding-bottom: 0.75rem;
+  padding-bottom: 0.4rem;
 }
 
 .channel-switch-trigger {

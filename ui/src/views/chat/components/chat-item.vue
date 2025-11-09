@@ -618,7 +618,7 @@ watch(() => props.item?.updatedAt, () => {
   display: block;
   width: 100%;
   max-width: none;
-  padding: 0.25rem 0;
+  padding: 0.18rem 0;
   background: transparent;
   box-shadow: none;
   border-radius: 0;
