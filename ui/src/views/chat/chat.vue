@@ -2334,6 +2334,15 @@ const typingPreviewSurfaceClass = (preview: TypingPreviewItem) => [
   'message-row__surface',
   `message-row__surface--tone-${preview.tone}`,
 ];
+const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
+  if (!preview?.userId) {
+    return false;
+  }
+  if (preview.userId === user.info.id) {
+    return true;
+  }
+  return canReorderAll.value;
+};
 let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
 
@@ -4761,72 +4770,85 @@ onBeforeUnmount(() => {
           :class="typingPreviewItemClass(preview)"
         >
           <div :class="typingPreviewSurfaceClass(preview)">
+            <div
+              v-if="shouldShowTypingHandle(preview)"
+              class="message-row__handle message-row__handle--placeholder"
+              aria-hidden="true"
+            >
+              <span class="message-row__dot" v-for="n in 3" :key="n"></span>
+            </div>
             <template v-if="!display.showAvatar && compactInlineGridLayout">
-              <div class="message-row__grid typing-preview-grid">
-                <div class="message-row__grid-handle typing-preview-grid__handle"></div>
-                <div class="message-row__grid-name">
-                  <span
-                    class="message-row__name"
-                    :style="preview.color ? { color: preview.color } : undefined"
-                  >{{ preview.displayName }}</span>
-                </div>
-                <div class="message-row__grid-colon">
-                  <span class="message-row__colon">：</span>
-                </div>
-                <div class="message-row__grid-content">
-                  <div
-                    class="typing-preview-inline-body"
-                    :class="{ 'typing-preview-inline-body--placeholder': preview.indicatorOnly }"
-                  >
-                    <template v-if="preview.indicatorOnly">
-                      <span>正在输入</span>
-                    </template>
-                    <template v-else>
-                      <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
-                    </template>
-                    <span class="typing-preview-inline-tag">
-                      {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
-                    </span>
-                    <span class="typing-dots typing-dots--inline">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                    </span>
+              <div class="typing-preview-content typing-preview-content--grid">
+                <div class="message-row__grid typing-preview-grid">
+                  <div class="message-row__grid-handle typing-preview-grid__handle"></div>
+                  <div class="message-row__grid-name">
+                    <span
+                      class="message-row__name"
+                      :style="preview.color ? { color: preview.color } : undefined"
+                    >{{ preview.displayName }}</span>
+                  </div>
+                  <div class="message-row__grid-colon">
+                    <span class="message-row__colon">：</span>
+                  </div>
+                  <div class="message-row__grid-content">
+                    <div
+                      class="typing-preview-inline-body"
+                      :class="{ 'typing-preview-inline-body--placeholder': preview.indicatorOnly }"
+                    >
+                      <template v-if="preview.indicatorOnly">
+                        <span>正在输入</span>
+                      </template>
+                      <template v-else>
+                        <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
+                      </template>
+                      <span class="typing-preview-inline-tag">
+                        {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
+                      </span>
+                      <span class="typing-dots typing-dots--inline">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
             </template>
             <template v-else>
-              <div v-if="display.showAvatar" class="typing-preview-avatar">
-                <AvatarVue :border="false" :size="40" :src="preview.avatar" />
-              </div>
-              <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
-                <div class="typing-preview-bubble__header">
-                  <div class="typing-preview-bubble__meta">
-                    <span
-                      class="typing-preview-bubble__name"
-                      :style="preview.color ? { color: preview.color } : undefined"
-                    >{{ preview.displayName }}</span>
-                    <span class="typing-preview-bubble__tag">
-                      {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
-                    </span>
-                  </div>
-                  <span class="typing-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                  </span>
+              <div class="typing-preview-content">
+                <div v-if="display.showAvatar" class="typing-preview-avatar">
+                  <AvatarVue :border="false" :size="40" :src="preview.avatar" />
                 </div>
-                <div
-                  class="typing-preview-bubble__body"
-                  :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }"
-                >
-                  <template v-if="preview.indicatorOnly">
-                    正在输入
-                  </template>
-                  <template v-else>
-                    <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
-                  </template>
+                <div class="typing-preview-main">
+                  <div :class="['typing-preview-bubble', preview.indicatorOnly ? '' : 'typing-preview-bubble--content']">
+                    <div class="typing-preview-bubble__header">
+                      <div class="typing-preview-bubble__meta">
+                        <span
+                          class="typing-preview-bubble__name"
+                          :style="preview.color ? { color: preview.color } : undefined"
+                        >{{ preview.displayName }}</span>
+                        <span class="typing-preview-bubble__tag">
+                          {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
+                        </span>
+                      </div>
+                      <span class="typing-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </span>
+                    </div>
+                    <div
+                      class="typing-preview-bubble__body"
+                      :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }"
+                    >
+                      <template v-if="preview.indicatorOnly">
+                        正在输入
+                      </template>
+                      <template v-else>
+                        <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
             </template>
@@ -5746,8 +5768,33 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.typing-preview-content {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.typing-preview-content--grid {
+  gap: 0;
+}
+
+.typing-preview-main {
+  flex: 1;
+  min-width: 0;
+}
+
 .typing-preview-avatar {
   flex-shrink: 0;
+  width: 3rem;
+  height: 3rem;
+}
+
+.message-row__handle--placeholder {
+  opacity: 0 !important;
+  pointer-events: none;
+  cursor: default;
 }
 
 .typing-preview-viewport {
@@ -5777,6 +5824,8 @@ onBeforeUnmount(() => {
 
 .typing-preview-grid {
   width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .typing-preview-grid__handle {
@@ -5791,14 +5840,27 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   font-size: 0.9375rem;
   color: var(--chat-text-primary);
+  width: 100%;
+  min-width: 0;
+  padding: var(--chat-message-padding-y) var(--chat-message-padding-x);
+  border-radius: var(--chat-message-radius);
+  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-size: 6px 6px;
 }
 
 .typing-preview-inline-body .preview-content {
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 .typing-preview-inline-body--placeholder {
   color: #6b7280;
+}
+
+.typing-preview-item--ooc .typing-preview-inline-body {
+  background-color: var(--chat-ooc-bg);
+  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
 }
 
 .typing-preview-inline-tag {
@@ -5808,6 +5870,7 @@ onBeforeUnmount(() => {
   background-color: rgba(156, 163, 175, 0.18);
   color: #4b5563;
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .typing-preview-inline-body--placeholder .typing-preview-inline-tag {
