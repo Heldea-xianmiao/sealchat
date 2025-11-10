@@ -4877,7 +4877,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- flex-grow -->
-    <div class="edit-area flex justify-between space-x-2 my-2 relative">
+    <div class="edit-area flex justify-between relative">
 
       <!-- 左下，快捷指令栏 -->
       <div class="channel-switch-trigger px-4 py-2" v-if="utils.isSmallPage">
@@ -6063,8 +6063,8 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--sc-border-mute);
   border-bottom: 1px solid var(--sc-border-mute);
   border-radius: 0;
-  padding: 0.75rem 0.85rem;
-  gap: 0.75rem;
+  padding: 0;
+  gap: 0;
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
