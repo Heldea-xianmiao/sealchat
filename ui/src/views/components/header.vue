@@ -397,6 +397,12 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 </template>
 
 <style scoped lang="scss">
+.sc-header {
+  background-color: var(--sc-bg-header);
+  color: var(--sc-text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
 .sc-actions {
   gap: 0.75rem;
 }
@@ -413,8 +419,8 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   padding: 0;
   cursor: pointer;
   position: relative;
-  color: #475569;
-  transition: color 0.2s ease, transform 0.2s ease;
+  color: var(--sc-text-secondary);
+  transition: color 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
 }
 
 .sc-icon-button:hover,
@@ -442,7 +448,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 }
 
 .action-toggle-button {
-  color: #0f172a;
+  color: var(--sc-text-primary);
 }
 
 .action-toggle-button.is-active {
@@ -465,14 +471,14 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
   min-width: 1.1rem;
   height: 1.1rem;
   border-radius: 9999px;
-  background-color: #fff;
-  color: #0f172a;
+  background-color: var(--sc-badge-bg);
+  color: var(--sc-badge-text);
   font-size: 0.65rem;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(15, 23, 42, 0.15);
+  border: 1px solid var(--sc-border-strong);
   line-height: 1;
 }
 </style>

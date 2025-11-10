@@ -563,7 +563,9 @@ watch(() => props.item?.updatedAt, () => {
   background: var(--chat-ic-bg, #f5f5f5);
   color: var(--chat-text-primary, #111827);
   text-align: left;
-  border: none;
+  border: 1px solid var(--chat-bubble-border, transparent);
+  box-shadow: var(--chat-message-shadow, none);
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .chat-item > .right > .content .failed {
@@ -572,9 +574,9 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .chat-item > .right > .content.whisper-content {
-  background: #eef2ff;
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  color: #1f2937;
+  background: var(--chat-whisper-bg, #eef2ff);
+  border: 1px solid var(--chat-whisper-border, rgba(99, 102, 241, 0.35));
+  color: var(--chat-text-primary, #1f2937);
   --editing-preview-border: rgba(109, 40, 217, 0.55);
   --editing-preview-bg: rgba(233, 213, 255, 0.92);
   --editing-preview-text: #5b21b6;
@@ -592,7 +594,6 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .chat-item--layout-bubble .right > .content {
-  background: #e6e7eb;
   border-radius: 0.85rem;
   padding: 0.8rem 1rem;
 }
@@ -655,6 +656,7 @@ watch(() => props.item?.updatedAt, () => {
   padding: 0.18rem 0;
   background: transparent;
   box-shadow: none;
+  border: none;
   border-radius: 0;
 }
 
@@ -967,9 +969,9 @@ watch(() => props.item?.updatedAt, () => {
 
 /* Tone 样式 */
 .chat-item--ooc .right .content {
-  background: rgba(156, 163, 175, 0.1);
-  border: 1px dashed rgba(156, 163, 175, 0.3);
-  color: #6b7280;
+  background: var(--chat-ooc-bg, rgba(156, 163, 175, 0.1));
+  border: 1px dashed var(--chat-ooc-border, rgba(156, 163, 175, 0.3));
+  color: var(--chat-text-secondary, #6b7280);
   --editing-preview-border: rgba(156, 163, 175, 0.55);
   --editing-preview-bg: rgba(243, 244, 246, 0.95);
   --editing-preview-text: #4b5563;
@@ -981,8 +983,9 @@ watch(() => props.item?.updatedAt, () => {
 }
 
 .chat-item--archived .right .content {
-  background: rgba(248, 250, 252, 0.8);
-  border: 1px solid rgba(209, 213, 219, 0.5);
+  background: var(--chat-archived-bg, rgba(248, 250, 252, 0.8));
+  border: 1px solid var(--chat-archived-border, rgba(209, 213, 219, 0.5));
+  color: var(--chat-text-secondary, #94a3b8);
 }
 
 .chat--layout-compact .chat-item--archived .right .content,

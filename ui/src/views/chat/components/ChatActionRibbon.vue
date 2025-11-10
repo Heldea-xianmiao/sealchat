@@ -192,12 +192,11 @@ const clearAllFilters = () => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: rgba(248, 250, 252, 0.95);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 0.9rem 1.1rem;
+  background: var(--sc-bg-elevated);
+  border: 1px solid var(--sc-border-strong);
   border-radius: 0.75rem;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  color: var(--sc-text-primary);
 }
 
 .ribbon-section {
@@ -229,16 +228,18 @@ const clearAllFilters = () => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  color: var(--sc-text-secondary);
 }
 
 .ribbon-action-button {
   transition: background-color 0.2s ease, color 0.2s ease;
   border-radius: 999px;
   padding: 0 0.85rem;
+  color: var(--sc-text-primary);
 }
 
 .ribbon-action-button.is-active {
-  background-color: rgba(59, 130, 246, 0.15);
+  background-color: rgba(59, 130, 246, 0.18);
   color: #1d4ed8;
 }
 

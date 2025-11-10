@@ -25,23 +25,23 @@ const toggleSidebar = () => {
 </script>
 
 <template>
-  <main class="h-screen">
-    <n-layout-header bordered>
+  <main class="h-screen sc-app-shell">
+    <n-layout-header class="sc-layout-header">
       <chat-header :sidebar-collapsed="computedCollapsed" @toggle-sidebar="toggleSidebar" />
     </n-layout-header>
 
-    <n-layout has-sider position="absolute" style="margin-top: 3.5rem;">
+    <n-layout class="sc-layout-root" has-sider position="absolute" style="margin-top: 3.5rem;">
       <n-layout-sider
+        class="sc-layout-sider"
         collapse-mode="width"
         :collapsed="computedCollapsed"
         :collapsed-width="collapsedWidth"
         :native-scrollbar="false"
-        bordered
       >
         <ChatSidebar v-if="!isMobileViewport && !isSidebarCollapsed" />
       </n-layout-sider>
 
-      <n-layout>
+      <n-layout class="sc-layout-content">
         <Chat @drawer-show="active = true" />
 
         <n-drawer v-model:show="active" :width="'65%'" placement="left">

@@ -151,10 +151,17 @@ const handleConfirm = () => emit('save', { ...draft })
 </template>
 
 <style scoped lang="scss">
+:deep(.n-card) {
+  background-color: var(--sc-bg-elevated);
+  border: 1px solid var(--sc-border-strong);
+  color: var(--sc-text-primary);
+}
+
 .display-settings {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  color: var(--sc-text-primary);
 }
 
 .display-settings__section header {
@@ -167,12 +174,12 @@ const handleConfirm = () => emit('save', { ...draft })
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--sc-text-primary);
 }
 
 .section-desc {
   font-size: 0.8rem;
-  color: #64748b;
+  color: var(--sc-text-secondary);
   margin-top: 0.15rem;
 }
 
@@ -182,13 +189,13 @@ const handleConfirm = () => emit('save', { ...draft })
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: linear-gradient(135deg, #fbfdf7, #f3f4f6);
+  border: 1px solid var(--sc-border-mute);
+  background: linear-gradient(135deg, var(--sc-bg-surface), var(--sc-bg-elevated));
 }
 
 .display-preview--night {
-  background: linear-gradient(135deg, #12131a, #1f2530);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(135deg, var(--sc-bg-header), var(--sc-bg-elevated));
+  border-color: var(--sc-border-strong);
 }
 
 .display-preview .preview-card {
@@ -196,41 +203,41 @@ const handleConfirm = () => emit('save', { ...draft })
   gap: 0.75rem;
   padding: 0.65rem 0.75rem;
   border-radius: var(--preview-radius, 1rem);
-  background-color: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(4px);
+  background-color: var(--sc-bg-surface);
+  border: 1px solid var(--sc-border-mute);
 }
 
 .display-preview--night .preview-card {
-  background-color: rgba(63, 63, 70, 0.8);
-  color: #f4f4f5;
+  background-color: var(--sc-bg-input);
+  color: var(--sc-text-primary);
 }
 
 .display-preview--night .preview-card--ooc {
-  background-color: rgba(0, 0, 0, 0.75);
+  background-color: var(--chat-ooc-bg);
 }
 
 .display-preview--night .preview-card--preview {
-  background-image: radial-gradient(#55555c 1px, transparent 1px);
-  background-color: #3f3f46;
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-color: var(--chat-preview-bg);
   background-size: 6px 6px;
 }
 
 .display-preview--night .preview-name {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--sc-text-primary);
 }
 
 .display-preview--night .preview-body {
-  color: rgba(226, 232, 240, 0.9);
+  color: var(--sc-text-secondary);
 }
 
 .preview-card--ooc {
-  background-color: #ffffff;
+  background-color: var(--chat-ooc-bg);
 }
 
 .preview-card--preview {
   flex-direction: column;
-  background-color: #fafafa;
-  background-image: radial-gradient(#dcdcdc 1px, transparent 1px);
+  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
   background-size: 6px 6px;
 }
 
@@ -239,17 +246,18 @@ const handleConfirm = () => emit('save', { ...draft })
   height: 2.25rem;
   border-radius: 0.75rem;
   background: linear-gradient(135deg, #f87171, #fbbf24);
+  border: 1px solid var(--sc-border-mute);
 }
 
 .preview-name {
   font-size: 0.82rem;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--sc-text-primary);
 }
 
 .preview-body {
   font-size: 0.78rem;
-  color: #475569;
+  color: var(--sc-text-secondary);
 }
 
 .display-preview--compact {

@@ -358,33 +358,38 @@ const aaa = ref(false);
 
 <style lang="scss">
 .sider-item {
-  @apply rounded px-2 py-2 cursor-pointer flex justify-between;
-
-  &:hover {
-    @apply bg-blue-100;
-
-    >.right {
-      @apply block;
-    }
-
-    >.right-num {
-      @apply hidden;
-    }
-  }
-
-  &.active {
-    @apply bg-blue-200;
-
-  }
-
-  >.right-num {
-    @apply block flex items-center;
-  }
-
-  >.right {
-    @apply hidden;
-  }
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--sc-text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+.sider-item:hover {
+  background-color: var(--sc-sidebar-hover);
+}
 
+.sider-item.active {
+  background-color: var(--sc-sidebar-active);
+}
+
+.sider-item > .right-num {
+  display: flex;
+  align-items: center;
+}
+
+.sider-item > .right {
+  display: none;
+}
+
+.sider-item:hover > .right {
+  display: flex;
+}
+
+.sider-item:hover > .right-num {
+  display: none;
+}
 </style>
