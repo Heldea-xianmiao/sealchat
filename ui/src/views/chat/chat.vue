@@ -1963,10 +1963,21 @@ const rowSurfaceClass = (item: Message) => [
   `message-row__surface--tone-${getMessageTone(item)}`,
 ];
 
+const inheritChatContextClasses = (ghostEl: HTMLElement) => {
+  const container = messagesListRef.value;
+  if (!container) return;
+  container.classList.forEach((className) => {
+    if (className === 'chat' || className.startsWith('chat--')) {
+      ghostEl.classList.add(className);
+    }
+  });
+};
+
 const createGhostElement = (rowEl: HTMLElement) => {
   const rect = rowEl.getBoundingClientRect();
   const ghost = rowEl.cloneNode(true) as HTMLElement;
   ghost.classList.add('message-row__ghost');
+  inheritChatContextClasses(ghost);
   ghost.style.position = 'fixed';
   ghost.style.left = `${rect.left}px`;
   ghost.style.top = `${rect.top}px`;
