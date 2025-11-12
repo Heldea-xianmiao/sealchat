@@ -115,7 +115,7 @@ const clearAllFilters = () => {
 
     <!-- 功能入口区域 -->
     <div class="ribbon-section ribbon-section--actions">
-      <n-button-group size="small">
+      <div class="ribbon-actions-grid">
         <n-button
           type="tertiary"
           class="ribbon-action-button"
@@ -187,7 +187,7 @@ const clearAllFilters = () => {
           </template>
           表情资源
         </n-button>
-      </n-button-group>
+      </div>
     </div>
 
     <!-- 筛选摘要 -->
@@ -238,6 +238,7 @@ const clearAllFilters = () => {
 
 .ribbon-section--actions {
   flex-shrink: 0;
+  width: 100%;
 }
 
 .ribbon-section--summary {
@@ -272,6 +273,25 @@ const clearAllFilters = () => {
 
 .ribbon-action-button:hover {
   background-color: var(--sc-chip-bg);
+}
+
+.ribbon-actions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@media (max-width: 1200px) {
+  .ribbon-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .ribbon-actions-grid :deep(.n-button) {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 :root[data-display-palette='night'] .ribbon-action-button:hover {
