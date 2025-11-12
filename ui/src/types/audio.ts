@@ -18,12 +18,39 @@ export interface AudioAsset {
   updatedAt: string;
 }
 
+export interface AudioAssetMutationPayload {
+  name?: string;
+  description?: string;
+  tags?: string[];
+  visibility?: 'public' | 'restricted';
+  folderId?: string | null;
+}
+
+export interface AudioAssetQueryParams extends Partial<AudioSearchFilters> {
+  page?: number;
+  pageSize?: number;
+  durationMin?: number;
+  durationMax?: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface AudioFolder {
   id: string;
   parentId: string | null;
   name: string;
   path: string;
   children?: AudioFolder[];
+}
+
+export interface AudioFolderPayload {
+  name: string;
+  parentId?: string | null;
 }
 
 export interface AudioSceneTrack {

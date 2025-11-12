@@ -50,12 +50,18 @@ import AudioAssetManager from './AudioAssetManager.vue';
 const audio = useAudioStudioStore();
 type AudioTab = 'player' | 'playlist' | 'library';
 const tracks = computed(() => Object.values(audio.tracks || {}));
-const internalWidth = ref(420);
+const viewportWidth = ref(typeof window === 'undefined' ? 0 : window.innerWidth);
 const updateWidth = () => {
   if (typeof window === 'undefined') return;
-  internalWidth.value = window.innerWidth > 768 ? 420 : Math.min(window.innerWidth, 420);
+  viewportWidth.value = window.innerWidth;
 };
-const drawerWidth = computed(() => internalWidth.value);
+const drawerWidth = computed(() => {
+  const preferred = audio.activeTab === 'library' ? 960 : 420;
+  if (!viewportWidth.value) return preferred;
+  const margin = audio.activeTab === 'library' ? 48 : 24;
+  const maxAllow = Math.max(320, viewportWidth.value - margin);
+  return Math.min(preferred, maxAllow);
+});
 const handleTabChange = (val: string | number) => {
   audio.selectTab((val as AudioTab) || 'player');
 };

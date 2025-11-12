@@ -6,13 +6,17 @@ import { useUserStore } from './user';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import type {
   AudioAsset,
+  AudioAssetMutationPayload,
+  AudioAssetQueryParams,
   AudioFolder,
+  AudioFolderPayload,
   AudioScene,
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
+  PaginatedResult,
   UploadTaskState,
 } from '@/types/audio';
 
@@ -41,8 +45,13 @@ interface AudioStudioState {
   assets: AudioAsset[];
   filteredAssets: AudioAsset[];
   assetsLoading: boolean;
+  assetPagination: PaginationState;
+  selectedAssetId: string | null;
+  assetMutationLoading: boolean;
+  assetBulkLoading: boolean;
   folders: AudioFolder[];
   folderPathLookup: Record<string, string>;
+  folderActionLoading: boolean;
   filters: AudioSearchFilters;
   uploadTasks: UploadTaskState[];
   networkMode: 'normal' | 'constrained' | 'minimal';
@@ -122,6 +131,18 @@ interface TrackMutationOptions {
   initialSeek?: number;
 }
 
+interface PaginationState {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+interface FetchAssetsOptions {
+  filters?: Partial<AudioSearchFilters>;
+  pagination?: Partial<PaginationState>;
+  silent?: boolean;
+}
+
 function normalizeFolderId(input: string | null | undefined): string | null {
   if (input === undefined || input === null) return null;
   const trimmed = String(input).trim();
@@ -129,6 +150,35 @@ function normalizeFolderId(input: string | null | undefined): string | null {
     return null;
   }
   return trimmed;
+}
+
+function buildAssetQueryParams(filters: AudioSearchFilters, pagination: PaginationState): AudioAssetQueryParams {
+  const params: AudioAssetQueryParams = {
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+  };
+  const query = filters.query?.trim();
+  if (query) {
+    params.query = query;
+  }
+  if (filters.tags?.length) {
+    params.tags = filters.tags;
+  }
+  const normalizedFolderId = normalizeFolderId(filters.folderId);
+  if (normalizedFolderId) {
+    params.folderId = normalizedFolderId;
+  }
+  if (filters.creatorIds?.length) {
+    params.creatorIds = filters.creatorIds;
+  }
+  if (filters.durationRange && filters.durationRange.length === 2) {
+    params.durationMin = filters.durationRange[0];
+    params.durationMax = filters.durationRange[1];
+  }
+  if (filters.hasSceneOnly) {
+    params.hasSceneOnly = true;
+  }
+  return params;
 }
 
 export const useAudioStudioStore = defineStore('audioStudio', {
@@ -146,8 +196,13 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     assets: [],
     filteredAssets: [],
     assetsLoading: false,
+    assetPagination: { page: 1, pageSize: 20, total: 0 },
+    selectedAssetId: null,
+    assetMutationLoading: false,
+    assetBulkLoading: false,
     folders: [],
     folderPathLookup: {},
+    folderActionLoading: false,
     filters: {
       query: '',
       tags: [],
@@ -172,6 +227,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
   getters: {
     currentScene(state): AudioScene | null {
       return state.scenes.find((scene) => scene.id === state.currentSceneId) || null;
+    },
+
+    selectedAsset(state): AudioAsset | null {
+      if (!state.selectedAssetId) return null;
+      return state.filteredAssets.find((asset) => asset.id === state.selectedAssetId) || null;
     },
 
     canManage(): boolean {
@@ -391,23 +451,45 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async fetchAssets(payload?: Partial<AudioSearchFilters>) {
-      this.assetsLoading = true;
+    async fetchAssets(options?: FetchAssetsOptions) {
+      if (!options?.silent) {
+        this.assetsLoading = true;
+      }
       try {
-        const params: Record<string, unknown> = { ...this.filters, ...(payload || {}) };
-        const normalizedFolderId = normalizeFolderId(params.folderId as string | null | undefined);
-        if (normalizedFolderId) {
-          params.folderId = normalizedFolderId;
-        } else {
-          delete params.folderId;
-        }
+        const mergedFilters: AudioSearchFilters = {
+          ...this.filters,
+          ...(options?.filters || {}),
+        };
+        mergedFilters.folderId = normalizeFolderId(mergedFilters.folderId) ?? null;
+        this.filters = mergedFilters;
+
+        const pagination: PaginationState = {
+          ...this.assetPagination,
+          ...(options?.pagination || {}),
+        };
+        const params = buildAssetQueryParams(mergedFilters, pagination);
         const resp = await api.get('/api/v1/audio/assets', { params });
-        this.assets = resp.data?.items || [];
-        this.filteredAssets = this.assets;
+        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
+        const items = Array.isArray(raw) ? raw : raw?.items || [];
+        const page = !Array.isArray(raw) && raw?.page ? raw.page : pagination.page;
+        const pageSize = !Array.isArray(raw) && raw?.pageSize ? raw.pageSize : pagination.pageSize;
+        const total = !Array.isArray(raw) && typeof raw?.total === 'number' ? raw.total : items.length;
+        this.assetPagination = {
+          page,
+          pageSize,
+          total,
+        };
+        this.assets = items;
+        this.filteredAssets = items;
+        if (!this.selectedAssetId && items.length) {
+          this.selectedAssetId = items[0].id;
+        } else if (this.selectedAssetId && !items.some((asset) => asset.id === this.selectedAssetId)) {
+          this.selectedAssetId = items[0]?.id ?? null;
+        }
         await this.persistAssetsToCache();
       } catch (err) {
         console.warn('fetchAssets failed, fallback to cache', err);
-        const query = (payload?.query ?? this.filters.query ?? '').trim().toLowerCase();
+        const query = (this.filters.query ?? '').trim().toLowerCase();
         const cached = query
           ? await audioDb.assets.where('searchIndex').startsWith(query).toArray()
           : await audioDb.assets.orderBy('updatedAt').reverse().toArray();
@@ -430,8 +512,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         } as AudioAsset));
         this.assets = fallback;
         this.filteredAssets = fallback;
+        this.assetPagination = {
+          ...this.assetPagination,
+          page: 1,
+          total: fallback.length,
+        };
+        if (!fallback.some((asset) => asset.id === this.selectedAssetId)) {
+          this.selectedAssetId = fallback[0]?.id ?? null;
+        }
       } finally {
-        this.assetsLoading = false;
+        if (!options?.silent) {
+          this.assetsLoading = false;
+        }
       }
     },
 
@@ -443,6 +535,51 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         await this.refreshLocalCacheWithFolderPaths();
       } catch (err) {
         console.error('fetchFolders failed', err);
+      }
+    },
+
+    async createFolder(payload: AudioFolderPayload) {
+      this.folderActionLoading = true;
+      try {
+        await api.post('/api/v1/audio/folders', payload);
+        await this.fetchFolders();
+      } catch (err) {
+        console.error('createFolder failed', err);
+        throw err;
+      } finally {
+        this.folderActionLoading = false;
+      }
+    },
+
+    async updateFolder(folderId: string, payload: Partial<AudioFolderPayload>) {
+      if (!folderId) return;
+      this.folderActionLoading = true;
+      try {
+        await api.patch(`/api/v1/audio/folders/${folderId}`, payload);
+        await this.fetchFolders();
+      } catch (err) {
+        console.error('updateFolder failed', err);
+        throw err;
+      } finally {
+        this.folderActionLoading = false;
+      }
+    },
+
+    async deleteFolder(folderId: string) {
+      if (!folderId) return;
+      this.folderActionLoading = true;
+      try {
+        await api.delete(`/api/v1/audio/folders/${folderId}`);
+        if (this.filters.folderId === folderId) {
+          this.filters.folderId = null;
+        }
+        await this.fetchFolders();
+        await this.fetchAssets({ pagination: { page: 1 } });
+      } catch (err) {
+        console.error('deleteFolder failed', err);
+        throw err;
+      } finally {
+        this.folderActionLoading = false;
       }
     },
 
@@ -776,15 +913,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async applyFilters(filters: Partial<AudioSearchFilters>) {
-      const nextFolderId =
-        filters.folderId !== undefined ? filters.folderId : this.filters.folderId;
       const mergedFilters: AudioSearchFilters = {
         ...this.filters,
         ...filters,
-        folderId: normalizeFolderId(nextFolderId) ?? null,
       };
+      mergedFilters.folderId = normalizeFolderId(mergedFilters.folderId) ?? null;
       this.filters = mergedFilters;
-      await this.fetchAssets();
+      this.assetPagination.page = 1;
+      await this.fetchAssets({ pagination: { page: 1 } });
     },
 
     async searchAssetsLocally(keyword: string) {
@@ -803,10 +939,153 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       });
       if (this.filteredAssets.length === 0) {
         try {
-          await this.fetchAssets({ query: keyword });
+          await this.fetchAssets({ filters: { query: keyword }, pagination: { page: 1 } });
         } catch (err) {
           console.warn('远程搜索失败', err);
         }
+      }
+    },
+
+    async setAssetPage(page: number) {
+      if (page <= 0) return;
+      this.assetPagination.page = page;
+      await this.fetchAssets({ pagination: { page } });
+    },
+
+    async setAssetPageSize(pageSize: number) {
+      if (pageSize <= 0) return;
+      this.assetPagination.pageSize = pageSize;
+      this.assetPagination.page = 1;
+      await this.fetchAssets({ pagination: { page: 1, pageSize } });
+    },
+
+    setSelectedAsset(assetId: string | null) {
+      this.selectedAssetId = assetId;
+    },
+
+    upsertAssetLocally(asset: AudioAsset) {
+      const updateList = (list: AudioAsset[]) => {
+        const index = list.findIndex((item) => item.id === asset.id);
+        if (index >= 0) {
+          list[index] = { ...list[index], ...asset };
+        } else {
+          list.unshift(asset);
+        }
+      };
+      updateList(this.assets);
+      updateList(this.filteredAssets);
+      if (!this.selectedAssetId) {
+        this.selectedAssetId = asset.id;
+      }
+    },
+
+    removeAssetLocally(assetId: string) {
+      const filterList = (list: AudioAsset[]) => list.filter((item) => item.id !== assetId);
+      this.assets = filterList(this.assets);
+      this.filteredAssets = filterList(this.filteredAssets);
+      if (this.selectedAssetId === assetId) {
+        this.selectedAssetId = this.filteredAssets[0]?.id ?? null;
+      }
+    },
+
+    async updateAssetMeta(assetId: string, payload: AudioAssetMutationPayload) {
+      if (!assetId) return;
+      this.assetMutationLoading = true;
+      try {
+        const resp = await api.patch(`/api/v1/audio/assets/${assetId}`, payload);
+        const updated = resp.data as AudioAsset | undefined;
+        if (updated) {
+          this.upsertAssetLocally(updated);
+        } else {
+          const existing = this.assets.find((item) => item.id === assetId);
+          if (existing) {
+            this.upsertAssetLocally({ ...existing, ...payload });
+          }
+        }
+        await this.persistAssetsToCache();
+        await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
+      } catch (err) {
+        console.error('updateAssetMeta failed', err);
+        throw err;
+      } finally {
+        this.assetMutationLoading = false;
+      }
+    },
+
+    async deleteAsset(assetId: string) {
+      if (!assetId) return;
+      this.assetMutationLoading = true;
+      try {
+        await api.delete(`/api/v1/audio/assets/${assetId}`);
+        this.removeAssetLocally(assetId);
+        this.assetPagination.total = Math.max(0, this.assetPagination.total - 1);
+        const nextPage = this.filteredAssets.length
+          ? this.assetPagination.page
+          : Math.max(1, this.assetPagination.page - 1);
+        await this.fetchAssets({ pagination: { page: nextPage }, silent: false });
+      } catch (err) {
+        console.error('deleteAsset failed', err);
+        throw err;
+      } finally {
+        this.assetMutationLoading = false;
+      }
+    },
+
+    async batchUpdateAssets(assetIds: string[], payload: AudioAssetMutationPayload) {
+      if (!assetIds?.length) {
+        return { success: 0, failed: 0 };
+      }
+      this.assetBulkLoading = true;
+      try {
+        const tasks = assetIds.map((id) => api.patch(`/api/v1/audio/assets/${id}`, payload));
+        const results = await Promise.allSettled(tasks);
+        let success = 0;
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            success += 1;
+            const updated = result.value.data as AudioAsset | undefined;
+            if (updated) {
+              this.upsertAssetLocally(updated);
+            } else {
+              const existing = this.assets.find((item) => item.id === assetIds[index]);
+              if (existing) {
+                this.upsertAssetLocally({ ...existing, ...payload });
+              }
+            }
+          }
+        });
+        if (success) {
+          await this.persistAssetsToCache();
+          await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
+        }
+        return { success, failed: assetIds.length - success };
+      } finally {
+        this.assetBulkLoading = false;
+      }
+    },
+
+    async batchDeleteAssets(assetIds: string[]) {
+      if (!assetIds?.length) {
+        return { success: 0, failed: 0 };
+      }
+      this.assetBulkLoading = true;
+      try {
+        const tasks = assetIds.map((id) => api.delete(`/api/v1/audio/assets/${id}`));
+        const results = await Promise.allSettled(tasks);
+        let success = 0;
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            success += 1;
+            this.removeAssetLocally(assetIds[index]);
+          }
+        });
+        if (success) {
+          this.assetPagination.total = Math.max(0, this.assetPagination.total - success);
+        }
+        await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: false });
+        return { success, failed: assetIds.length - success };
+      } finally {
+        this.assetBulkLoading = false;
       }
     },
 
