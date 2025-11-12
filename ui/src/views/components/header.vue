@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
@@ -173,6 +173,8 @@ const channelSelect = async (key: string) => {
 const message = useMessage()
 const usernameOverlap = ref(false);
 const dialog = useDialog()
+
+const userDisplayName = computed(() => user.info.nick || user.info.username || '个人中心')
 
 const showModal = ref(false);
 const newChannelName = ref('');
@@ -348,8 +350,8 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         <template #trigger>
           <button type="button" class="sc-icon-button sc-connection-icon" :class="connectionStatus.classes"
             :aria-label="connectionStatus.label" tabindex="-1">
-            <n-icon :component="connectionStatus.icon" size="20"
-              :class="{ 'sc-connection-icon--spin': connectionStatus.spinning }" />
+          <n-icon :component="connectionStatus.icon" size="16"
+            :class="{ 'sc-connection-icon--spin': connectionStatus.spinning }" />
           </button>
         </template>
         <span>{{ connectionStatus.label }}</span>
@@ -359,7 +361,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
         @update:show="presencePopoverVisible = $event">
         <template #trigger>
           <button type="button" class="sc-icon-button sc-online-button" aria-label="查看在线成员">
-            <n-icon :component="Users" size="18" />
+            <n-icon :component="Users" size="16" />
             <span class="online-badge">{{ onlineMembersCount }}</span>
           </button>
         </template>
@@ -376,7 +378,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
             aria-label="音频工作台"
             @click="openAudioStudio"
           >
-            <n-icon :component="MusicalNotesOutline" size="18" />
+            <n-icon :component="MusicalNotesOutline" size="16" />
           </button>
         </template>
         <span>音频工作台</span>
@@ -391,7 +393,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
             aria-label="搜索频道消息"
             @click="toggleChannelSearch"
           >
-            <n-icon :component="SearchOutline" size="18" />
+            <n-icon :component="SearchOutline" size="16" />
           </button>
         </template>
         <span>搜索频道消息</span>
@@ -399,18 +401,23 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 
       <button type="button" class="sc-icon-button action-toggle-button" :class="{ 'is-active': actionRibbonActive }"
         @click="toggleActionRibbon" :aria-pressed="actionRibbonActive" aria-label="切换功能面板">
-        <n-icon :component="AppsOutline" size="20" />
+        <n-icon :component="AppsOutline" size="18" />
       </button>
 
       <n-dropdown :overlap="usernameOverlap" placement="bottom-end" trigger="click" :options="options"
         @select="handleSelect">
-        <span class="flex justify-center cursor-pointer">
-          <span>{{ user.info.nick }}</span>
-          <svg style="width: 1rem" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-            viewBox="0 0 24 24">
-            <path d="M7 10l5 5l5-5H7z" fill="currentColor"></path>
-          </svg>
-        </span>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <button
+              type="button"
+              class="sc-icon-button sc-user-button"
+              :aria-label="`打开 ${userDisplayName} 的菜单`"
+            >
+              <n-icon :component="UserCircle" size="18" />
+            </button>
+          </template>
+          <span>{{ userDisplayName }}</span>
+        </n-tooltip>
       </n-dropdown>
     </div>
   </div>
@@ -435,12 +442,12 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 }
 
 .sc-actions {
-  gap: 0.75rem;
+  gap: 0.45rem;
 }
 
 .sc-icon-button {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 1.95rem;
+  height: 1.95rem;
   border-radius: 9999px;
   display: inline-flex;
   align-items: center;
@@ -461,7 +468,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-icon-button:hover,
 .sc-icon-button:focus-visible {
   color: #0ea5e9;
-  transform: translateY(-1px);
+  transform: translateY(-0.5px);
 }
 
 .sc-connection-icon {
