@@ -5476,6 +5476,10 @@ onBeforeUnmount(() => {
   margin-top: var(--chat-bubble-gap, 0.85rem);
 }
 
+.chat--layout-bubble .message-row + .message-row {
+  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8);
+}
+
 .chat--layout-compact .message-row + .message-row {
   margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.35);
 }

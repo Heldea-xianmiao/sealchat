@@ -602,7 +602,8 @@ watch(() => props.item?.updatedAt, () => {
 
 .chat-item--layout-bubble .right > .content {
   border-radius: 0.85rem;
-  padding: 0.8rem 1rem;
+  padding: calc(var(--chat-message-padding-y, 0.85rem) * 0.8)
+    calc(var(--chat-message-padding-x, 1.1rem) * 0.95);
 }
 
 .chat-item--layout-bubble.chat-item--self {
