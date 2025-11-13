@@ -6,7 +6,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, GalleryItem } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Broadcast } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -41,6 +41,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import IconNumber from '@/components/icons/IconNumber.vue'
+import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
@@ -5112,7 +5113,7 @@ onBeforeUnmount(() => {
                         @click="toggleTypingPreview" :disabled="isEditing">
                         <n-icon
                           class="chat-input-actions__icon"
-                          :component="Broadcast"
+                          :component="IconBuildingBroadcastTower"
                           size="18"
                         />
                       </n-button>

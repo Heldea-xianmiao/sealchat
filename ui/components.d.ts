@@ -18,6 +18,7 @@ declare module 'vue' {
     GalleryPanel: typeof import('./src/components/gallery/GalleryPanel.vue')['default']
     GallerySearchSuggest: typeof import('./src/components/gallery/GallerySearchSuggest.vue')['default']
     GalleryUploadZone: typeof import('./src/components/gallery/GalleryUploadZone.vue')['default']
+    IconBuildingBroadcastTower: typeof import('./src/components/icons/IconBuildingBroadcastTower.vue')['default']
     IconFluentMention24Filled: typeof import('./src/components/icons/IconFluentMention24Filled.vue')['default']
     IconNumber: typeof import('./src/components/icons/IconNumber.vue')['default']
     IconTooling: typeof import('./src/components/icons/IconTooling.vue')['default']
