@@ -67,6 +67,8 @@ iFormStore.bootstrap();
 const isEditing = computed(() => !!chat.editing);
 const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
+const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
+const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
 const compactInlineStackLayout = computed(() => {
@@ -4894,9 +4896,16 @@ onBeforeUnmount(() => {
     <div v-if="rows.length === 0" class="flex h-full items-center text-2xl justify-center text-gray-400">说点什么吧</div>
 
     <div style="right: 20px ;bottom: 70px;" class=" fixed" v-if="showButton">
-      <n-button size="large" circle color="#e5e7eb" @click="toBottom">
+      <n-button
+        class="scroll-bottom-button"
+        size="large"
+        circle
+        :color="scrollButtonColor"
+        :text-color="scrollButtonTextColor"
+        @click="toBottom"
+      >
         <template #icon>
-          <n-icon class="text-black">
+          <n-icon>
             <ArrowBarToDown />
           </n-icon>
         </template>
@@ -6211,6 +6220,14 @@ onBeforeUnmount(() => {
   background-color: var(--sc-chip-bg);
   color: var(--sc-text-primary);
   border: 1px solid var(--sc-border-mute);
+}
+
+.scroll-bottom-button {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+:root[data-display-palette='night'] .scroll-bottom-button {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
 }
 
 .chat-input-container {
