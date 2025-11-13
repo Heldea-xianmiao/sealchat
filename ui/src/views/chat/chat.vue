@@ -6215,28 +6215,29 @@ onBeforeUnmount(() => {
 
 .chat-input-container {
   width: 100%;
-  background-color: var(--sc-bg-elevated);
-  border: 1px solid var(--sc-border-strong);
-  border-radius: 1rem;
-  padding: 0.75rem;
-  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.08);
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 :root[data-display-palette='night'] .chat-input-container {
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: none;
 }
 
 .chat-input-area {
   position: relative;
   display: flex;
   flex-direction: column;
-  background-color: var(--sc-bg-input);
-  border: 1px solid var(--sc-border-strong);
-  border-radius: 0.75rem;
-  padding: 0.75rem;
-  gap: 0.75rem;
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0.25rem 0;
+  gap: 0;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
@@ -6273,14 +6274,9 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+.chat-input-actions__cell .n-button {
   width: clamp(24px, 2.8vw, 32px);
   height: clamp(24px, 2.8vw, 32px);
-}
-
-.chat-input-actions__cell.chat-input-actions__send .n-button {
-  width: clamp(32px, 3.2vw, 40px);
-  height: clamp(32px, 3.2vw, 40px);
 }
 
 @media (max-width: 520px) {
@@ -6292,14 +6288,9 @@ onBeforeUnmount(() => {
     gap: 0.2rem;
   }
 
-  .chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+  .chat-input-actions__cell .n-button {
     width: 24px;
     height: 24px;
-  }
-
-  .chat-input-actions__cell.chat-input-actions__send .n-button {
-    width: 32px;
-    height: 32px;
   }
 
   .chat-input-actions__icon {
@@ -6312,14 +6303,9 @@ onBeforeUnmount(() => {
     gap: 0.2rem;
   }
 
-  .chat-input-actions__cell:not(.chat-input-actions__send) .n-button {
+  .chat-input-actions__cell .n-button {
     width: 22px;
     height: 22px;
-  }
-
-  .chat-input-actions__cell.chat-input-actions__send .n-button {
-    width: 30px;
-    height: 30px;
   }
 
   .chat-input-actions__icon {
@@ -6576,19 +6562,21 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-.chat-input-area {
-  padding-top: 0.75rem;
-}
-
 .input-floating-toolbar {
   position: static;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: clamp(0.3rem, 1vw, 0.5rem);
+  gap: clamp(0.2rem, 0.7vw, 0.4rem);
   flex-wrap: nowrap;
   min-width: 0;
+}
+
+.input-floating-toolbar :deep(.n-button.n-button--primary-type.n-button--medium-type.n-button--circle) {
+  width: clamp(24px, 2.8vw, 32px);
+  height: clamp(24px, 2.8vw, 32px);
+  padding: 0;
 }
 
 :root[data-display-palette='night'] .input-floating-toolbar :deep(.n-button:not([disabled]) .n-icon),
