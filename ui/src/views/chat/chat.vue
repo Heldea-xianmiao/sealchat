@@ -77,6 +77,7 @@ const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
 const botOptionsLoading = ref(false);
+const botOptionsFetched = ref(false);
 const channelBotSelection = ref('');
 const channelBotsLoading = ref(false);
 const syncingChannelBot = ref(false);
@@ -155,20 +156,36 @@ watch(diceSettingsVisible, (visible) => {
   }
 });
 
-const ensureBotOptionsLoaded = async () => {
+const ensureBotOptionsLoaded = async (force = false) => {
 	if (botOptionsLoading.value) {
+		return;
+	}
+	if (!force && botOptionsFetched.value && botOptions.value.length) {
 		return;
 	}
 	botOptionsLoading.value = true;
 	try {
-		const resp = await chat.botList();
+		const resp = await chat.botList(force);
 		botOptions.value = resp?.items || [];
+		botOptionsFetched.value = true;
 	} catch (error: any) {
 		message.error(error?.response?.data?.message || '获取机器人列表失败');
 	} finally {
 		botOptionsLoading.value = false;
 	}
 };
+
+const handleBotListUpdated = async () => {
+  botOptionsFetched.value = false;
+  await ensureBotOptionsLoaded(true);
+  if (diceSettingsVisible.value) {
+    await refreshChannelBotSelection();
+  }
+};
+chatEvent.on('bot-list-updated', handleBotListUpdated as any);
+onBeforeUnmount(() => {
+  chatEvent.off('bot-list-updated', handleBotListUpdated as any);
+});
 
 const refreshChannelBotSelection = async () => {
   const channelId = chat.curChannel?.id;

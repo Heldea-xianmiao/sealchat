@@ -25,12 +25,15 @@ var appFs afero.Fs
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
-		AllowOrigins:     "*",
 		AllowMethods:     "GET, POST, PUT, DELETE",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId",
 		ExposeHeaders:    "Content-Length",
-		AllowCredentials: false,
 		MaxAge:           3600,
+		AllowOrigins:     "",
+		AllowCredentials: true,
+		AllowOriginsFunc: func(origin string) bool {
+			return origin != ""
+		},
 	})
 
 	appFs = afero.NewOsFs()

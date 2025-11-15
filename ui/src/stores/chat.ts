@@ -77,6 +77,8 @@ interface ChatState {
   channelMemberRoleMap: Record<string, Record<string, string[]>>;
   channelAdminMap: Record<string, Record<string, boolean>>;
   channelMemberPermMap: Record<string, Record<string, string[]>>;
+  botListCache: PaginationListResponse<UserInfo> | null;
+  botListCacheUpdatedAt: number;
 }
 
 const apiMap = new Map<string, any>();
@@ -91,7 +93,8 @@ type myEventName =
   | 'message-created-notice'
   | 'channel-identity-open'
   | 'channel-identity-updated'
-  | 'channel-member-settings-open';
+  | 'channel-member-settings-open'
+  | 'bot-list-updated';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -169,6 +172,8 @@ export const useChatStore = defineStore({
     channelMemberRoleMap: {},
     channelAdminMap: {},
     channelMemberPermMap: {},
+    botListCache: null,
+    botListCacheUpdatedAt: 0,
   }),
 
   getters: {
@@ -1131,9 +1136,21 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
-    async botList() {
+    async botList(forceReload = false) {
+      if (!forceReload && this.botListCache) {
+        return this.botListCache;
+      }
       const resp = await api.get<PaginationListResponse<UserInfo>>('api/v1/bot-list', {});
+      if (resp?.data) {
+        this.botListCache = resp.data;
+        this.botListCacheUpdatedAt = Date.now();
+      }
       return resp?.data;
+    },
+
+    invalidateBotListCache() {
+      this.botListCache = null;
+      this.botListCacheUpdatedAt = 0;
     },
 
     async channelInfoGet(id: string) {

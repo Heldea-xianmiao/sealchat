@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -87,6 +88,10 @@ func BotTokenAdd(c *fiber.Ctx) error {
 
 	err := db.Create(item).Error
 	if err != nil {
+		return err
+	}
+
+	if err := service.SyncBotUserProfile(item); err != nil {
 		return err
 	}
 

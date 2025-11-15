@@ -2,6 +2,8 @@ package service
 
 import (
 	"fmt"
+	"strings"
+
 	"sealchat/model"
 )
 
@@ -39,4 +41,29 @@ func BotListByChannelId(curUserId, channelId string) []string {
 	}
 
 	return ids
+}
+
+// SyncBotUserProfile keeps the bot user's public profile aligned with the token metadata.
+func SyncBotUserProfile(token *model.BotTokenModel) error {
+	if token == nil || token.ID == "" {
+		return nil
+	}
+	user := model.UserGet(token.ID)
+	if user == nil {
+		return fmt.Errorf("bot user not found")
+	}
+	updates := map[string]any{}
+	if name := strings.TrimSpace(token.Name); name != "" && user.Nickname != name {
+		updates["nickname"] = name
+	}
+	if strings.TrimSpace(token.Avatar) != "" && user.Avatar != token.Avatar {
+		updates["avatar"] = token.Avatar
+	}
+	if strings.TrimSpace(token.NickColor) != "" && user.NickColor != token.NickColor {
+		updates["nick_color"] = token.NickColor
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return model.GetDB().Model(user).Updates(updates).Error
 }

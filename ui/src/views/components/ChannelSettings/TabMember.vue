@@ -2,11 +2,11 @@
 import { ChannelType, type ChannelRoleModel, type FriendInfo, type SChannel, type UserInfo, type UserRoleModel } from '@/types';
 import { clone, times, uniqBy } from 'lodash-es';
 import { useDialog, useMessage } from 'naive-ui';
-import { computed, onMounted, ref, watch, type PropType } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch, type PropType } from 'vue';
 import UserLabelV from '@/components/UserLabelV.vue'
 import BtnPlus from './BtnPlus.vue';
 import useRequest from 'vue-hooks-plus/es/useRequest';
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { dialogAskConfirm } from '@/utils/dialog';
 import MemberSelector from './MemberSelector.vue';
 
@@ -110,11 +110,11 @@ fetchFriendList();
 
 const botList = ref<UserInfo[]>([]);
 
-const fetchBotList = async () => {
+const fetchBotList = async (force = false) => {
   try {
-    const response = await chat.botList();
+    const response = await chat.botList(force);
     const lst = [];
-    for (let i of response.items || []) {
+    for (let i of response?.items || []) {
       lst.push(i);
     }
     botList.value = lst;
@@ -125,6 +125,15 @@ const fetchBotList = async () => {
 };
 
 fetchBotList();
+
+const handleBotListUpdated = async () => {
+  await fetchBotList(true);
+};
+
+chatEvent.on('bot-list-updated', handleBotListUpdated as any);
+onUnmounted(() => {
+  chatEvent.off('bot-list-updated', handleBotListUpdated as any);
+});
 
 
 const selectedMembersSet = async (role: ChannelRoleModel, lst: string[], oldLst: string[]) => {

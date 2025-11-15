@@ -281,6 +281,17 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 		return nil, fmt.Errorf("没有可更新的字段")
 	}
 
+	if data.BotFeatureEnabled != nil && *data.BotFeatureEnabled {
+		roleId := fmt.Sprintf("ch-%s-%s", channel.ID, "bot")
+		userIds, err := model.UserRoleMappingUserIdListByRoleId(roleId)
+		if err != nil {
+			return nil, err
+		}
+		if len(userIds) == 0 {
+			return nil, fmt.Errorf("启用机器人骰点前，请先在成员管理中将机器人加入“机器人”角色")
+		}
+	}
+
 	if !channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
 		channel.BuiltInDiceEnabled = true
 		updates["built_in_dice_enabled"] = true

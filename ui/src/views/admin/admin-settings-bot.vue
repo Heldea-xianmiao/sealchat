@@ -3,6 +3,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { api } from '@/stores/_config';
 import { useUserStore } from '@/stores/user';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -40,6 +41,8 @@ const addToken = async () => {
     });
     message.success('添加成功');
     refresh();
+    chat.invalidateBotListCache();
+    chatEvent.emit('bot-list-updated');
   } catch (error) {
     message.error('添加失败: ' + (error as any).response?.data?.message || '未知错误');
   }
@@ -63,6 +66,7 @@ const tokens = ref({
 })
 
 const utils = useUtilsStore();
+const chat = useChatStore();
 const message = useMessage()
 const dialog = useDialog()
 
@@ -82,6 +86,8 @@ const deleteItem = async (i: any) => {
         await utils.botTokenDelete(i.id);
         message.success('删除成功');
         refresh();
+        chat.invalidateBotListCache();
+        chatEvent.emit('bot-list-updated');
       } catch (error) {
         message.error('删除失败: ' + (error as any).response?.data?.message || '未知错误');
       }
