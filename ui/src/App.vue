@@ -5,19 +5,29 @@ import { darkTheme } from 'naive-ui'
 import { NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
 import type { GlobalTheme, GlobalThemeOverrides } from 'naive-ui'
 import { i18n } from './lang'
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import dayjs from 'dayjs'
+import { useDisplayStore } from '@/stores/display'
 
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
-    primaryColor: '#3388de',
-    primaryColorHover: '#3388de',
-    primaryColorPressed: '#3859b3',
-  },
-  Button: {
-    // textColor: '#FF0000'
+const display = useDisplayStore()
+
+const naiveTheme = computed<GlobalTheme | null>(() => (display.settings.palette === 'night' ? darkTheme : null))
+
+const themeOverrides = computed<GlobalThemeOverrides>(() => {
+  const isNight = display.settings.palette === 'night'
+  return {
+    common: {
+      primaryColor: '#3388de',
+      primaryColorHover: '#3388de',
+      primaryColorPressed: '#3859b3',
+      textColor: isNight ? '#f4f4f5' : '#0f172a',
+      textColor2: isNight ? 'rgba(248, 250, 252, 0.8)' : '#475569',
+      textColor3: isNight ? 'rgba(248, 250, 252, 0.65)' : '#475569',
+      bodyColor: isNight ? '#1b1b20' : '#ffffff',
+    },
+    Button: {},
   }
-}
+})
 
 const locale = ref<any>(zhCN);
 const dateLocale = ref<any>(dateZhCN);
@@ -43,7 +53,7 @@ watch(i18n.global.locale, (newVal) => {
 </script>
 
 <template>
-  <n-config-provider :locale="locale" :date-locale="dateLocale" :theme-overrides="themeOverrides" style="height: 100%;">
+  <n-config-provider :locale="locale" :date-locale="dateLocale" :theme="naiveTheme" :theme-overrides="themeOverrides" style="height: 100%;">
     <n-message-provider>
       <n-dialog-provider>
         <RouterView />
