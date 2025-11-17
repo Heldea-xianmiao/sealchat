@@ -19,6 +19,7 @@ import ChannelCreate from './ChannelCreate.vue'
 import UserLabel from '@/components/UserLabel.vue'
 import { Setting } from '@icon-park/vue-next';
 import SidebarPrivate from './sidebar-private.vue';
+import ChannelSortModal from './ChannelSortModal.vue';
 
 const { t } = useI18n()
 
@@ -197,8 +198,10 @@ const handleWorldSelect = async (value: string) => {
 };
 
 const handleChannelSortEntry = () => {
-  message.info('频道排序功能建设中');
+  showSortModal.value = true;
 };
+
+const showSortModal = ref(false);
 
 const goWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -249,7 +252,7 @@ const goWorldManage = () => {
 
         <!-- 频道列表内容将在这里显示 -->
         <div class="space-y-1 flex flex-col px-2">
-          <template v-if="chat.curChannel?.name">
+          <template v-if="chat.curChannel">
             <!-- <template v-if="false"> -->
             <template v-for="i in chat.channelTree">
               <div class="sider-item" :class="i.id === chat.curChannel?.id ? ['active'] : []"
@@ -464,6 +467,7 @@ const goWorldManage = () => {
     </div> -->
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
+  <ChannelSortModal v-model:show="showSortModal" />
 
 </template>
 
