@@ -86,66 +86,58 @@ func ChannelIdList(userId string) ([]string, error) {
 
 // CanReadChannelByUserId 注意性能比较差，后面修改
 func CanReadChannelByUserId(userId, channelId string) bool {
+	if strings.TrimSpace(channelId) == "" {
+		return false
+	}
+	if len(channelId) < 30 {
+		if ch, err := model.ChannelGet(channelId); err == nil && ch != nil {
+			if ch.ID == "" {
+				return false
+			}
+			if !ch.IsPrivate && strings.TrimSpace(ch.WorldID) != "" {
+				if !IsWorldMember(ch.WorldID, userId) {
+					return false
+				}
+			}
+		}
+	}
 	chIds, _ := ChannelIdList(userId)
 	return lo.Contains(chIds, channelId)
 }
 
 // ChannelList 获取可见的频道（等待重构）
-func ChannelList(userId string) ([]*model.ChannelModel, error) {
-	// 包括如下内容:
-	// 1. 属性为可见的一级频道(即没有父级的频道)
-	// 2. 具有明确可看权限的频道(先查频道角色，再根据频道角色验证权限和获取频道id)
-	// 3. 补入有权查看的频道的子频道
-
-	roles, err := model.UserRoleMappingListByUserID(userId, "", "channel")
-	if err != nil {
-		return nil, err
+func ChannelList(userId, worldID string) ([]*model.ChannelModel, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return []*model.ChannelModel{}, nil
 	}
-
-	var rolesCanRead []string
-	db := model.GetDB()
-	db.Model(&model.RolePermissionModel{}).
-		Where("role_id in ? and permission_id in ?", roles, []string{pm.PermFuncChannelRead.ID(), pm.PermFuncChannelReadAll.ID()}).
-		Pluck("role_id", &rolesCanRead)
-
-	// 这里获得的是2
-	ids2 := lo.Map(rolesCanRead, func(item string, index int) string {
-		return strings.SplitN(item, "-", 3)[1]
-	})
-
-	// 3.1，公开子频道
-	var ids3 []string
-	db.Model(&model.ChannelModel{}).Where("root_id in ? and perm_type = ?", ids2, "public").
-		Pluck("id", &ids3)
-
-	// 3.2
-	// 先找出我有“查看全部”权限的的顶级频道
-	// 找出这些顶级频道的下属频道
-	var rolesCanRead2 []string
-	db.Model(&model.RolePermissionModel{}).
-		Where("role_id in ? and permission_id in ?", roles, []string{pm.PermFuncChannelReadAll.ID()}).
-		Pluck("role_id", &rolesCanRead2)
-	ids2x := lo.Map(rolesCanRead2, func(item string, index int) string {
-		return strings.SplitN(item, "-", 3)[1]
-	})
-	var ids32 []string
-	db.Model(&model.ChannelModel{}).Where("root_id in ? and perm_type = ?", ids2x, "non-public").
-		Pluck("id", &ids32)
-
-	idsAll := append(ids2, ids3...)
-	idsAll = append(idsAll, ids32...)
-	var items []*model.ChannelModel
-	db.Model(&model.ChannelModel{}).Where("id in ? or perm_type = ?", idsAll, "public").
-		Group("id").              // 使用Group来去重
-		Order("sort_order DESC"). // 先按优先级排序(数字大的在前)
-		Order("created_at DESC"). // 同优先级按创建时间降序
-		Find(&items)
-
-	return items, nil
+	if !IsWorldMember(worldID, userId) && !pm.CanWithSystemRole(userId, pm.PermModAdmin) {
+		return []*model.ChannelModel{}, nil
+	}
+	return ChannelListByWorld(worldID)
 }
 
-func ChannelNew(channelID, channelType, channelName string, creatorId string, parentId string) *model.ChannelModel {
+func ChannelListByWorld(worldID string) ([]*model.ChannelModel, error) {
+	var items []*model.ChannelModel
+	if strings.TrimSpace(worldID) == "" {
+		return items, nil
+	}
+	err := model.GetDB().Where("world_id = ? AND status = ?", worldID, "active").
+		Order("sort_order DESC").
+		Order("created_at ASC").
+		Find(&items).Error
+	return items, err
+}
+
+func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentId string) *model.ChannelModel {
+	if strings.TrimSpace(worldID) == "" {
+		if w, err := GetOrCreateDefaultWorld(); err == nil && w != nil {
+			worldID = w.ID
+		}
+	}
+
 	m := model.ChannelPublicNew(channelID, &model.ChannelModel{
+		WorldID:            worldID,
 		Name:               channelName,
 		PermType:           channelType,
 		ParentID:           parentId,

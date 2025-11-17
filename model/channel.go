@@ -10,6 +10,7 @@ import (
 
 type ChannelModel struct {
 	StringPKBaseModel
+	WorldID            string `json:"worldId" gorm:"size:100;index"`
 	Name               string `json:"name"`
 	Note               string `json:"note"`                   // 这是一份注释，用于管理人员辨别数据
 	RootId             string `json:"rootId"`                 // 如果未来有多级子频道，那么rootId指向顶层
@@ -21,6 +22,7 @@ type ChannelModel struct {
 	DefaultDiceExpr    string `json:"defaultDiceExpr" gorm:"size:32;not null;default:d20"`
 	BuiltInDiceEnabled bool   `json:"builtInDiceEnabled" gorm:"default:true"`
 	BotFeatureEnabled  bool   `json:"botFeatureEnabled" gorm:"default:false"`
+	Status             string `json:"status" gorm:"size:24;default:active;index"`
 
 	SortOrder int `json:"sortOrder" gorm:"index"` // 优先级序号，越大越靠前
 
@@ -58,6 +60,7 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 	}
 	return &protocol.Channel{
 		ID:                 c.ID,
+		WorldID:            c.WorldID,
 		Name:               c.Name,
 		Type:               channelType,
 		DefaultDiceExpr:    c.DefaultDiceExpr,

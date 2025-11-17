@@ -175,6 +175,7 @@ const suffix = (item: SChannel) => {
   return ''
 }
 
+
 const aaa = ref(false);
 
 const toggleParentCollapse = (channelId: string) => {
@@ -185,8 +186,30 @@ const handleCollapseAllChannels = () => {
   chat.collapseAllChannelGroups(true);
 };
 
+const handleWorldSelect = async (value: string) => {
+  if (!value) return;
+  try {
+    await chat.switchWorld(value, { force: true });
+    router.push({ name: 'home' });
+  } catch (error) {
+    message.error('切换世界失败');
+  }
+};
+
 const handleChannelSortEntry = () => {
   message.info('频道排序功能建设中');
+};
+
+const goWorldLobby = () => {
+  router.push({ name: 'world-lobby' });
+};
+
+const goWorldManage = () => {
+  if (chat.currentWorldId) {
+    router.push({ name: 'world-detail', params: { worldId: chat.currentWorldId } });
+  } else {
+    router.push({ name: 'world-lobby' });
+  }
 };
 </script>
 
@@ -194,6 +217,27 @@ const handleChannelSortEntry = () => {
   <div class="w-full h-full sc-sidebar sc-sidebar-fill">
     <n-tabs type="segment" v-model:value="chat.sidebarTab" tab-class="sc-sidebar-fill" pane-class="sc-sidebar-fill">
       <n-tab-pane name="channels" tab="频道">
+        <div class="px-2 py-2 flex flex-wrap gap-2 items-center">
+          <div class="flex-1 min-w-[180px]">
+            <n-select
+              class="w-full"
+              size="small"
+              filterable
+              placeholder="选择世界"
+              :options="chat.joinedWorldOptions"
+              :value="chat.currentWorldId"
+              @update:value="handleWorldSelect"
+            />
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <n-button quaternary size="tiny" @click="goWorldLobby">
+              世界大厅
+            </n-button>
+            <n-button quaternary size="tiny" @click="goWorldManage">
+              世界管理
+            </n-button>
+          </div>
+        </div>
         <template #tab>
           <span>频道</span>
           <div class="ml-1" v-if="chat.unreadCountPublic">
@@ -420,6 +464,7 @@ const handleChannelSortEntry = () => {
     </div> -->
   <ChannelCreate v-model:show="showModal" :parentId="parentId" />
   <ChannelSettings :channel="channelToSettings" v-model:show="showModal2" />
+
 </template>
 
 <style lang="scss">

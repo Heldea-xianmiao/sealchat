@@ -1,11 +1,13 @@
 <script setup lang="tsx">
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import Chat from './chat/chat.vue'
 import ChatHeader from './components/header.vue'
 import ChatSidebar from './components/sidebar.vue'
 import { useWindowSize } from '@vueuse/core'
+import { useChatStore } from '@/stores/chat';
 
 const { width } = useWindowSize()
+const chat = useChatStore();
 
 const active = ref(false)
 const isSidebarCollapsed = ref(false)
@@ -21,6 +23,10 @@ const toggleSidebar = () => {
   }
   isSidebarCollapsed.value = !isSidebarCollapsed.value
 }
+
+onMounted(() => {
+  chat.ensureWorldReady();
+});
 
 </script>
 

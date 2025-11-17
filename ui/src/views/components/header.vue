@@ -5,6 +5,7 @@ import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, 
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
+import { useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 // import AdminSettings from './admin-settings.vue'
@@ -35,6 +36,7 @@ const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
+const router = useRouter();
 const channelSearch = useChannelSearchStore();
 const audioStudio = useAudioStudioStore();
 const iFormStore = useIFormStore();
@@ -45,6 +47,20 @@ const channelTitle = computed(() => {
   const name = typeof raw === 'string' ? raw.trim() : '';
   return name ? `# ${name}` : t('headText');
 });
+
+const currentWorldName = computed(() => chat.currentWorld?.name || '未选择世界');
+
+const openWorldLobby = () => {
+  router.push({ name: 'world-lobby' });
+};
+
+const openWorldDetail = () => {
+  if (!chat.currentWorldId) {
+    openWorldLobby();
+    return;
+  }
+  router.push({ name: 'world-detail', params: { worldId: chat.currentWorldId } });
+};
 
 const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
 const iFormHasAttention = computed(() => iFormStore.hasAttention);

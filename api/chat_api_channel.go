@@ -29,8 +29,15 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 			return nil, nil
 		}
 	}
+	worldID := strings.TrimSpace(data.WorldID)
+	if worldID == "" {
+		return nil, fmt.Errorf("world_id 缺失")
+	}
+	if !service.IsWorldAdmin(worldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+		return nil, fmt.Errorf("无权在该世界创建频道")
+	}
 
-	m := service.ChannelNew(utils.NewID(), permType, data.Name, ctx.User.ID, data.ParentID)
+	m := service.ChannelNew(utils.NewID(), permType, data.Name, worldID, ctx.User.ID, data.ParentID)
 
 	return &struct {
 		Channel *protocol.Channel `json:"channel"`
@@ -70,9 +77,21 @@ func apiChannelPrivateCreate(ctx *ChatContext, data *struct {
 }
 
 func apiChannelList(ctx *ChatContext, data *struct {
-	UserId string `json:"user_id"`
+	WorldID string `json:"world_id"`
 }) (any, error) {
-	items, err := service.ChannelList(ctx.User.ID)
+	worldID := strings.TrimSpace(data.WorldID)
+	if worldID == "" {
+		if w, err := service.GetOrCreateDefaultWorld(); err == nil && w != nil {
+			worldID = w.ID
+		}
+	}
+	if worldID == "" {
+		return nil, fmt.Errorf("未找到世界")
+	}
+	if !service.IsWorldMember(worldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+		return nil, fmt.Errorf("尚未加入该世界")
+	}
+	items, err := service.ChannelList(ctx.User.ID, worldID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +105,11 @@ func apiChannelList(ctx *ChatContext, data *struct {
 	}
 
 	return &struct {
-		Data []*model.ChannelModel `json:"data"`
-		Next string                `json:"next"`
+		Data    []*model.ChannelModel `json:"data"`
+		WorldID string                `json:"world_id"`
 	}{
-		Data: items,
+		Data:    items,
+		WorldID: worldID,
 	}, nil
 }
 
@@ -124,6 +144,14 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	// 权限检查
 	if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
+		if ch, err := model.ChannelGet(channelId); err == nil && ch != nil {
+			if ch.ID == "" {
+				return nil, fmt.Errorf("频道不存在")
+			}
+			if ch.WorldID != "" && !service.IsWorldMember(ch.WorldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
+				return nil, fmt.Errorf("尚未加入该世界")
+			}
+		}
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
 			return nil, nil
 		}

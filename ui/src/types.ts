@@ -132,10 +132,12 @@ interface APIMessageGet {
 interface APIChannelCreate {
   api: 'channel.create'
   name: string
+  worldId?: string
 }
 
 interface APIChannelList {
   // api: 'channel.list'
+  world_id?: string
 }
 
 
@@ -150,6 +152,7 @@ export interface APIChannelListResp {
   echo?: string,
   data: {
     data: Channel[],
+    world_id?: string,
     next?: string,  
   }
 }

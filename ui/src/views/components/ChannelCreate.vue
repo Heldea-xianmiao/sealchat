@@ -58,8 +58,15 @@ const newChannel = async () => {
     message.error('你没有权限这样做');
     return false;
   }
-  await chat.channelCreate(model.value);
-  await chat.channelList();
+  try {
+    await chat.channelCreate(model.value);
+    await chat.channelList(chat.currentWorldId, true);
+    show.value = false;
+    message.success('频道创建成功');
+  } catch (err: any) {
+    message.error(err?.message || err?.response?.err || '创建频道失败');
+    return false;
+  }
 }
 
 </script>

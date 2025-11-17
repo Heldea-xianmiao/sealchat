@@ -112,6 +112,7 @@ func DBInit(dsn string) {
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
 	db.AutoMigrate(&MessageExportJobModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
+	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{})
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").
@@ -121,6 +122,10 @@ func DBInit(dsn string) {
 
 	if err := BackfillMessageDisplayOrder(); err != nil {
 		log.Printf("补齐消息 display_order 失败: %v", err)
+	}
+
+	if err := BackfillWorldData(); err != nil {
+		log.Printf("初始化世界数据失败: %v", err)
 	}
 
 	if IsSQLite() {

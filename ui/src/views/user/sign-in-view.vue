@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import router from '@/router';
 import { defineComponent, ref, reactive, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 import type { FormRules, FormItemRule, FormItemInst, FormInst } from 'naive-ui';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
@@ -97,6 +98,7 @@ const handlePasswordInput = () => {
 }
 
 const userStore = useUserStore();
+const route = useRoute();
 
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null)

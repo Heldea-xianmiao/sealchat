@@ -3,6 +3,9 @@ import HomeView from '../views/HomeView.vue'
 import UserSigninVue from '@/views/user/sign-in-view.vue'
 import UserSignupVue from '@/views/user/sign-up-view.vue'
 import UserPasswordResetView from '@/views/user/password-reset-view.vue'
+import WorldLobby from '@/views/world/WorldLobby.vue'
+import WorldDetail from '@/views/world/WorldDetail.vue'
+import InviteConsume from '@/views/invite/InviteConsume.vue'
 
 
 const router = createRouter({
@@ -35,6 +38,21 @@ const router = createRouter({
       // this generates a separate chunk (About.[hash].js) for this route
       // which is lazy-loaded when the route is visited.
       component: () => import('../views/AboutView.vue')
+    },
+    {
+      path: '/worlds',
+      name: 'world-lobby',
+      component: WorldLobby,
+    },
+    {
+      path: '/worlds/:worldId',
+      name: 'world-detail',
+      component: WorldDetail,
+    },
+    {
+      path: '/invite/:slug',
+      name: 'invite-consume',
+      component: InviteConsume,
     }
   ]
 })

@@ -20,8 +20,18 @@ interface ChatState {
   subject: WebSocketSubject<any> | null;
   // user: User,
   channelTree: SChannel[],
+  channelTreeByWorld: Record<string, SChannel[]>,
   channelTreePrivate: SChannel[],
   curChannel: Channel | null,
+  currentWorldId: string,
+  joinedWorldIds: string[],
+  worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
+  worldLobbyMode: 'mine' | 'explore',
+  myWorldCache: { owned: any[]; joined: any[] },
+  exploreWorldCache: { items: any[]; total: number; page: number; pageSize: number } | null,
+  worldMap: Record<string, any>,
+  worldDetailMap: Record<string, any>,
+  worldSectionCache: Record<string, any>,
   curMember: GuildMember | null,
   channelCollapseState: Record<string, boolean>,
   connectState: 'connecting' | 'connected' | 'disconnected' | 'reconnecting',
@@ -83,6 +93,7 @@ interface ChatState {
   channelMemberPermMap: Record<string, Record<string, string[]>>;
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
+  favoriteWorldIds: string[];
 }
 
 const apiMap = new Map<string, any>();
@@ -114,8 +125,18 @@ export const useChatStore = defineStore({
     // user: { id: '1', },
     subject: null,
     channelTree: [] as any,
+    channelTreeByWorld: {},
     channelTreePrivate: [] as any,
     curChannel: null,
+    currentWorldId: localStorage.getItem('currentWorldId') || '',
+    joinedWorldIds: [],
+    worldListCache: null,
+    worldLobbyMode: 'mine',
+    myWorldCache: { owned: [], joined: [] },
+    exploreWorldCache: null,
+    worldMap: {},
+    worldDetailMap: {},
+    worldSectionCache: {},
     curMember: null,
     channelCollapseState: {},
     connectState: 'connecting',
@@ -182,6 +203,16 @@ export const useChatStore = defineStore({
     channelMemberPermMap: {},
     botListCache: null,
     botListCacheUpdatedAt: 0,
+    favoriteWorldIds: (() => {
+      if (typeof window === 'undefined') return [];
+      try {
+        const stored = localStorage.getItem('favoriteWorldIds');
+        return stored ? JSON.parse(stored) : [];
+      } catch (err) {
+        console.warn('parse favoriteWorldIds failed', err);
+        return [];
+      }
+    })(),
   }),
 
   getters: {
@@ -194,9 +225,60 @@ export const useChatStore = defineStore({
       }, 0);
     },
     unreadCountPublic: (state) => {
+      const collectIds = (nodes?: SChannel[]) => {
+        const ids: Set<string> = new Set();
+        const traverse = (list?: SChannel[]) => {
+          if (!Array.isArray(list)) return;
+          list.forEach((item: SChannel) => {
+            ids.add(item.id);
+            if (Array.isArray(item.children)) {
+              traverse(item.children as SChannel[]);
+            }
+          });
+        };
+        traverse(nodes);
+        return ids;
+      };
+      const currentTree =
+        state.channelTreeByWorld[state.currentWorldId] && state.channelTreeByWorld[state.currentWorldId].length
+          ? state.channelTreeByWorld[state.currentWorldId]
+          : state.channelTree;
+      const validIds = collectIds(currentTree);
+      if (validIds.size === 0) {
+        return Object.entries(state.unreadCountMap).reduce((sum, [key, count]) => {
+          return key.includes(':') ? sum : sum + count;
+        }, 0);
+      }
       return Object.entries(state.unreadCountMap).reduce((sum, [key, count]) => {
-        return key.includes(':') ? sum : sum + count;
+        if (key.includes(':')) return sum;
+        return validIds.has(key) ? sum + count : sum;
       }, 0);
+    },
+    currentWorld(state) {
+      if (!state.currentWorldId) return null;
+      return state.worldMap[state.currentWorldId] || null;
+    },
+    currentWorldChannels(state) {
+      if (!state.currentWorldId) return [] as SChannel[];
+      return state.channelTreeByWorld[state.currentWorldId] || [];
+    },
+    joinedWorldOptions(state) {
+      return state.joinedWorldIds.map((id) => {
+        const world = state.worldMap[id];
+        return {
+          value: id,
+          label: world?.name || `世界 ${id.slice(0, 6)}`,
+        };
+      });
+    },
+    favoriteWorldSet(state) {
+      return new Set(state.favoriteWorldIds);
+    },
+    ownedWorlds(state) {
+      return state.myWorldCache.owned || [];
+    },
+    joinedWorldsOnly(state) {
+      return state.myWorldCache.joined || [];
     },
   },
 
@@ -300,12 +382,13 @@ export const useChatStore = defineStore({
       this.startPingLoop();
       this.sendPresencePing(true);
 
+      await this.ensureWorldReady();
       if (this.curChannel?.id) {
         await this.channelSwitchTo(this.curChannel?.id);
         const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': this.curChannel?.id });
         this.curChannelUsers = resp2.data.data;
       }
-      await this.channelList();
+      await this.channelList(this.currentWorldId, true);
       await this.ChannelPrivateList();
       await this.channelMembersCountRefresh();
 
@@ -325,6 +408,25 @@ export const useChatStore = defineStore({
       }
     },
 
+    async ensureConnectionReady() {
+      if (this.connectState === 'connected') {
+        return;
+      }
+      if (!this.subject) {
+        await this.tryInit();
+      }
+      if (this.connectState === 'connected') {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        const handler = () => {
+          chatEvent.off('connected', handler as any);
+          resolve();
+        };
+        chatEvent.on('connected', handler as any);
+      });
+    },
+
     async setReplayTo(item: any) {
       this.curReplyTo = item;
     },
@@ -334,7 +436,14 @@ export const useChatStore = defineStore({
       return new Promise((resolve, reject) => {
         apiMap.set(echo, { resolve, reject });
         this.subject?.next({ api, data, echo });
-      })
+      }).then((resp: any) => {
+        if (resp?.err) {
+          const error = new Error(resp.err);
+          (error as any).response = resp;
+          throw error;
+        }
+        return resp;
+      });
     },
 
     async send(channelId: string, content: string) {
@@ -346,8 +455,288 @@ export const useChatStore = defineStore({
       this.subject?.next(msg);
     },
 
+    setCurrentWorld(worldId: string) {
+      if (!worldId || this.currentWorldId === worldId) return;
+      this.currentWorldId = worldId;
+      localStorage.setItem('currentWorldId', worldId);
+    },
+
+    async initWorlds() {
+      if (this.joinedWorldIds.length) {
+        const stored = localStorage.getItem('currentWorldId');
+        if (stored) {
+          this.currentWorldId = stored;
+        }
+        return;
+      }
+      try {
+        const resp = await api.get('/api/v1/worlds', { params: { joined: true } });
+        const items = resp.data.items || [];
+        this.joinedWorldIds = items.map((item: any) => item.world.id);
+        items.forEach((item: any) => {
+          if (item?.world?.id) {
+            this.worldMap[item.world.id] = item.world;
+          }
+        });
+        const stored = localStorage.getItem('currentWorldId');
+        if (stored && this.joinedWorldIds.includes(stored)) {
+          this.currentWorldId = stored;
+        } else if (this.joinedWorldIds.length) {
+          this.currentWorldId = this.joinedWorldIds[0];
+          localStorage.setItem('currentWorldId', this.currentWorldId);
+        }
+      } catch (err) {
+        console.warn('initWorlds failed', err);
+      }
+    },
+
+    async ensureWorldReady() {
+      await this.initWorlds();
+      if (!this.currentWorldId && this.joinedWorldIds.length) {
+        this.setCurrentWorld(this.joinedWorldIds[0]);
+      }
+      return !!this.currentWorldId;
+    },
+
+    async worldList(params?: { page?: number; pageSize?: number; joined?: boolean; keyword?: string }) {
+      const resp = await api.get('/api/v1/worlds', { params });
+      const data = resp.data;
+      if (Array.isArray(data?.items)) {
+        data.items.forEach((item: any) => {
+          if (item?.world?.id) {
+            this.worldMap[item.world.id] = item.world;
+          }
+        });
+      }
+      if (Array.isArray(data?.favoriteWorldIds)) {
+        this.favoriteWorldIds = data.favoriteWorldIds;
+        this.persistFavoriteWorlds();
+      }
+      if (params?.joined) {
+        const items = data.items || [];
+        this.joinedWorldIds = items.map((item: any) => item.world.id);
+        const owned = items.filter((item: any) => item?.world?.ownerId === useUserStore().info.id);
+        const joined = items.filter((item: any) => item?.world?.ownerId !== useUserStore().info.id);
+        this.myWorldCache = { owned, joined };
+      }
+      this.worldListCache = data;
+      return data;
+    },
+
+    async worldListExplore(params?: { page?: number; pageSize?: number; keyword?: string; visibility?: string; joined?: boolean }) {
+      const resp = await api.get('/api/v1/worlds', {
+        params: {
+          page: params?.page || 1,
+          pageSize: params?.pageSize || 50,
+          visibility: params?.visibility || 'public',
+          joined: params?.joined,
+          keyword: params?.keyword,
+        },
+      });
+      const data = resp.data;
+      if (Array.isArray(data?.items)) {
+        data.items.forEach((item: any) => {
+          if (item?.world?.id) {
+            this.worldMap[item.world.id] = item.world;
+          }
+        });
+      }
+      this.exploreWorldCache = data;
+      return data;
+    },
+
+    async createWorld(payload: { name: string; description?: string; visibility?: string; avatar?: string }) {
+      const resp = await api.post('/api/v1/worlds', payload);
+      const worldId = resp.data.world?.id;
+      if (worldId) {
+        await this.initWorlds();
+        this.worldMap[worldId] = resp.data.world;
+        if (!this.joinedWorldIds.includes(worldId)) {
+          this.joinedWorldIds.push(worldId);
+        }
+        this.setCurrentWorld(worldId);
+        await this.channelList(worldId, true);
+      }
+      return resp.data;
+    },
+
+    persistFavoriteWorlds() {
+      if (typeof window === 'undefined') return;
+      localStorage.setItem('favoriteWorldIds', JSON.stringify(this.favoriteWorldIds));
+    },
+
+    async fetchFavoriteWorlds() {
+      const resp = await api.get('/api/v1/worlds/favorites');
+      const ids: string[] = resp.data?.worldIds || [];
+      this.favoriteWorldIds = ids;
+      this.persistFavoriteWorlds();
+      return ids;
+    },
+
+    async toggleWorldFavorite(worldId: string) {
+      if (!worldId) return;
+      const willFavorite = !this.favoriteWorldIds.includes(worldId);
+      const resp = await api.post('/api/v1/worlds/' + worldId + '/favorite', { favorite: willFavorite });
+      const ids: string[] = resp.data?.worldIds || [];
+      this.favoriteWorldIds = ids;
+      this.persistFavoriteWorlds();
+      return ids;
+    },
+
+    isWorldFavorited(worldId: string) {
+      return this.favoriteWorldIds.includes(worldId);
+    },
+
+    async joinWorld(worldId: string) {
+      await api.post(`/api/v1/worlds/${worldId}/join`, {});
+      if (!this.joinedWorldIds.includes(worldId)) {
+        this.joinedWorldIds.push(worldId);
+      }
+      this.setCurrentWorld(worldId);
+      await this.channelList(worldId, true);
+    },
+
+    async leaveWorld(worldId: string) {
+      await api.post(`/api/v1/worlds/${worldId}/leave`, {});
+      this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
+      if (this.currentWorldId === worldId) {
+        this.currentWorldId = this.joinedWorldIds[0] || '';
+        localStorage.setItem('currentWorldId', this.currentWorldId);
+      }
+      delete this.channelTreeByWorld[worldId];
+    },
+
+    async worldDetail(worldId: string) {
+      if (!worldId) return null;
+      if (this.worldDetailMap[worldId]) {
+        return this.worldDetailMap[worldId];
+      }
+      const resp = await api.get(`/api/v1/worlds/${worldId}`);
+      this.worldDetailMap[worldId] = resp.data;
+      if (resp.data.world) {
+        this.worldMap[worldId] = resp.data.world;
+      }
+      return resp.data;
+    },
+
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean }) {
+      const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
+      if (resp.data?.world) {
+        this.worldMap[worldId] = resp.data.world;
+        this.worldDetailMap[worldId] = resp.data;
+      }
+      return resp.data;
+    },
+
+    async worldDelete(worldId: string) {
+      const resp = await api.delete(`/api/v1/worlds/${worldId}`);
+      delete this.worldMap[worldId];
+      delete this.worldDetailMap[worldId];
+      delete this.worldSectionCache[worldId];
+      this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
+      if (this.currentWorldId === worldId) {
+        this.currentWorldId = this.joinedWorldIds[0] || '';
+      }
+      return resp.data;
+    },
+
+    async createWorldInvite(worldId: string, payload: { ttlMinutes?: number; maxUse?: number; memo?: string }) {
+      if (!worldId) throw new Error('world id required');
+      const resp = await api.post(`/api/v1/worlds/${worldId}/invites`, payload);
+      return resp.data;
+    },
+
+    async worldMemberList(worldId: string, params?: { page?: number; pageSize?: number; keyword?: string }) {
+      const resp = await api.get(`/api/v1/worlds/${worldId}/members`, { params });
+      return resp.data;
+    },
+
+    async worldMemberSetRole(worldId: string, userId: string, role: string) {
+      const resp = await api.post(`/api/v1/worlds/${worldId}/members/${userId}/role`, { role });
+      return resp.data;
+    },
+
+    async worldMemberRemove(worldId: string, userId: string) {
+      const resp = await api.delete(`/api/v1/worlds/${worldId}/members/${userId}`);
+      return resp.data;
+    },
+
+    async consumeWorldInvite(slug: string) {
+      const resp = await api.post(`/api/v1/worlds/invites/${slug}/consume`, {});
+      const worldId = resp.data?.world?.id;
+      if (worldId) {
+        this.worldMap[worldId] = resp.data.world;
+        if (!this.joinedWorldIds.includes(worldId)) {
+          this.joinedWorldIds.push(worldId);
+        }
+        this.setCurrentWorld(worldId);
+      }
+      return resp.data;
+    },
+
+    async loadWorldSections(worldId: string, sections: string[] = ['channels']) {
+      const resp = await api.get(`/api/v1/worlds/${worldId}/sections`, { params: { sections: sections.join(',') } });
+      const key = `${worldId}-${sections.sort().join(',')}`;
+      this.worldSectionCache[key] = resp.data;
+      if (resp.data.channels) {
+        this.applyChannelTree(worldId, resp.data.channels);
+      }
+      return resp.data;
+    },
+
+    applyChannelTree(worldId: string, channels: Channel[]) {
+      const groupedData = groupBy(channels, 'parentId');
+      const buildTree = (parentId: string): any => {
+        const children = groupedData[parentId] || [];
+        return children.map((child: Channel) => ({
+          ...child,
+          children: buildTree(child.id),
+        }));
+      };
+      const tree = buildTree('');
+      this.channelTreeByWorld = {
+        ...this.channelTreeByWorld,
+        [worldId]: tree,
+      };
+      if (this.currentWorldId === worldId) {
+        this.channelTree = tree;
+      }
+      this.ensureChannelCollapseState(tree as SChannel[]);
+      return tree;
+    },
+
+    async switchWorld(worldId: string, options?: { force?: boolean }) {
+      if (!worldId) {
+        return;
+      }
+      if (!this.joinedWorldIds.includes(worldId)) {
+        await this.joinWorld(worldId);
+      } else {
+        this.setCurrentWorld(worldId);
+        await this.channelList(worldId, options?.force ?? true);
+      }
+      const firstChannel = this.channelTree[0];
+      if (firstChannel) {
+        await this.channelSwitchTo(firstChannel.id);
+      }
+    },
+
     async channelCreate(data: any) {
-      const resp = await this.sendAPI('channel.create', data) as APIChannelCreateResp;
+      const targetWorldId = data.worldId || this.currentWorldId;
+      if (!targetWorldId) {
+        throw new Error('worldId 缺失，无法创建频道');
+      }
+      const payload = {
+        ...data,
+        worldId: targetWorldId,
+        world_id: targetWorldId, // 兼容旧字段
+      };
+      const resp = await this.sendAPI('channel.create', payload) as APIChannelCreateResp;
+      if (resp?.err) {
+        throw new Error(resp.err || '创建频道失败');
+      }
+      await this.channelList(targetWorldId, true);
+      return resp;
     },
 
     async channelPrivateCreate(userId: string) {
@@ -395,7 +784,7 @@ export const useChatStore = defineStore({
       }
 
       chatEvent.emit('channel-switch-to', undefined);
-      this.channelList();
+      this.channelList(this.currentWorldId);
       return true;
     },
 
@@ -898,26 +1287,28 @@ export const useChatStore = defineStore({
       this.channelCollapseState = next;
     },
 
-    async channelList() {
-      const resp = await this.sendAPI('channel.list', {}) as APIChannelListResp;
+    async channelList(worldId?: string, force = false) {
+      const targetWorld = worldId || this.currentWorldId;
+      if (!targetWorld) {
+        await this.initWorlds();
+      }
+      const finalWorld = targetWorld || this.currentWorldId;
+      if (!finalWorld) {
+        return [];
+      }
+      await this.ensureConnectionReady();
+      if (!force && this.channelTreeByWorld[finalWorld]) {
+        this.channelTree = this.channelTreeByWorld[finalWorld];
+        return this.channelTree;
+      }
+      const resp = await this.sendAPI('channel.list', { world_id: finalWorld, worldId: finalWorld }) as APIChannelListResp;
       const d = resp.data;
       const chns = d.data ?? [];
 
       const curItem = chns.find(c => c.id === this.curChannel?.id);
       this.curChannel = curItem || this.curChannel;
 
-      const groupedData = groupBy(chns, 'parentId');
-      const buildTree = (parentId: string): any => {
-        const children = groupedData[parentId] || [];
-        return children.map((child: Channel) => ({
-          ...child,
-          children: buildTree(child.id),
-        }));
-      };
-
-      const tree = buildTree('');
-      this.channelTree = tree;
-      this.ensureChannelCollapseState(tree as SChannel[]);
+      const tree = this.applyChannelTree(finalWorld, chns);
 
       if (!this.curChannel) {
         // 这是为了正确标记人数，有点屎但实现了
