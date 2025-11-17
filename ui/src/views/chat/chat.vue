@@ -3774,13 +3774,14 @@ const saveEdit = async () => {
     message.error('尚未连接，请稍等');
     return;
   }
-  const draft = textToSend.value;
-  const hasImages = containsInlineImageMarker(draft);
-  if (draft.trim() === '' && !hasImages) {
+  const rawDraft = textToSend.value;
+  const processedDraft = inputMode.value === 'rich' ? rawDraft : replaceEmojiRemarks(rawDraft);
+  const hasImages = containsInlineImageMarker(processedDraft);
+  if (processedDraft.trim() === '' && !hasImages) {
     message.error('消息内容不能为空');
     return;
   }
-  if (draft.length > 10000) {
+  if (processedDraft.length > 10000) {
     message.error('消息过长，请分段编辑');
     return;
   }
@@ -3800,10 +3801,10 @@ const saveEdit = async () => {
       if (editorInstance) {
         finalContent = JSON.stringify(editorInstance.getJSON());
       } else {
-        finalContent = draft;
+        finalContent = processedDraft;
       }
     } else {
-      finalContent = await buildMessageHtml(draft);
+      finalContent = await buildMessageHtml(processedDraft);
     }
     if (finalContent.trim() === '') {
       message.error('消息内容不能为空');
