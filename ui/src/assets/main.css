@@ -98,6 +98,10 @@
   --chat-message-padding-x: 0.85rem;
 }
 
+:root[data-display-palette='night'][data-display-layout='compact'] {
+  --chat-preview-dot-ic: #5a5b54;
+}
+
 #app {
   width: 100%;
   height: 100%;
