@@ -888,6 +888,12 @@ watch(() => props.item?.updatedAt, () => {
   pointer-events: auto;
 }
 
+.chat-item--layout-compact .message-action-bar {
+  top: 50%;
+  right: 0.35rem;
+  transform: translateY(-50%);
+}
+
 .content--editing-preview {
   background: transparent;
   border: none;
