@@ -6600,6 +6600,22 @@ onBeforeUnmount(() => {
   border-radius: 0.85rem;
 }
 
+/* 气泡模式下移除编辑蒙版的网点纹理，仅保留纯色背景 */
+.chat--layout-bubble .message-row__surface--editing::before {
+  background-image: none;
+  background-color: transparent;
+}
+
+.chat--layout-bubble .message-row__surface--tone-ic.message-row__surface--editing::before {
+  background-color: transparent;
+  background-image: none;
+}
+
+.chat--layout-bubble .message-row__surface--tone-ooc.message-row__surface--editing::before {
+  background-color: transparent;
+  background-image: none;
+}
+
 .cloud-upload-result {
   line-height: 1.6;
 }
