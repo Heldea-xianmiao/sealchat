@@ -102,13 +102,21 @@ const consumeInvite = async () => {
   try {
     const resp = await chat.consumeWorldInvite(slug);
     const worldId = resp.world?.id;
+    const worldName = resp.world?.name || '目标世界';
+    if (resp.already_joined && worldId) {
+      message.info(`您已经加入了「${worldName}」`);
+      await chat.switchWorld(worldId, { force: true });
+      await router.push({ name: 'home' });
+      return;
+    }
     if (worldId) {
       await chat.switchWorld(worldId, { force: true });
       message.success('已加入世界');
       await router.push({ name: 'home' });
     }
   } catch (e: any) {
-    message.error(e?.response?.data?.message || '加入失败');
+    const msg = e?.response?.data?.message || '加入失败';
+    message.error(msg);
   } finally {
     joining.value = false;
   }

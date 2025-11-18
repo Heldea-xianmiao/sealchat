@@ -16,7 +16,7 @@ const props = defineProps({
   },
 })
 
-const opacity = ref(1)
+const opacity = ref(0)
 const onload = function () {
   opacity.value = 0;
 }

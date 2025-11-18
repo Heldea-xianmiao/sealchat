@@ -12,8 +12,11 @@ const user = useUserStore();
 const message = useMessage();
 
 const slug = computed(() => (route.params.slug as string) || (route.query.invite as string) || '');
-const status = ref<'pending' | 'processing' | 'success' | 'error'>('pending');
+const status = ref<'pending' | 'processing' | 'success' | 'error' | 'alreadyJoined' | 'invalid'>('pending');
 const errorMessage = ref('');
+const worldName = ref('');
+const worldId = ref('');
+const displayWorldName = computed(() => worldName.value || '该世界');
 
 const processInvite = async () => {
   if (!slug.value) {
@@ -29,9 +32,20 @@ const processInvite = async () => {
   try {
     await chat.ensureConnectionReady();
     const resp = await chat.consumeWorldInvite(slug.value);
-    const worldId = resp.world?.id;
-    if (worldId) {
-      await chat.switchWorld(worldId, { force: true });
+    const respWorldId = resp.world?.id;
+    const respWorldName = resp.world?.name || '目标世界';
+    const alreadyJoined = !!resp.already_joined;
+    if (respWorldId) {
+      worldId.value = respWorldId;
+      worldName.value = respWorldName;
+    }
+    if (alreadyJoined && respWorldId) {
+      status.value = 'alreadyJoined';
+      errorMessage.value = '';
+      return;
+    }
+    if (respWorldId) {
+      await chat.switchWorld(respWorldId, { force: true });
       status.value = 'success';
       message.success('已加入世界');
       try {
@@ -47,8 +61,38 @@ const processInvite = async () => {
       errorMessage.value = '加入失败，世界信息缺失';
     }
   } catch (e: any) {
+    const msg = e?.response?.data?.message || '加入失败';
+    if (msg.includes('邀请链接无效或已过期')) {
+      status.value = 'invalid';
+      errorMessage.value = '邀请链接无效或已过期';
+      return;
+    }
     status.value = 'error';
-    errorMessage.value = e?.response?.data?.message || '加入失败';
+    errorMessage.value = msg;
+  }
+};
+
+const gotoWorld = async () => {
+  if (!worldId.value) {
+    goBack();
+    return;
+  }
+  try {
+    await chat.switchWorld(worldId.value, { force: true });
+    await router.replace({ name: 'home' });
+  } catch (err) {
+    message.error('跳转失败，请稍后重试');
+  }
+};
+
+const goBack = () => {
+  const canBack = window.history.length > 1;
+  if (canBack) {
+    router.back();
+  } else {
+    router.replace({ name: 'home' }).catch(() => {
+      window.location.hash = '#/';
+    });
   }
 };
 
@@ -65,8 +109,26 @@ onMounted(processInvite);
         <template v-else-if="status === 'success'">
           <p>邀请成功，正在跳转...</p>
         </template>
+        <template v-else-if="status === 'alreadyJoined'">
+          <n-alert type="info" title="您已在此世界">
+            您已经加入了「{{ displayWorldName }}」。
+          </n-alert>
+          <div class="flex justify-center gap-3 pt-2">
+            <n-button type="primary" @click="gotoWorld" :disabled="!worldId">进入世界</n-button>
+            <n-button tertiary @click="goBack">返回</n-button>
+          </div>
+        </template>
+        <template v-else-if="status === 'invalid'">
+          <n-alert type="error" title="邀请链接无效或已过期">{{ errorMessage }}</n-alert>
+          <div class="flex justify-center gap-3 pt-2">
+            <n-button @click="goBack">返回</n-button>
+          </div>
+        </template>
         <template v-else>
           <n-alert type="error" title="加入失败">{{ errorMessage }}</n-alert>
+          <div class="flex justify-center gap-3 pt-2">
+            <n-button @click="goBack">返回</n-button>
+          </div>
         </template>
       </n-spin>
     </div>

@@ -431,35 +431,41 @@ func WorldInviteCreate(worldID, creatorID string, ttlMinutes int, maxUse int, me
 	return invite, nil
 }
 
-func WorldInviteConsume(slug, userID string) (*model.WorldInviteModel, *model.WorldModel, *model.WorldMemberModel, error) {
+func WorldInviteConsume(slug, userID string) (*model.WorldInviteModel, *model.WorldModel, *model.WorldMemberModel, bool, error) {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
-		return nil, nil, nil, ErrWorldInviteInvalid
+		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	db := model.GetDB()
 	var invite model.WorldInviteModel
 	if err := db.Where("slug = ? AND status = ?", slug, "active").Limit(1).Find(&invite).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	if invite.ID == "" {
-		return nil, nil, nil, ErrWorldInviteInvalid
+		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	if invite.ExpireAt != nil && invite.ExpireAt.Before(time.Now()) {
-		return nil, nil, nil, ErrWorldInviteInvalid
+		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	if invite.MaxUse > 0 && invite.UsedCount >= invite.MaxUse {
-		return nil, nil, nil, ErrWorldInviteInvalid
+		return nil, nil, nil, false, ErrWorldInviteInvalid
 	}
 	world, err := GetWorldByID(invite.WorldID)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
+	existingMember := &model.WorldMemberModel{}
+	_ = db.Where("world_id = ? AND user_id = ?", invite.WorldID, userID).Limit(1).Find(existingMember).Error
+	wasMember := existingMember.ID != ""
 	member, err := WorldJoin(invite.WorldID, userID)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
-	_ = db.Model(&model.WorldInviteModel{}).
-		Where("id = ?", invite.ID).
-		Updates(map[string]any{"used_count": gorm.Expr("used_count + 1"), "updated_at": time.Now()}).Error
-	return &invite, world, member, nil
+	alreadyJoined := wasMember
+	if !wasMember {
+		_ = db.Model(&model.WorldInviteModel{}).
+			Where("id = ?", invite.ID).
+			Updates(map[string]any{"used_count": gorm.Expr("used_count + 1"), "updated_at": time.Now()}).Error
+	}
+	return &invite, world, member, alreadyJoined, nil
 }

@@ -351,7 +351,7 @@ func WorldInviteConsumeHandler(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
 	}
 	slug := c.Params("slug")
-	invite, world, member, err := service.WorldInviteConsume(slug, user.ID)
+	invite, world, member, alreadyJoined, err := service.WorldInviteConsume(slug, user.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrWorldInviteInvalid):
@@ -363,9 +363,10 @@ func WorldInviteConsumeHandler(c *fiber.Ctx) error {
 		}
 	}
 	return c.JSON(fiber.Map{
-		"invite": invite,
-		"world":  world,
-		"member": member,
+		"invite":         invite,
+		"world":          world,
+		"member":         member,
+		"already_joined": alreadyJoined,
 	})
 }
 
