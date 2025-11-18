@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v2"
@@ -192,6 +193,7 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 	var tokens []string
 	var usedFTS bool
 	var backendName string
+	preferLikeFallback := matchMode == "fuzzy" && containsCJK(keyword)
 
 	query, tokens, usedFTS, backendName := buildKeywordQuery(buildBaseQuery, keyword, matchMode)
 
@@ -211,6 +213,17 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 			}
 		} else {
 			log.Printf("消息搜索统计失败: %v", err)
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+				"message": "查询失败",
+			})
+		}
+	}
+	if total == 0 && usedFTS && preferLikeFallback {
+		log.Printf("消息搜索(%s)命中 0 条且包含 CJK 关键字，回退 LIKE 模糊匹配", backendName)
+		query, tokens, usedFTS, backendName = buildKeywordQuery(buildBaseQuery, keyword, matchMode, forceFallbackOption(true))
+		countQuery = query.Session(&gorm.Session{})
+		if err := countQuery.Count(&total).Error; err != nil {
+			log.Printf("消息搜索 CJK 回退统计失败: %v", err)
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 				"message": "查询失败",
 			})
@@ -436,7 +449,11 @@ func buildKeywordQuery(base func() *gorm.DB, keyword, matchMode string, opts ...
 	if !forcedFallback {
 		if model.IsSQLite() && model.SQLiteFTSReady() {
 			if q, tokens, err := trySQLiteFTSFilter(base(), keyword, matchMode); err == nil {
-				return q, tokens, true, backendSQLiteFTS
+				if len(tokens) == 0 && containsCJK(keyword) {
+					log.Printf("SQLite FTS 关键字无有效 token，包含 CJK，改用 LIKE 回退")
+				} else {
+					return q, tokens, true, backendSQLiteFTS
+				}
 			} else {
 				model.ReportSQLiteFTSFailure(err)
 				log.Printf("SQLite FTS 构建查询失败，降级: %v", err)
@@ -444,7 +461,11 @@ func buildKeywordQuery(base func() *gorm.DB, keyword, matchMode string, opts ...
 		}
 		if model.IsPostgres() && model.PostgresFTSReady() {
 			if q, tokens, err := tryPostgresFTSFilter(base(), keyword, matchMode); err == nil {
-				return q, tokens, true, backendPostgresFTS
+				if len(tokens) == 0 && containsCJK(keyword) {
+					log.Printf("Postgres FTS 关键字无有效 token，包含 CJK，改用 LIKE 回退")
+				} else {
+					return q, tokens, true, backendPostgresFTS
+				}
 			} else {
 				model.ReportPostgresFTSFailure(err)
 				log.Printf("Postgres FTS 构建查询失败，降级: %v", err)
@@ -457,6 +478,15 @@ func buildKeywordQuery(base func() *gorm.DB, keyword, matchMode string, opts ...
 		fallback = fmt.Sprintf("%s_%s", backendFallback, drv)
 	}
 	return q, tokens, false, fallback
+}
+
+func containsCJK(input string) bool {
+	for _, r := range input {
+		if unicode.Is(unicode.Han, r) || unicode.In(r, unicode.Hangul, unicode.Hiragana, unicode.Katakana) {
+			return true
+		}
+	}
+	return false
 }
 
 func tokenizeKeyword(keyword string) []string {
