@@ -486,7 +486,7 @@ const handleConfirm = () => emit('save', { ...draft })
 .display-preview--night .preview-card--preview {
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
   background-color: var(--chat-preview-bg);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .display-preview--night .preview-name {
@@ -505,7 +505,7 @@ const handleConfirm = () => emit('save', { ...draft })
   flex-direction: column;
   background-color: var(--chat-preview-bg);
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .preview-avatar {

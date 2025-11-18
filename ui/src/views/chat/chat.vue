@@ -6580,7 +6580,7 @@ onBeforeUnmount(() => {
   border-radius: 1rem;
   background-color: var(--chat-preview-bg);
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
   opacity: 0.9;
   z-index: 0;
 }
@@ -6601,6 +6601,7 @@ onBeforeUnmount(() => {
   border-radius: 0.95rem;
   background-color: var(--chat-preview-bg);
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 /* 气泡模式下移除编辑蒙版的网点纹理，仅保留纯色背景 */
@@ -6623,17 +6624,20 @@ onBeforeUnmount(() => {
 .chat--layout-compact .message-row__surface--tone-ic.message-row__surface--editing::before {
   background-color: var(--chat-ic-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 .chat--layout-compact .message-row__surface--tone-ooc.message-row__surface--editing::before {
   background-color: var(--chat-ooc-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 /* 夜间紧凑模式编辑场外消息需保持纯黑底，避免灰色噪点 */
 .chat--layout-compact.chat--palette-night .message-row__surface--tone-ooc.message-row__surface--editing::before {
   background-color: #000000;
-  background-image: none;
+  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 .cloud-upload-result {
@@ -6729,18 +6733,30 @@ onBeforeUnmount(() => {
   width: 1rem;
 }
 
+.chat--layout-compact .typing-preview-viewport {
+  padding: 0;
+  gap: 0;
+  background-color: transparent;
+}
+
+.chat--layout-compact .typing-preview-item {
+  margin-top: 0;
+}
+
 .chat--layout-compact .typing-preview-surface {
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.9rem;
+  padding: 0;
+  border-radius: 0;
+  border: none;
   background-color: var(--chat-ic-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ic) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
   background-color: var(--chat-ooc-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 .identity-drawer__header {
@@ -7055,7 +7071,7 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .typing-preview-bubble {
   background-image: radial-gradient(var(--chat-preview-dot, rgba(148, 163, 184, 0.55)) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .typing-preview-bubble--content {
@@ -7086,7 +7102,7 @@ onBeforeUnmount(() => {
   border-radius: var(--chat-message-radius);
   background-color: var(--chat-preview-bg);
   background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .typing-preview-inline-body .preview-content {
@@ -7101,6 +7117,7 @@ onBeforeUnmount(() => {
 .typing-preview-item--ooc .typing-preview-inline-body {
   background-color: var(--chat-ooc-bg);
   background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
+  background-size: 10px 10px;
 }
 
 .typing-preview-inline-tag {

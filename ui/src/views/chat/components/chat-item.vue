@@ -913,7 +913,7 @@ watch(() => props.item?.updatedAt, () => {
 
 .chat-item--layout-compact .content--editing-preview .editing-preview__bubble {
   background-image: radial-gradient(var(--chat-preview-dot, rgba(148, 163, 184, 0.45)) 1px, transparent 1px);
-  background-size: 6px 6px;
+  background-size: 10px 10px;
 }
 
 .editing-preview__body {
