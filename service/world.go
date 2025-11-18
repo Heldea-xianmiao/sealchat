@@ -411,6 +411,13 @@ func WorldInviteCreate(worldID, creatorID string, ttlMinutes int, maxUse int, me
 	if !IsWorldAdmin(worldID, creatorID) {
 		return nil, ErrWorldPermission
 	}
+	// 合法化参数：负数一律视为无限
+	if ttlMinutes < 0 {
+		ttlMinutes = 0
+	}
+	if maxUse < 0 {
+		maxUse = 0
+	}
 	db := model.GetDB()
 	if err := db.Model(&model.WorldInviteModel{}).
 		Where("world_id = ? AND status = ?", worldID, "active").
@@ -427,9 +434,6 @@ func WorldInviteCreate(worldID, creatorID string, ttlMinutes int, maxUse int, me
 	if ttlMinutes > 0 {
 		expire := time.Now().Add(time.Duration(ttlMinutes) * time.Minute)
 		invite.ExpireAt = &expire
-	}
-	if maxUse < 0 {
-		invite.MaxUse = 0
 	}
 	if err := db.Create(invite).Error; err != nil {
 		return nil, err

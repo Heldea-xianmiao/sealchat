@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useMessage } from 'naive-ui';
 
@@ -26,14 +26,32 @@ const loadInvites = async () => {
 
 const showInviteModal = ref(false);
 const latestInvite = ref<any>(null);
+const showCreateModal = ref(false);
+const inviteForm = ref({ ttlMinutes: 0, maxUse: 0, memo: '' });
 
-const createInvite = async () => {
+const resetForm = () => {
+  inviteForm.value = { ttlMinutes: 0, maxUse: 0, memo: '' };
+};
+
+const saveInvite = async () => {
   if (!props.worldId) return;
-  const resp = await chat.createWorldInvite(props.worldId, { ttlMinutes: 60 });
-  latestInvite.value = resp.invite || null;
-  showInviteModal.value = true;
-  message.success('已创建邀请');
-  await loadInvites();
+  try {
+    const ttl = Math.max(0, Number(inviteForm.value.ttlMinutes) || 0);
+    const maxUse = Math.max(0, Number(inviteForm.value.maxUse) || 0);
+    const payload: any = {
+      ttlMinutes: ttl,
+      maxUse: maxUse,
+      memo: inviteForm.value.memo?.trim() || undefined,
+    };
+    const resp = await chat.createWorldInvite(props.worldId, payload);
+    latestInvite.value = resp.invite || null;
+    showInviteModal.value = true;
+    showCreateModal.value = false;
+    message.success('已创建邀请');
+    await loadInvites();
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '创建邀请失败');
+  }
 };
 
 const copySlug = async (slug: string) => {
@@ -69,7 +87,7 @@ onMounted(loadInvites);
   <div class="space-y-2">
     <div class="flex justify-between items-center">
       <h3 class="font-bold">邀请列表</h3>
-      <n-button size="small" type="primary" @click="createInvite">创建邀请</n-button>
+      <n-button size="small" type="primary" @click="() => { resetForm(); showCreateModal = true; }">创建邀请</n-button>
     </div>
     <n-list bordered>
       <n-spin :show="loading">
@@ -98,6 +116,45 @@ onMounted(loadInvites);
         <n-space>
           <n-button quaternary @click="showInviteModal = false">关闭</n-button>
           <n-button type="primary" @click="copySlug(buildInviteLink(latestInvite?.slug ?? ''))">复制链接</n-button>
+        </n-space>
+      </template>
+    </n-modal>
+    <n-modal v-model:show="showCreateModal" preset="dialog" title="创建邀请" style="max-width:520px">
+      <n-form label-placement="left" label-width="96">
+        <n-form-item label="有效期(分钟)">
+          <n-space>
+            <n-input-number v-model:value="inviteForm.ttlMinutes" :min="0" :step="30" placeholder="0 表示永久" />
+            <n-radio-group v-model:value="inviteForm.ttlMinutes" size="small">
+              <n-space>
+                <n-radio-button :value="0">永久</n-radio-button>
+                <n-radio-button :value="30">30 分钟</n-radio-button>
+                <n-radio-button :value="60">1 小时</n-radio-button>
+                <n-radio-button :value="60 * 24">1 天</n-radio-button>
+              </n-space>
+            </n-radio-group>
+          </n-space>
+        </n-form-item>
+        <n-form-item label="可用次数">
+          <n-space>
+            <n-input-number v-model:value="inviteForm.maxUse" :min="0" :step="1" placeholder="0 表示无限" />
+            <n-radio-group v-model:value="inviteForm.maxUse" size="small">
+              <n-space>
+                <n-radio-button :value="0">无限</n-radio-button>
+                <n-radio-button :value="1">1 次</n-radio-button>
+                <n-radio-button :value="5">5 次</n-radio-button>
+                <n-radio-button :value="10">10 次</n-radio-button>
+              </n-space>
+            </n-radio-group>
+          </n-space>
+        </n-form-item>
+        <n-form-item label="备注">
+          <n-input v-model:value="inviteForm.memo" type="textarea" autosize placeholder="可选，方便区分用途" />
+        </n-form-item>
+      </n-form>
+      <template #action>
+        <n-space>
+          <n-button quaternary @click="showCreateModal = false">取消</n-button>
+          <n-button type="primary" @click="saveInvite">保存</n-button>
         </n-space>
       </template>
     </n-modal>
