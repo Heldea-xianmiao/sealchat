@@ -68,6 +68,22 @@ const display = useDisplayStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
 const isEditing = computed(() => !!chat.editing);
+// 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
+const inputIcMode = computed<'ic' | 'ooc'>({
+  get: () => {
+    if (chat.editing?.icMode) {
+      return chat.editing.icMode;
+    }
+    return chat.icMode;
+  },
+  set: (mode) => {
+    if (chat.editing) {
+      chat.updateEditingIcMode(mode);
+    } else {
+      chat.icMode = mode;
+    }
+  },
+});
 const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
@@ -3783,6 +3799,7 @@ const beginEdit = (target?: Message) => {
   chat.clearWhisperTarget();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
+  const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
     channelId: chat.curChannel.id,
@@ -3791,6 +3808,7 @@ const beginEdit = (target?: Message) => {
     mode: detectedMode,
     isWhisper: Boolean(target.isWhisper),
     whisperTargetId,
+    icMode,
   });
   inputMode.value = detectedMode;
 };
@@ -3851,7 +3869,9 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updated = await chat.messageUpdate(chat.editing.channelId, chat.editing.messageId, finalContent);
+    const updateIcMode = chat.editing.icMode;
+    const payload = updateIcMode ? { icMode: updateIcMode } : undefined;
+    const updated = await chat.messageUpdate(chat.editing.channelId, chat.editing.messageId, finalContent, payload);
     if (updated) {
       upsertMessage(updated as unknown as Message);
     }
@@ -5859,7 +5879,6 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
                     v-if="chat.curChannel"
-                    :disabled="isEditing"
                     @create="openIdentityCreate"
                     @manage="openIdentityManager"
                     @identity-changed="emitTypingPreview"
@@ -5870,7 +5889,6 @@ onBeforeUnmount(() => {
                     <n-button
                       quaternary
                       circle
-                      :disabled="isEditing"
                       ref="emojiTriggerButtonRef"
                       @click="handleEmojiTriggerClick"
                     >
@@ -5990,8 +6008,7 @@ onBeforeUnmount(() => {
               <div class="chat-input-actions__group chat-input-actions__group--addons">
                 <div class="chat-input-actions__cell">
                   <ChatIcOocToggle
-                    v-model="chat.icMode"
-                    :disabled="isEditing"
+                    v-model="inputIcMode"
                   />
                 </div>
 
@@ -5999,7 +6016,7 @@ onBeforeUnmount(() => {
                  <n-tooltip trigger="hover">
                    <template #trigger>
                      <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
-                       @click="startWhisperSelection" :disabled="!canOpenWhisperPanel || isEditing">
+                       @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
                         <span class="chat-input-actions__icon">W</span>
                       </n-button>
                     </template>
@@ -6011,7 +6028,7 @@ onBeforeUnmount(() => {
                   <n-tooltip trigger="hover">
                     <template #trigger>
                       <n-button quaternary circle class="typing-toggle" :class="typingToggleClass"
-                        @click="toggleTypingPreview" :disabled="isEditing">
+                        @click="toggleTypingPreview">
                         <n-icon
                           class="chat-input-actions__icon"
                           :component="IconBuildingBroadcastTower"
@@ -6025,7 +6042,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell">
                   <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-button quaternary circle @click="doUpload" :disabled="isEditing">
+                      <n-button quaternary circle @click="doUpload">
                         <template #icon>
                           <n-icon :component="Upload" size="18" />
                         </template>
@@ -6043,7 +6060,6 @@ onBeforeUnmount(() => {
                         circle
                         :type="inputMode === 'rich' ? 'primary' : 'default'"
                         @click="toggleInputMode"
-                        :disabled="isEditing"
                       >
                         <span class="font-semibold">{{ inputMode === 'rich' ? 'P' : 'R' }}</span>
                       </n-button>
@@ -6131,7 +6147,7 @@ onBeforeUnmount(() => {
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="isEditing || (!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
                             <template #icon>
                               <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
                                 <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>

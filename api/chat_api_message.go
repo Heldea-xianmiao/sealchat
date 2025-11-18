@@ -1049,9 +1049,15 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`
 	Content   string `json:"content"`
+	ICMode    string `json:"ic_mode"`
 }) (any, error) {
 	if strings.TrimSpace(data.Content) == "" {
 		return nil, fmt.Errorf("消息内容不能为空")
+	}
+
+	icMode := strings.ToLower(strings.TrimSpace(data.ICMode))
+	if icMode != "" && icMode != "ic" && icMode != "ooc" {
+		return nil, fmt.Errorf("ic_mode 仅支持 ic/ooc")
 	}
 
 	db := model.GetDB()
@@ -1136,31 +1142,45 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	}
 
 	prevContent := msg.Content
-	if prevContent == newContent {
+	icModeChanged := false
+	if icMode != "" && icMode != msg.ICMode {
+		icModeChanged = true
+	}
+	if prevContent == newContent && !icModeChanged {
 		return &struct {
 			Message *protocol.Message `json:"message"`
 		}{Message: buildMessage()}, nil
 	}
 
-	history := model.MessageEditHistoryModel{
-		MessageID:    msg.ID,
-		EditorID:     ctx.User.ID,
-		PrevContent:  prevContent,
-		ChannelID:    msg.ChannelID,
-		EditedUserID: msg.UserID,
+	if prevContent != newContent {
+		history := model.MessageEditHistoryModel{
+			MessageID:    msg.ID,
+			EditorID:     ctx.User.ID,
+			PrevContent:  prevContent,
+			ChannelID:    msg.ChannelID,
+			EditedUserID: msg.UserID,
+		}
+		db.Create(&history)
+		msg.Content = newContent
 	}
-	db.Create(&history)
-
-	msg.Content = newContent
+	if icModeChanged {
+		msg.ICMode = icMode
+	}
 	msg.IsEdited = true
 	msg.EditCount = msg.EditCount + 1
 	msg.UpdatedAt = time.Now()
-	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(map[string]any{
-		"content":    msg.Content,
+	updates := map[string]any{
 		"is_edited":  msg.IsEdited,
 		"edit_count": msg.EditCount,
 		"updated_at": msg.UpdatedAt,
-	}).Error
+	}
+	if prevContent != newContent {
+		updates["content"] = msg.Content
+	}
+	if icModeChanged {
+		updates["ic_mode"] = msg.ICMode
+	}
+	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(updates).Error
 	if err != nil {
 		return nil, err
 	}

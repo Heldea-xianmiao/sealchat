@@ -67,6 +67,7 @@ interface ChatState {
     mode?: 'plain' | 'rich';
     isWhisper?: boolean;
     whisperTargetId?: string | null;
+    icMode?: 'ic' | 'ooc';
   } | null
 
   canReorderAllMessages: boolean;
@@ -1552,8 +1553,12 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageUpdate(channel_id: string, message_id: string, content: string) {
-      const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', { channel_id, message_id, content });
+    async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc' }) {
+      const payload: Record<string, any> = { channel_id, message_id, content };
+      if (options?.icMode) {
+        payload.ic_mode = options.icMode;
+      }
+      const resp = await this.sendAPI<{ data: { message: SatoriMessage }, err?: string }>('message.update', payload);
       if ((resp as any)?.err) {
         throw new Error((resp as any).err);
       }
@@ -1648,13 +1653,19 @@ export const useChatStore = defineStore({
       this.whisperTarget = null;
     },
 
-    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null }) {
+    startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc' }) {
       this.editing = { ...payload };
     },
 
     updateEditingDraft(draft: string) {
       if (this.editing) {
         this.editing.draft = draft;
+      }
+    },
+
+    updateEditingIcMode(mode: 'ic' | 'ooc') {
+      if (this.editing) {
+        this.editing.icMode = mode;
       }
     },
 

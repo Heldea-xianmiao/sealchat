@@ -227,6 +227,7 @@ const clickEdit = () => {
   const target = menuMessage.value.raw;
   const mode = detectContentMode(target.content || target.originalContent || '');
   const whisperTargetId = resolveWhisperTargetId(target);
+  const icMode = String(target.icMode ?? target.ic_mode ?? 'ic').toLowerCase() === 'ooc' ? 'ooc' : 'ic';
   chat.startEditingMessage({
     messageId: target.id,
     channelId: chat.curChannel.id,
@@ -235,6 +236,7 @@ const clickEdit = () => {
     mode,
     isWhisper: Boolean(target.isWhisper ?? target.is_whisper),
     whisperTargetId,
+    icMode,
   });
   chat.messageMenu.show = false;
 }
