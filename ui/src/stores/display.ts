@@ -93,7 +93,7 @@ const normalizeFavoriteIds = (value: any): string[] => {
 }
 
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
-  layout: 'bubble',
+  layout: 'compact',
   palette: 'day',
   showAvatar: true,
   mergeNeighbors: true,
