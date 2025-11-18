@@ -69,7 +69,7 @@ func apiMessageDelete(ctx *ChatContext, data *struct {
 		}
 		channelData := channel.ToProtocolType()
 
-		ctx.BroadcastEvent(&protocol.Event{
+		ctx.BroadcastEventInChannel(data.ChannelID, &protocol.Event{
 			// 协议规定: 事件中必须含有 channel，message，user
 			Type:    protocol.EventMessageDeleted,
 			Message: item.ToProtocolType2(channelData),
@@ -1615,7 +1615,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			Nick: userData.Nick,
 		}
 
-		ctx.BroadcastEvent(&protocol.Event{
+		ctx.BroadcastEventInChannel(data.ChannelID, &protocol.Event{
 			// 协议规定: 事件中必须含有 channel，message，user
 			Type:    protocol.EventMessageCreated,
 			Message: messageData,
