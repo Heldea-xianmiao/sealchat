@@ -936,9 +936,15 @@ watch(() => props.item?.updatedAt, () => {
   --editing-preview-dot: var(--chat-preview-dot-ooc);
 }
 
-.chat-item--layout-compact .content--editing-preview .editing-preview__bubble {
+.chat-item--layout-compact .content--editing-preview .editing-preview__bubble,
+.chat-item--layout-compact .editing-preview__bubble--inline {
   background-image: radial-gradient(var(--editing-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
+  max-width: none;
+  width: 100%;
+  display: block;
+  box-sizing: border-box;
+  border-radius: 0.45rem;
 }
 
 .editing-preview__body {
