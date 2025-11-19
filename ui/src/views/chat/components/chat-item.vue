@@ -901,11 +901,18 @@ watch(() => props.item?.updatedAt, () => {
   transform: translateY(-50%);
 }
 
-.content--editing-preview {
+.chat-item > .right > .content.content--editing-preview {
   background: transparent;
   border: none;
   box-shadow: none;
   padding: 0;
+}
+
+.chat-item--ooc .right > .content.content--editing-preview,
+.chat-item--layout-bubble .right > .content.content--editing-preview {
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .content--editing-preview.whisper-content {
