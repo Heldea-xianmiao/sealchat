@@ -535,7 +535,7 @@ watch(() => props.item?.updatedAt, () => {
               'editing-preview__bubble--inline',
               otherEditingPreview?.tone ? `editing-preview__bubble--tone-${otherEditingPreview.tone}` : '',
             ]"
-            :data-tone="otherEditingPreview?.tone || null"
+            :data-tone="otherEditingPreview?.tone || 'ic'"
           >
             <div class="editing-preview__body" :class="{ 'is-placeholder': otherEditingPreview?.indicatorOnly }">
             <template v-if="otherEditingPreview?.indicatorOnly">
@@ -921,19 +921,36 @@ watch(() => props.item?.updatedAt, () => {
   --editing-preview-bg: var(--chat-preview-bg, #f6f7fb);
   --editing-preview-dot: var(--chat-preview-dot, rgba(148, 163, 184, 0.45));
   background-color: var(--editing-preview-bg);
-  border: none;
+  border: 1px solid transparent;
   box-shadow: none;
   color: var(--chat-text-primary, #1f2937);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .editing-preview__bubble[data-tone='ic'] {
-  --editing-preview-bg: var(--chat-ic-bg);
-  --editing-preview-dot: var(--chat-preview-dot-ic);
+  --editing-preview-bg: #fbfdf7;
+  --editing-preview-dot: var(--chat-preview-dot-ic, rgba(148, 163, 184, 0.35));
+  border-color: rgba(15, 23, 42, 0.14);
 }
 
 .editing-preview__bubble[data-tone='ooc'] {
-  --editing-preview-bg: var(--chat-ooc-bg);
-  --editing-preview-dot: var(--chat-preview-dot-ooc);
+  --editing-preview-bg: #ffffff;
+  --editing-preview-dot: var(--chat-preview-dot-ooc, rgba(148, 163, 184, 0.25));
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-display-palette='night'] .editing-preview__bubble[data-tone='ic'] {
+  --editing-preview-bg: #3f3f45;
+  --editing-preview-dot: var(--chat-preview-dot-ic-night, rgba(148, 163, 184, 0.2));
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #f4f4f5;
+}
+
+:root[data-display-palette='night'] .editing-preview__bubble[data-tone='ooc'] {
+  --editing-preview-bg: #000000;
+  --editing-preview-dot: var(--chat-preview-dot-ooc-night, rgba(148, 163, 184, 0.2));
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f5f3ff;
 }
 
 .chat-item--layout-compact .content--editing-preview .editing-preview__bubble,

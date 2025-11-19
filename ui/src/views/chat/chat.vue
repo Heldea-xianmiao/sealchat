@@ -5860,12 +5860,12 @@ onBeforeUnmount(() => {
                       'typing-preview-bubble',
                       preview.indicatorOnly ? '' : 'typing-preview-bubble--content',
                     ]"
-                    :data-tone="preview.tone"
+                    :data-tone="preview.tone || 'ic'"
                   >
                     <div
                       class="typing-preview-bubble__body"
                       :class="{ 'typing-preview-bubble__placeholder': preview.indicatorOnly }"
-                      :data-tone="preview.tone"
+                      :data-tone="preview.tone || 'ic'"
                     >
                       <template v-if="preview.indicatorOnly">
                         正在输入
@@ -7258,19 +7258,42 @@ onBeforeUnmount(() => {
   max-width: 32rem;
   padding: 0 0.6rem;
   border-radius: 0;
-  border: none;
+  border: 1px solid transparent;
   display: flex;
   flex-direction: column;
   gap: 0;
   background-color: transparent;
   color: var(--chat-text-primary, #1f2937);
   box-shadow: none;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .chat--layout-bubble .typing-preview-bubble {
   padding: 0.5rem 0.75rem;
   border-radius: var(--chat-message-radius, 0.85rem);
   background-color: var(--chat-preview-bg, #f6f7fb);
+}
+
+.typing-preview-bubble[data-tone='ic'] {
+  background-color: #fbfdf7;
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+.typing-preview-bubble[data-tone='ooc'] {
+  background-color: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
+  background-color: #3f3f45;
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #f4f4f5;
+}
+
+:root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
+  background-color: #000000;
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f5f3ff;
 }
 
 .typing-preview-bubble--content {
