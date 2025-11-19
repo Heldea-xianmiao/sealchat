@@ -5646,9 +5646,9 @@ onBeforeUnmount(() => {
               <div class="message-row__grid">
                 <div class="message-row__grid-handle">
                   <div
-                    v-if="shouldShowHandle(entry.message)"
                     class="message-row__handle"
                     tabindex="-1"
+                    :aria-hidden="!shouldShowHandle(entry.message)"
                     @pointerdown="onDragHandlePointerDown($event, entry.message)"
                   >
                     <span class="message-row__dot" v-for="n in 3" :key="n"></span>
@@ -5691,9 +5691,9 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="compactInlineLayout">
               <div
-                v-if="shouldShowHandle(entry.message)"
                 class="message-row__handle"
                 tabindex="-1"
+                :aria-hidden="!shouldShowHandle(entry.message)"
                 @pointerdown="onDragHandlePointerDown($event, entry.message)"
               >
                 <span class="message-row__dot" v-for="n in 3" :key="n"></span>
@@ -5720,9 +5720,9 @@ onBeforeUnmount(() => {
             </template>
             <template v-else>
               <div
-                v-if="shouldShowHandle(entry.message)"
                 class="message-row__handle"
                 tabindex="-1"
+                :aria-hidden="!shouldShowHandle(entry.message)"
                 @pointerdown="onDragHandlePointerDown($event, entry.message)"
               >
                 <span class="message-row__dot" v-for="n in 3" :key="n"></span>
@@ -5789,9 +5789,6 @@ onBeforeUnmount(() => {
                       <template v-else>
                         <div v-html="renderPreviewContent(preview.content)" class="preview-content"></div>
                       </template>
-                      <span class="typing-preview-inline-tag">
-                        {{ preview.indicatorOnly ? '正在输入' : '实时内容' }}
-                      </span>
                       <span class="typing-dots typing-dots--inline">
                         <span></span>
                         <span></span>
@@ -5808,6 +5805,12 @@ onBeforeUnmount(() => {
                   <AvatarVue :border="false" :size="40" :src="preview.avatar" />
                 </div>
                 <div class="typing-preview-main">
+                  <div class="typing-preview-bubble-header">
+                    <span
+                      class="typing-preview-bubble-name"
+                      :style="preview.color ? { color: preview.color } : undefined"
+                    >{{ preview.displayName }}</span>
+                  </div>
                   <div
                     :class="[
                       'typing-preview-bubble',
@@ -6802,6 +6805,20 @@ onBeforeUnmount(() => {
   background-color: #9f9f9f;
 }
 
+.chat--palette-day {
+  --chat-ic-bg: #FBFDF7;
+  --chat-ooc-bg: #FFFFFF;
+  --chat-preview-dot-ic: rgba(120, 130, 120, 0.35);
+  --chat-preview-dot-ooc: rgba(148, 163, 184, 0.35);
+}
+
+.chat--palette-night {
+  --chat-ic-bg: #3F3F46;
+  --chat-ooc-bg: #000000;
+  --chat-preview-dot-ic: rgba(255, 255, 255, 0.25);
+  --chat-preview-dot-ooc: rgba(255, 255, 255, 0.35);
+}
+
 .chat--layout-compact {
   background-color: var(--chat-stage-bg);
   transition: background-color 0.25s ease;
@@ -6906,7 +6923,14 @@ onBeforeUnmount(() => {
   cursor: grab;
   opacity: 0;
   transition: opacity 0.2s ease;
-  margin-top: 0.5rem;
+  margin-top: 0;
+  align-self: center;
+  height: 100%;
+  pointer-events: none;
+}
+
+.message-row.draggable-item .message-row__handle {
+  pointer-events: auto;
 }
 
 .message-row.draggable-item:hover .message-row__handle,
@@ -7063,7 +7087,7 @@ onBeforeUnmount(() => {
 }
 
 @media (hover: none) {
-  .message-row__handle {
+  .message-row.draggable-item .message-row__handle {
     opacity: 1;
   }
 }
@@ -7130,15 +7154,22 @@ onBeforeUnmount(() => {
 .typing-preview-surface {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: 0;
   width: 100%;
+  padding: 0;
+  border: none;
+}
+
+.chat--layout-bubble .typing-preview-surface {
+  gap: 0.5rem;
+  padding: 0.3rem 0;
 }
 
 .typing-preview-content {
   flex: 1;
   display: flex;
   align-items: flex-start;
-  gap: 0.4rem;
+  gap: 0.5rem;
   min-width: 0;
 }
 
@@ -7153,8 +7184,8 @@ onBeforeUnmount(() => {
 
 .typing-preview-avatar {
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .message-row__handle--placeholder {
@@ -7166,29 +7197,30 @@ onBeforeUnmount(() => {
 .typing-preview-viewport {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem 0;
-  max-height: 240px;
+  gap: 0;
+  padding: 0;
+  max-height: 180px;
   overflow-y: auto;
 }
 
 .typing-preview-bubble {
   flex: 1;
   max-width: 32rem;
-  padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
-  border-radius: var(--chat-message-radius, 0.85rem);
+  padding: 0.4rem 0.6rem;
+  border-radius: 0;
   border: none;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  background-color: var(--chat-preview-bg, #f6f7fb);
+  gap: 0.25rem;
+  background-color: transparent;
   color: var(--chat-text-primary, #1f2937);
   box-shadow: none;
 }
 
-.chat--layout-compact .typing-preview-bubble {
-  background-image: radial-gradient(var(--chat-preview-dot, rgba(148, 163, 184, 0.55)) 1px, transparent 1px);
-  background-size: 10px 10px;
+.chat--layout-bubble .typing-preview-bubble {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--chat-message-radius, 0.85rem);
+  background-color: var(--chat-preview-bg, #f6f7fb);
 }
 
 .typing-preview-bubble--content {
@@ -7200,28 +7232,16 @@ onBeforeUnmount(() => {
 }
 
 .typing-preview-inline-body {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  align-self: start;
   gap: 0.4rem;
-  flex-wrap: wrap;
   line-height: 1.5;
   font-size: 0.9375rem;
   color: var(--chat-text-primary);
-  width: 100%;
   min-width: 0;
   word-break: break-word;
   overflow-wrap: anywhere;
-  padding: var(--chat-message-padding-y, 0.85rem) var(--chat-message-padding-x, 1.1rem);
-  border-radius: var(--chat-message-radius);
-  background-color: var(--chat-preview-bg);
-  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-size: 10px 10px;
-}
-
-.chat--layout-compact .typing-preview-inline-body {
-  width: 100%;
-  flex: 1 1 auto;
-  max-width: min(92vw, 1200px);
 }
 
 .typing-preview-inline-body .preview-content {
@@ -7235,24 +7255,16 @@ onBeforeUnmount(() => {
   color: #6b7280;
 }
 
-.typing-preview-item--ooc .typing-preview-inline-body {
-  background-color: var(--chat-ooc-bg);
-  background-image: radial-gradient(var(--chat-preview-dot-ooc) 1px, transparent 1px);
-  background-size: 10px 10px;
+.typing-preview-bubble-header {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
 }
 
-.typing-preview-inline-tag {
-  font-size: 0.75rem;
-  padding: 0.1rem 0.35rem;
-  border-radius: 999px;
-  background-color: rgba(156, 163, 175, 0.18);
-  color: #4b5563;
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
-.typing-preview-inline-body--placeholder .typing-preview-inline-tag {
-  background-color: rgba(156, 163, 175, 0.24);
+.typing-preview-bubble-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--chat-text-primary, #1f2937);
 }
 
 .typing-preview-bubble__body {
