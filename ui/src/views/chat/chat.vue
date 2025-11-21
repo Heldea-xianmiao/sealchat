@@ -2095,6 +2095,7 @@ watch(() => chat.curChannel?.id, () => {
 
 const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 10;
+const PAGINATED_MESSAGE_LOAD_LIMIT = 15;
 
 const rows = ref<Message[]>([]);
 const listRevision = ref(0);
@@ -5581,6 +5582,7 @@ const reachTop = throttle(async (evt: any) => {
   if (messagesNextFlag.value) {
     const messages = await chat.messageList(chat.curChannel?.id || '', messagesNextFlag.value, {
       includeArchived: chat.filterState.showArchived,
+      limit: PAGINATED_MESSAGE_LOAD_LIMIT,
     });
     messagesNextFlag.value = messages.next || "";
 
