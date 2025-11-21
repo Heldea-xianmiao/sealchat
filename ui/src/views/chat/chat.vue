@@ -7355,13 +7355,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0;
   padding: 0;
-  max-height: 180px;
-  overflow-y: auto;
+  width: 100%;
+  align-self: stretch;
+  max-height: none;
+  overflow: visible;
 }
 
 .typing-preview-bubble {
   flex: 1;
-  max-width: 32rem;
+  width: 100%;
+  max-width: none;
+  align-self: stretch;
   padding: 0 0.6rem;
   border-radius: 0;
   border: 1px solid transparent;
@@ -7407,6 +7411,12 @@ onBeforeUnmount(() => {
   background-color: #000000;
   border-color: rgba(255, 255, 255, 0.24);
   color: #f5f3ff;
+}
+
+.chat--layout-compact .typing-preview-bubble {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none;
 }
 
 .typing-preview-bubble--content {
