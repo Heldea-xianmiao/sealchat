@@ -2427,11 +2427,12 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
 
-const mergeIncomingMessages = (items: Message[]) => {
+const mergeIncomingMessages = (items: Message[], nextCursor?: string | null) => {
   if (!Array.isArray(items) || items.length === 0) {
     return;
   }
   const nextRows = rows.value.slice();
+  const prevFirst = nextRows[0];
   let mutated = false;
   items.forEach((incoming) => {
     if (!incoming || !incoming.id) {
@@ -2449,7 +2450,15 @@ const mergeIncomingMessages = (items: Message[]) => {
     mutated = true;
   });
   if (mutated) {
-    rows.value = nextRows.sort(compareByDisplayOrder);
+    const sorted = nextRows.sort(compareByDisplayOrder);
+    rows.value = sorted;
+    if (nextCursor !== undefined) {
+      const nextValue = nextCursor || '';
+      const newFirst = sorted[0];
+      if (!prevFirst || (newFirst && compareByDisplayOrder(newFirst, prevFirst) < 0)) {
+        messagesNextFlag.value = nextValue;
+      }
+    }
   }
 };
 
@@ -2475,7 +2484,7 @@ const loadMessagesWithinWindow = async (
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming);
+    mergeIncomingMessages(incoming, resp ? resp.next ?? '' : undefined);
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
@@ -2503,7 +2512,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming);
+    mergeIncomingMessages(incoming, resp ? resp.next ?? '' : undefined);
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
@@ -5399,7 +5408,7 @@ const onScroll = (evt: any) => {
     const offset = elLst.scrollHeight - (elLst.clientHeight + elLst.scrollTop);
     showButton.value = offset > SCROLL_STICKY_THRESHOLD;
 
-    if (elLst.scrollTop === 0) {
+    if (elLst.scrollTop <= 80) {
       //  首次加载前不触发
       if (!firstLoad) return;
       reachTop(evt);
@@ -5584,9 +5593,15 @@ const reachTop = throttle(async (evt: any) => {
     sortRowsByDisplayOrder();
 
     nextTick(() => {
-      // 注意: el会变，如果不在下一帧取的话
-      const el = document.getElementById(oldId)
-      VueScrollTo.scrollTo(el, {
+      if (!oldId) {
+        return;
+      }
+      const selector = `[data-message-id="${oldId.replace(/"/g, '\\"')}"]`;
+      const target = messageRowRefs.get(oldId) || messagesListRef.value?.querySelector(selector);
+      if (!target) {
+        return;
+      }
+      VueScrollTo.scrollTo(target as HTMLElement, {
         container: messagesListRef.value,
         duration: 0,
         offset: 0,
