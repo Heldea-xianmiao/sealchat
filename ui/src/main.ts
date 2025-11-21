@@ -39,8 +39,11 @@ router.beforeEach(async (to, from, next) => {
   }
 
   const user = useUserStore();
-  const r = await user.checkUserSession();
-  if (r) {
+  const result = await user.checkUserSession();
+  if (result === 'ok' || result === 'network-error') {
+    if (result === 'network-error') {
+      console.warn('网络不稳定，跳过登录状态刷新');
+    }
     return next();
   }
 

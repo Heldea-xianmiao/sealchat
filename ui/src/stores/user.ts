@@ -114,31 +114,42 @@ export const useUserStore = defineStore({
       return resp;
     },
 
-    async checkUserSession() {
-      const now = Number(Date.now());
-      if (now + this.lastCheckTime > 60 * 1000) {
-        // 向服务器发请求
-        try {
-          const firstTime = !this.info;
-          await this.infoUpdate();
-          if (firstTime) {
-            // 初次进入
-            useChatStore().tryInit();
-          }
-          // console.log('check', this.info)
-          this.lastCheckTime = Number(Date.now());
-          return true;
-        } catch (e: any) {
-          if (e.code !== "ERR_NETWORK") {
-            // 未登录，清除数据
-            this.info.id = '';
-            localStorage.setItem('accessToken', '');
-            this._accessToken = '';
-          }
-          return false;
+    async checkUserSession(options?: { force?: boolean }): Promise<'ok' | 'unauthenticated' | 'network-error'> {
+      const now = Date.now();
+      const hasToken = !!this.token;
+      const shouldCheck = options?.force || !this.info?.id || now - this.lastCheckTime > 60 * 1000;
+
+      if (!shouldCheck && hasToken) {
+        return 'ok';
+      }
+
+      if (!hasToken) {
+        return 'unauthenticated';
+      }
+
+      try {
+        const firstTime = !this.info?.id;
+        await this.infoUpdate();
+        if (firstTime) {
+          useChatStore().tryInit();
         }
-      } else {
-        if (this.token) return true;
+        this.lastCheckTime = Date.now();
+        return 'ok';
+      } catch (e: any) {
+        const statusCode = e?.response?.status;
+        const networkError = e?.code === 'ERR_NETWORK' || !statusCode;
+        if (networkError) {
+          console.warn('checkUserSession network issue, keep session as-is');
+          this.lastCheckTime = now;
+          return 'network-error';
+        }
+        if (statusCode === 401 || statusCode === 403) {
+          this.info.id = '';
+          localStorage.removeItem('accessToken');
+          this._accessToken = '';
+        }
+        this.lastCheckTime = 0;
+        return 'unauthenticated';
       }
     },
 

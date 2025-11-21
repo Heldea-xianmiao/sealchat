@@ -3447,6 +3447,17 @@ const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
 const HISTORY_CHANNEL_FALLBACK = '__global__';
 const MAX_HISTORY_PER_CHANNEL = 5;
 const HISTORY_PREVIEW_MAX = 120;
+const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
+const pendingHistoryRestoreChannelKey = ref<string | null>(null);
+
+const scheduleHistoryAutoRestore = () => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    pendingHistoryRestoreChannelKey.value = null;
+    return;
+  }
+  pendingHistoryRestoreChannelKey.value = String(channelId);
+};
 
 interface InputHistoryEntry {
   id: string;
@@ -3651,14 +3662,16 @@ const restoreHistoryEntry = (entryId: string) => {
   proceed();
 };
 
-const applyHistoryEntry = (entry: InputHistoryEntry) => {
+const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
     inputMode.value = entry.mode;
     suspendInlineSync = true;
     textToSend.value = entry.content;
     suspendInlineSync = false;
     syncInlineMarkersWithText(entry.content);
-    message.success('已恢复历史输入');
+    if (!options?.silent) {
+      message.success('已恢复历史输入');
+    }
     nextTick(() => {
       textInputRef.value?.focus();
     });
@@ -3680,6 +3693,34 @@ const handleManualHistoryRecord = () => {
   }
 };
 
+const tryAutoRestoreHistory = () => {
+  const channelKey = currentChannelKey.value;
+  if (
+    !channelKey ||
+    channelKey === HISTORY_CHANNEL_FALLBACK ||
+    pendingHistoryRestoreChannelKey.value !== channelKey
+  ) {
+    return;
+  }
+  pendingHistoryRestoreChannelKey.value = null;
+  if (!chat.curChannel?.id) {
+    return;
+  }
+  if (textToSend.value.trim().length > 0) {
+    return;
+  }
+  const latestEntry = historyEntries.value[0];
+  if (!latestEntry) {
+    return;
+  }
+  const withinWindow = Date.now() - latestEntry.createdAt <= HISTORY_AUTO_RESTORE_WINDOW;
+  if (!withinWindow) {
+    return;
+  }
+  applyHistoryEntry(latestEntry, { silent: true });
+  message.info('已自动恢复上次输入');
+};
+
 const scheduleHistorySnapshot = throttle(
   () => {
     if (isEditing.value) {
@@ -3694,6 +3735,7 @@ const scheduleHistorySnapshot = throttle(
 watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
+  scheduleHistoryAutoRestore();
 });
 
 const handleHistoryPopoverShow = (show: boolean) => {
@@ -3707,6 +3749,11 @@ watch(hasHistoryEntries, (has) => {
   if (!has) {
     historyPopoverVisible.value = false;
   }
+});
+
+onMounted(() => {
+  refreshHistoryEntries();
+  scheduleHistoryAutoRestore();
 });
 
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
@@ -4953,6 +5000,7 @@ onMounted(async () => {
   chat.channelRefreshSetup()
 
   refreshHistoryEntries();
+  scheduleHistoryAutoRestore();
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -5275,6 +5323,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
+    refreshHistoryEntries();
+    scheduleHistoryAutoRestore();
     loadMessages();
   })
 
@@ -5290,42 +5340,9 @@ onBeforeUnmount(() => {
 });
 
 const messagesNextFlag = ref("");
-let initialHistoryPrefetched = false;
-let initialHistoryPrefetching = false;
-
-const prefetchInitialHistory = async () => {
-  if (initialHistoryPrefetched || initialHistoryPrefetching) return;
-  if (!messagesNextFlag.value || !chat.curChannel?.id) {
-    return;
-  }
-  initialHistoryPrefetching = true;
-  try {
-    const older = await chat.messageList(chat.curChannel.id, messagesNextFlag.value, {
-      includeArchived: chat.filterState.showArchived,
-    });
-    messagesNextFlag.value = older.next || "";
-
-    if (older?.data?.length) {
-      const normalized = normalizeMessageList(older.data);
-      rows.value.unshift(...normalized);
-      sortRowsByDisplayOrder();
-      nextTick(() => {
-        scrollToBottom();
-        showButton.value = false;
-      });
-    }
-    initialHistoryPrefetched = true;
-  } catch (error) {
-    console.warn('预取历史消息失败', error);
-  } finally {
-    initialHistoryPrefetching = false;
-  }
-};
 
 const loadMessages = async () => {
   resetTypingPreview();
-  initialHistoryPrefetched = false;
-  initialHistoryPrefetching = false;
   const messages = await chat.messageList(chat.curChannel?.id || '', undefined, {
     includeArchived: chat.filterState.showArchived,
     limit: INITIAL_MESSAGE_LOAD_LIMIT,
@@ -5337,9 +5354,9 @@ const loadMessages = async () => {
   nextTick(() => {
     scrollToBottom();
     showButton.value = false;
-  })
+  });
 
-  await prefetchInitialHistory();
+  tryAutoRestoreHistory();
 }
 
 const showButton = ref(false)

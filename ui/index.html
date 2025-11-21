@@ -51,7 +51,9 @@
   <div id="app"></div>
   <script>
     if (!location.pathname.endsWith('/')) {
-      location.pathname = location.pathname + '/'
+      var newPath = location.pathname.replace(/\/+$/, '') + '/';
+      var nextUrl = newPath + location.search + location.hash;
+      window.history.replaceState(null, document.title, nextUrl);
     }
   </script>
   <script type="module" src="/src/main.ts"></script>
