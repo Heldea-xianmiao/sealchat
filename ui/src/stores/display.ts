@@ -16,6 +16,7 @@ export interface DisplaySettings {
   lineHeight: number
   letterSpacing: number
   bubbleGap: number
+  compactBubbleGap: number
   paragraphSpacing: number
   messagePaddingX: number
   messagePaddingY: number
@@ -47,6 +48,9 @@ const LETTER_SPACING_MAX = 2
 const BUBBLE_GAP_DEFAULT = 12
 const BUBBLE_GAP_MIN = 4
 const BUBBLE_GAP_MAX = 48
+const COMPACT_BUBBLE_GAP_DEFAULT = 4
+const COMPACT_BUBBLE_GAP_MIN = 0
+const COMPACT_BUBBLE_GAP_MAX = 24
 const PARAGRAPH_SPACING_DEFAULT = 8
 const PARAGRAPH_SPACING_MIN = 0
 const PARAGRAPH_SPACING_MAX = 24
@@ -123,6 +127,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   lineHeight: LINE_HEIGHT_DEFAULT,
   letterSpacing: LETTER_SPACING_DEFAULT,
   bubbleGap: BUBBLE_GAP_DEFAULT,
+  compactBubbleGap: COMPACT_BUBBLE_GAP_DEFAULT,
   paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
@@ -176,6 +181,12 @@ const loadSettings = (): DisplaySettings => {
         LETTER_SPACING_MAX,
       ),
       bubbleGap: coerceNumberInRange(parsed.bubbleGap, BUBBLE_GAP_DEFAULT, BUBBLE_GAP_MIN, BUBBLE_GAP_MAX),
+      compactBubbleGap: coerceNumberInRange(
+        parsed.compactBubbleGap,
+        COMPACT_BUBBLE_GAP_DEFAULT,
+        COMPACT_BUBBLE_GAP_MIN,
+        COMPACT_BUBBLE_GAP_MAX,
+      ),
       paragraphSpacing: coerceNumberInRange(
         parsed.paragraphSpacing,
         PARAGRAPH_SPACING_DEFAULT,
@@ -253,6 +264,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'bubbleGap')
       ? coerceNumberInRange(patch.bubbleGap, BUBBLE_GAP_DEFAULT, BUBBLE_GAP_MIN, BUBBLE_GAP_MAX)
       : base.bubbleGap,
+  compactBubbleGap:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'compactBubbleGap')
+      ? coerceNumberInRange(patch.compactBubbleGap, COMPACT_BUBBLE_GAP_DEFAULT, COMPACT_BUBBLE_GAP_MIN, COMPACT_BUBBLE_GAP_MAX)
+      : base.compactBubbleGap,
   paragraphSpacing:
     patch && Object.prototype.hasOwnProperty.call(patch, 'paragraphSpacing')
       ? coerceNumberInRange(
@@ -411,6 +426,7 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-line-height', `${effective.lineHeight}`)
       setVar('--chat-letter-spacing', `${effective.letterSpacing}px`)
       setVar('--chat-bubble-gap', `${effective.bubbleGap}px`)
+      setVar('--chat-compact-gap', `${effective.compactBubbleGap}px`)
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)

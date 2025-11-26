@@ -7485,7 +7485,7 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row + .message-row {
-  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.35);
+  margin-top: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35));
 }
 
 .message-row--tone-ic,
@@ -7900,6 +7900,14 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact.chat--no-avatar .message-row__grid-content :deep(.chat-item) {
   padding: 0;
+  padding-bottom: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35));
+}
+
+.chat--layout-compact.chat--no-avatar .message-row__grid-content :deep(.chat-item.chat-item--merged.chat-item--ic),
+.chat--layout-compact.chat--no-avatar .message-row__grid-content :deep(.chat-item.chat-item--merged.chat-item--ooc) {
+  padding-bottom: calc(
+    var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) * 0.43
+  );
 }
 .message-row--drag-source {
   opacity: 0.4;
@@ -7983,12 +7991,14 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .chat-item {
-  padding-bottom: 0.4rem;
+  padding-bottom: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35));
 }
 
 .chat--layout-compact .chat-item--merged.chat-item--ic,
 .chat--layout-compact .chat-item--merged.chat-item--ooc {
-  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.15);
+  padding-bottom: calc(
+    var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) * 0.43
+  );
 }
 
 .channel-switch-trigger {

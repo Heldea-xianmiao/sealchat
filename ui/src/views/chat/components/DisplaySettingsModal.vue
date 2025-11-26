@@ -35,6 +35,7 @@ watch(
     draft.lineHeight = value.lineHeight
     draft.letterSpacing = value.letterSpacing
     draft.bubbleGap = value.bubbleGap
+    draft.compactBubbleGap = value.compactBubbleGap
     draft.paragraphSpacing = value.paragraphSpacing
     draft.messagePaddingX = value.messagePaddingX
     draft.messagePaddingY = value.messagePaddingY
@@ -55,6 +56,7 @@ const previewStyleVars = computed(() => ({
   '--chat-line-height': `${draft.lineHeight}`,
   '--chat-letter-spacing': `${draft.letterSpacing}px`,
   '--chat-bubble-gap': `${draft.bubbleGap}px`,
+  '--chat-compact-gap': `${draft.compactBubbleGap}px`,
   '--chat-paragraph-spacing': `${draft.paragraphSpacing}px`,
   '--chat-message-padding-x': `${draft.messagePaddingX}px`,
   '--chat-message-padding-y': `${draft.messagePaddingY}px`,
@@ -68,6 +70,7 @@ type NumericSettingKey =
   | 'lineHeight'
   | 'letterSpacing'
   | 'bubbleGap'
+  | 'compactBubbleGap'
   | 'paragraphSpacing'
   | 'messagePaddingX'
   | 'messagePaddingY'
@@ -256,6 +259,29 @@ const handleConfirm = () => emit('save', { ...draft })
                 :max="48"
                 :step="2"
                 @update:value="(v) => handleNumericInput('bubbleGap', v)"
+              />
+            </div>
+          </div>
+          <div class="control-field">
+            <div>
+              <p class="control-title">紧凑间距</p>
+              <p class="control-desc">仅作用于紧凑模式消息块之间的 gap</p>
+            </div>
+            <div class="control-input">
+              <n-slider
+                v-model:value="draft.compactBubbleGap"
+                :min="0"
+                :max="24"
+                :step="1"
+                :format-tooltip="formatPxTooltip"
+              />
+              <n-input-number
+                v-model:value="draft.compactBubbleGap"
+                size="small"
+                :min="0"
+                :max="24"
+                :step="1"
+                @update:value="(v) => handleNumericInput('compactBubbleGap', v)"
               />
             </div>
           </div>
@@ -562,6 +588,7 @@ const handleConfirm = () => emit('save', { ...draft })
 
 .display-preview--compact {
   --preview-radius: 0.75rem;
+  gap: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.65rem) * 0.35));
 }
 
 .display-settings__footer {
