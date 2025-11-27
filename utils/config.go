@@ -44,7 +44,13 @@ const (
 	StorageModeS3    StorageMode = "s3"
 )
 
-const defaultPageTitle = "海豹尬聊 SealChat"
+const (
+	defaultPageTitle                = "海豹尬聊 SealChat"
+	defaultExportStorageDir         = "./data/exports"
+	defaultExportHTMLPageSize       = 100
+	defaultExportHTMLPageSizeMax    = 500
+	defaultExportHTMLMaxConcurrency = 2
+)
 
 type StorageConfig struct {
 	Mode       StorageMode        `json:"mode" yaml:"mode"`
@@ -97,8 +103,18 @@ type AppConfig struct {
 	GalleryQuotaMB            int64           `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig `json:"logUpload" yaml:"logUpload"`
 	Audio                     AudioConfig     `json:"audio" yaml:"audio"`
+	Export                    ExportConfig    `json:"export" yaml:"export"`
 	Storage                   StorageConfig   `json:"storage" yaml:"storage"`
 	SQLite                    SQLiteConfig    `json:"sqlite" yaml:"sqlite"`
+}
+
+type ExportConfig struct {
+	StorageDir            string `json:"storageDir" yaml:"storageDir"`
+	DownloadBandwidthKBps int    `json:"downloadBandwidthKBps" yaml:"downloadBandwidthKBps"`
+	DownloadBurstKB       int    `json:"downloadBurstKB" yaml:"downloadBurstKB"`
+	HTMLPageSizeDefault   int    `json:"htmlPageSizeDefault" yaml:"htmlPageSizeDefault"`
+	HTMLPageSizeMax       int    `json:"htmlPageSizeMax" yaml:"htmlPageSizeMax"`
+	HTMLMaxConcurrency    int    `json:"htmlMaxConcurrency" yaml:"htmlMaxConcurrency"`
 }
 
 // SQLiteConfig 用于细化 SQLite 数据库的运行参数
@@ -163,6 +179,14 @@ func ReadConfig() *AppConfig {
 			AlternateBitrates:  []int{64, 128},
 			FFmpegPath:         "",
 		},
+		Export: ExportConfig{
+			StorageDir:            defaultExportStorageDir,
+			DownloadBandwidthKBps: 0,
+			DownloadBurstKB:       0,
+			HTMLPageSizeDefault:   defaultExportHTMLPageSize,
+			HTMLPageSizeMax:       defaultExportHTMLPageSizeMax,
+			HTMLMaxConcurrency:    defaultExportHTMLMaxConcurrency,
+		},
 		Storage: StorageConfig{
 			Mode:       StorageModeLocal,
 			PresignTTL: 900,
@@ -186,7 +210,7 @@ func ReadConfig() *AppConfig {
 			Synchronous:     "NORMAL",
 			TxLockImmediate: true,
 			ReadConnections: runtime.NumCPU(),
-			OptimizeOnInit: true,
+			OptimizeOnInit:  true,
 		},
 	}
 
@@ -238,6 +262,7 @@ func ReadConfig() *AppConfig {
 	}
 	applyImageBaseURLFallback(&config)
 	applySQLiteDefaults(&config.SQLite)
+	applyExportDefaults(&config.Export)
 
 	k.Print()
 	currentConfig = &config
@@ -263,6 +288,33 @@ func applySQLiteDefaults(cfg *SQLiteConfig) {
 	cfg.Synchronous = strings.ToUpper(cfg.Synchronous)
 	if cfg.Synchronous != "OFF" && cfg.Synchronous != "NORMAL" && cfg.Synchronous != "FULL" {
 		cfg.Synchronous = "NORMAL"
+	}
+}
+
+func applyExportDefaults(cfg *ExportConfig) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.StorageDir) == "" {
+		cfg.StorageDir = defaultExportStorageDir
+	}
+	if cfg.HTMLPageSizeDefault <= 0 {
+		cfg.HTMLPageSizeDefault = defaultExportHTMLPageSize
+	}
+	if cfg.HTMLPageSizeMax <= 0 {
+		cfg.HTMLPageSizeMax = defaultExportHTMLPageSizeMax
+	}
+	if cfg.HTMLPageSizeDefault > cfg.HTMLPageSizeMax {
+		cfg.HTMLPageSizeDefault = cfg.HTMLPageSizeMax
+	}
+	if cfg.HTMLMaxConcurrency <= 0 {
+		cfg.HTMLMaxConcurrency = defaultExportHTMLMaxConcurrency
+	}
+	if cfg.DownloadBandwidthKBps < 0 {
+		cfg.DownloadBandwidthKBps = 0
+	}
+	if cfg.DownloadBurstKB < 0 {
+		cfg.DownloadBurstKB = 0
 	}
 }
 
@@ -304,6 +356,12 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
+		_ = k.Set("export.storageDir", config.Export.StorageDir)
+		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
+		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)
+		_ = k.Set("export.htmlPageSizeDefault", config.Export.HTMLPageSizeDefault)
+		_ = k.Set("export.htmlPageSizeMax", config.Export.HTMLPageSizeMax)
+		_ = k.Set("export.htmlMaxConcurrency", config.Export.HTMLMaxConcurrency)
 		_ = k.Set("storage.mode", config.Storage.Mode)
 		_ = k.Set("storage.baseUrl", config.Storage.BaseURL)
 		_ = k.Set("storage.presignTTL", config.Storage.PresignTTL)

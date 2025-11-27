@@ -14,7 +14,10 @@ import (
 )
 
 type MessageExportWorkerConfig struct {
-	StorageDir string
+	StorageDir          string
+	HTMLPageSizeDefault int
+	HTMLPageSizeMax     int
+	HTMLMaxConcurrency  int
 }
 
 var (
@@ -26,6 +29,18 @@ var (
 func StartMessageExportWorker(cfg MessageExportWorkerConfig) {
 	if cfg.StorageDir == "" {
 		cfg.StorageDir = "./data/exports"
+	}
+	if cfg.HTMLPageSizeDefault <= 0 {
+		cfg.HTMLPageSizeDefault = DefaultExportSliceLimit
+	}
+	if cfg.HTMLPageSizeMax <= 0 {
+		cfg.HTMLPageSizeMax = MaxExportSliceLimit
+	}
+	if cfg.HTMLPageSizeDefault > cfg.HTMLPageSizeMax {
+		cfg.HTMLPageSizeDefault = cfg.HTMLPageSizeMax
+	}
+	if cfg.HTMLMaxConcurrency <= 0 {
+		cfg.HTMLMaxConcurrency = DefaultExportConcurrency
 	}
 	exportWorkerOnce.Do(func() {
 		if err := os.MkdirAll(cfg.StorageDir, 0755); err != nil {
@@ -50,7 +65,7 @@ func runMessageExportWorker(cfg MessageExportWorkerConfig) {
 			<-ticker.C
 			continue
 		}
-		if err := processExportJob(job, cfg.StorageDir); err != nil {
+		if err := processExportJob(job, cfg); err != nil {
 			log.Printf("export: 执行任务 %s 失败: %v", job.ID, err)
 		}
 	}
@@ -84,7 +99,7 @@ func acquireNextExportJob() (*model.MessageExportJobModel, error) {
 	return &job, nil
 }
 
-func processExportJob(job *model.MessageExportJobModel, storageDir string) error {
+func processExportJob(job *model.MessageExportJobModel, cfg MessageExportWorkerConfig) error {
 	channelName := resolveChannelName(job.ChannelID)
 	messages, err := loadMessagesForExport(job)
 	if err != nil {
@@ -94,7 +109,7 @@ func processExportJob(job *model.MessageExportJobModel, storageDir string) error
 
 	extraOptions := parseExportExtraOptions(job.ExtraOptions)
 	if strings.EqualFold(job.Format, "html") {
-		if err := processViewerExportJob(job, channelName, messages, storageDir, extraOptions); err != nil {
+		if err := processViewerExportJob(job, channelName, messages, cfg, extraOptions); err != nil {
 			_ = markJobFailed(job, err)
 			return err
 		}
@@ -115,13 +130,13 @@ func processExportJob(job *model.MessageExportJobModel, storageDir string) error
 		return err
 	}
 
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.StorageDir, 0755); err != nil {
 		_ = markJobFailed(job, err)
 		return err
 	}
 
 	fileName := buildExportFileName(payload, formatter.Ext())
-	filePath := filepath.Join(storageDir, fmt.Sprintf("%s.%s", job.ID, formatter.Ext()))
+	filePath := filepath.Join(cfg.StorageDir, fmt.Sprintf("%s.%s", job.ID, formatter.Ext()))
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		_ = markJobFailed(job, err)
 		return err
@@ -145,18 +160,18 @@ func markJobFailed(job *model.MessageExportJobModel, cause error) error {
 		Updates(updates).Error
 }
 
-func markJobDone(job *model.MessageExportJobModel, filePath, fileName string, formatOverride ...string) error {
+func markJobDone(job *model.MessageExportJobModel, filePath, fileName string) error {
+	fileSize := int64(0)
+	if info, err := os.Stat(filePath); err == nil {
+		fileSize = info.Size()
+	}
 	updates := map[string]any{
 		"status":      model.MessageExportStatusDone,
 		"file_path":   filePath,
 		"file_name":   fileName,
+		"file_size":   fileSize,
 		"error_msg":   "",
 		"finished_at": time.Now(),
-	}
-	if len(formatOverride) > 0 {
-		if format := strings.TrimSpace(formatOverride[0]); format != "" {
-			updates["format"] = format
-		}
 	}
 	return model.GetDB().Model(&model.MessageExportJobModel{}).
 		Where("id = ?", job.ID).

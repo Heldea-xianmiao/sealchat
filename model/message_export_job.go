@@ -13,9 +13,10 @@ const (
 type MessageExportJobModel struct {
 	StringPKBaseModel
 
-	UserID    string `json:"user_id" gorm:"index;size:100"`
-	ChannelID string `json:"channel_id" gorm:"index;size:100"`
-	Format    string `json:"format" gorm:"size:32"`
+	UserID      string `json:"user_id" gorm:"index;size:100"`
+	ChannelID   string `json:"channel_id" gorm:"index;size:100"`
+	Format      string `json:"format" gorm:"size:32"`
+	DisplayName string `json:"display_name" gorm:"size:255"`
 
 	IncludeOOC       bool   `json:"include_ooc"`
 	IncludeArchived  bool   `json:"include_archived"`
@@ -26,10 +27,11 @@ type MessageExportJobModel struct {
 	StartTime *time.Time `json:"start_time"`
 	EndTime   *time.Time `json:"end_time"`
 
-	FilePath string `json:"file_path"`
-	FileName string `json:"file_name"`
-	UploadURL string `json:"upload_url"`
-	UploadMeta string `json:"upload_meta" gorm:"type:text"`
+	FilePath   string     `json:"file_path"`
+	FileName   string     `json:"file_name"`
+	FileSize   int64      `json:"file_size"`
+	UploadURL  string     `json:"upload_url"`
+	UploadMeta string     `json:"upload_meta" gorm:"type:text"`
 	UploadedAt *time.Time `json:"uploaded_at"`
 
 	Status     string     `json:"status" gorm:"index;size:24"`

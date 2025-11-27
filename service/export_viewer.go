@@ -48,46 +48,44 @@ func processViewerExportJob(
 	job *model.MessageExportJobModel,
 	channelName string,
 	messages []*model.MessageModel,
-	storageDir string,
+	cfg MessageExportWorkerConfig,
 	extra *exportExtraOptions,
 ) error {
 	if extra == nil {
 		extra = parseExportExtraOptions("")
 	}
-	chunks := splitMessagesForViewer(messages, extra.SliceLimit)
+	sliceLimit, concurrency := prepareViewerRuntimeOptions(extra, cfg)
+	extra.SliceLimit = sliceLimit
+	extra.MaxConcurrency = concurrency
+
+	chunks := splitMessagesForViewer(messages, sliceLimit)
 	partTotal := len(chunks)
 	generatedAt := time.Now()
 	assets := getViewerAssets()
 	embedder := newInlineImageEmbedder()
 	results := make([]partRenderResult, partTotal)
 
-	if err := renderViewerParts(job, channelName, chunks, assets, extra, generatedAt, results, embedder); err != nil {
+	if err := renderViewerParts(job, channelName, chunks, assets, extra, generatedAt, results, embedder, concurrency); err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.StorageDir, 0755); err != nil {
 		return fmt.Errorf("创建导出目录失败: %w", err)
 	}
 
 	fileName := buildViewerArchiveName(channelName, generatedAt)
-	filePath := filepath.Join(storageDir, fileName)
+	filePath := filepath.Join(cfg.StorageDir, fileName)
 
 	if err := writeViewerArchive(filePath, job, channelName, extra, generatedAt, results, assets); err != nil {
 		return err
 	}
 
-	return markJobDone(job, filePath, fileName, "zip")
+	return markJobDone(job, filePath, fileName)
 }
 
 func splitMessagesForViewer(messages []*model.MessageModel, limit int) [][]*model.MessageModel {
 	if limit <= 0 {
 		limit = DefaultExportSliceLimit
-	}
-	if limit < MinExportSliceLimit {
-		limit = MinExportSliceLimit
-	}
-	if limit > MaxExportSliceLimit {
-		limit = MaxExportSliceLimit
 	}
 	if len(messages) == 0 {
 		return [][]*model.MessageModel{make([]*model.MessageModel, 0)}
@@ -116,10 +114,11 @@ func renderViewerParts(
 	generatedAt time.Time,
 	results []partRenderResult,
 	embedder *inlineImageEmbedder,
+	concurrency int,
 ) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 1)
-	sem := make(chan struct{}, normalizeConcurrency(extra.MaxConcurrency))
+	sem := make(chan struct{}, normalizeViewerConcurrency(concurrency))
 
 	for idx, chunk := range chunks {
 		wg.Add(1)
@@ -259,12 +258,39 @@ func sliceBounds(messages []*model.MessageModel) (*time.Time, *time.Time) {
 	return &start, &end
 }
 
-func normalizeConcurrency(value int) int {
-	value = NormalizeExportConcurrency(value)
+func normalizeViewerConcurrency(value int) int {
 	if value <= 0 {
-		value = 1
+		return 1
 	}
 	return value
+}
+
+func prepareViewerRuntimeOptions(extra *exportExtraOptions, cfg MessageExportWorkerConfig) (int, int) {
+	if extra == nil {
+		extra = &exportExtraOptions{}
+	}
+	limit := extra.SliceLimit
+	if limit <= 0 {
+		limit = cfg.HTMLPageSizeDefault
+	}
+	if cfg.HTMLPageSizeMax > 0 && limit > cfg.HTMLPageSizeMax {
+		limit = cfg.HTMLPageSizeMax
+	}
+	if limit <= 0 {
+		limit = DefaultExportSliceLimit
+	}
+
+	concurrency := extra.MaxConcurrency
+	if concurrency <= 0 {
+		concurrency = cfg.HTMLMaxConcurrency
+	}
+	if cfg.HTMLMaxConcurrency > 0 && concurrency > cfg.HTMLMaxConcurrency {
+		concurrency = cfg.HTMLMaxConcurrency
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	return limit, concurrency
 }
 
 func buildViewerArchiveName(channelName string, generatedAt time.Time) string {

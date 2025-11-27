@@ -21,6 +21,7 @@ import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
+import ExportManagerModal from './components/export/ExportManagerModal.vue'
 import DiceTray from './components/DiceTray.vue'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
@@ -41,6 +42,7 @@ import { nanoid } from 'nanoid';
 import { useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
+import { triggerBlobDownload } from '@/utils/download';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
@@ -447,6 +449,7 @@ watch(
 // 新增状态
 const showActionRibbon = ref(false);
 const archiveDrawerVisible = ref(false);
+const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 
@@ -1888,17 +1891,6 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const logUploadConfig = computed(() => utils.config?.logUpload);
 const canUseCloudUpload = computed(() => !!logUploadConfig.value?.endpoint && logUploadConfig.value?.enabled !== false);
 
-const triggerBlobDownload = (blob: Blob, fileName: string) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-};
-
 type CloudUploadResult = {
   url?: string;
   name?: string;
@@ -1987,6 +1979,7 @@ const clampExportValue = (value: number | undefined, min: number, max: number, f
 
 const handleExportMessages = async (params: {
   format: string;
+  displayName?: string;
   timeRange: [number, number] | null;
   includeOoc: boolean;
   includeArchived: boolean;
@@ -2018,6 +2011,7 @@ const handleExportMessages = async (params: {
     const payload = {
       channelId: chat.curChannel.id,
       format: params.format,
+      displayName: params.displayName?.trim() || undefined,
       timeRange: params.timeRange ?? undefined,
       includeOoc: params.includeOoc,
       includeArchived: params.includeArchived,
@@ -6434,14 +6428,14 @@ onBeforeUnmount(() => {
         :filters="chat.filterState"
         :members="chat.curChannelUsers"
         :archive-active="archiveDrawerVisible"
-        :export-active="exportDialogVisible"
+        :export-active="exportManagerVisible"
         :identity-active="identityDialogVisible"
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
         :favorite-active="display.favoriteBarEnabled"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
-        @open-export="exportDialogVisible = true"
+        @open-export="exportManagerVisible = true"
         @open-identity-manager="openIdentityManager"
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
@@ -7454,6 +7448,11 @@ onBeforeUnmount(() => {
 
   <ChatSearchPanel @jump-to-message="handleSearchJump" />
 
+  <ExportManagerModal
+    v-model:visible="exportManagerVisible"
+    :channel-id="chat.curChannel?.id"
+    @request-export="exportDialogVisible = true"
+  />
   <ExportDialog
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"

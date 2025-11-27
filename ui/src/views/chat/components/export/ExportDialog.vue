@@ -6,6 +6,7 @@ import { useDisplayStore } from '@/stores/display'
 
 interface ExportParams {
   format: string
+  displayName?: string
   timeRange: [number, number] | null
   includeOoc: boolean
   includeArchived: boolean
@@ -35,6 +36,9 @@ const SLICE_LIMIT_DEFAULT = 5000
 const CONCURRENCY_MIN = 1
 const CONCURRENCY_MAX = 8
 const CONCURRENCY_DEFAULT = 2
+const HTML_SLICE_LIMIT_DEFAULT = 100
+const HTML_SLICE_LIMIT_MAX = 500
+const HTML_CONCURRENCY_MAX = 2
 
 const clampSliceLimit = (value?: number): number => {
   if (!Number.isFinite(value)) return SLICE_LIMIT_DEFAULT
@@ -52,6 +56,44 @@ const clampConcurrency = (value?: number): number => {
   return n
 }
 
+const clampHtmlSliceLimit = (value?: number): number => {
+  const parsed = Number(value ?? HTML_SLICE_LIMIT_DEFAULT)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return HTML_SLICE_LIMIT_DEFAULT
+  }
+  if (parsed > HTML_SLICE_LIMIT_MAX) {
+    return HTML_SLICE_LIMIT_MAX
+  }
+  if (parsed < 50) {
+    return 50
+  }
+  return Math.round(parsed)
+}
+
+const clampHtmlConcurrency = (value?: number): number => {
+  const parsed = Number(value ?? CONCURRENCY_DEFAULT)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1
+  }
+  if (parsed > HTML_CONCURRENCY_MAX) {
+    return HTML_CONCURRENCY_MAX
+  }
+  if (parsed < CONCURRENCY_MIN) {
+    return CONCURRENCY_MIN
+  }
+  return Math.round(parsed)
+}
+
+const applyFormatSpecificLimits = () => {
+  if (form.format === 'html') {
+    form.maxExportMessages = clampHtmlSliceLimit(form.maxExportMessages)
+    form.maxExportConcurrency = clampHtmlConcurrency(form.maxExportConcurrency)
+  } else {
+    form.maxExportMessages = clampSliceLimit(form.maxExportMessages)
+    form.maxExportConcurrency = clampConcurrency(form.maxExportConcurrency)
+  }
+}
+
 const message = useMessage()
 const utils = useUtilsStore()
 const display = useDisplayStore()
@@ -61,6 +103,7 @@ const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
 const isApplyingPreset = ref(false)
 const form = reactive<ExportParams>({
   format: 'txt',
+  displayName: '',
   timeRange: null,
   includeOoc: true,
   includeArchived: false,
@@ -87,6 +130,7 @@ watch(
     } else if (newFormat !== 'json') {
       form.autoUpload = false
     }
+    applyFormatSpecificLimits()
   },
   { immediate: true }
 )
@@ -96,10 +140,12 @@ const syncExportSettingsFromStore = () => {
   if (!settings) {
     form.maxExportMessages = SLICE_LIMIT_DEFAULT
     form.maxExportConcurrency = CONCURRENCY_DEFAULT
+    applyFormatSpecificLimits()
     return
   }
   form.maxExportMessages = clampSliceLimit(settings.maxExportMessages)
   form.maxExportConcurrency = clampConcurrency(settings.maxExportConcurrency)
+  applyFormatSpecificLimits()
 }
 
 syncExportSettingsFromStore()
@@ -190,8 +236,13 @@ const handleExport = async () => {
     return
   }
 
-  const normalizedSliceLimit = clampSliceLimit(form.maxExportMessages)
-  const normalizedConcurrency = clampConcurrency(form.maxExportConcurrency)
+  const isHtmlExport = showZipOptions.value
+  const normalizedSliceLimit = isHtmlExport
+    ? clampHtmlSliceLimit(form.maxExportMessages)
+    : clampSliceLimit(form.maxExportMessages)
+  const normalizedConcurrency = isHtmlExport
+    ? clampHtmlConcurrency(form.maxExportConcurrency)
+    : clampConcurrency(form.maxExportConcurrency)
   form.maxExportMessages = normalizedSliceLimit
   form.maxExportConcurrency = normalizedConcurrency
   display.updateSettings({
@@ -201,7 +252,7 @@ const handleExport = async () => {
 
   loading.value = true
   try {
-    emit('export', { ...form })
+    emit('export', { ...form, displayName: form.displayName?.trim() || undefined })
   } catch (error) {
     message.error('导出失败')
   } finally {
@@ -219,6 +270,7 @@ const handleClose = () => {
   form.withoutTimestamp = false
   form.mergeMessages = true
   form.autoUpload = false
+  form.displayName = ''
   syncExportSettingsFromStore()
   timePreset.value = 'none'
 }
@@ -280,36 +332,49 @@ const shortcuts = {
         </template>
       </n-form-item>
 
+      <n-form-item label="文件名（可选）">
+        <n-input
+          v-model:value="form.displayName"
+          maxlength="120"
+          show-count
+          placeholder="留空则自动生成，例如：频道记录或 11 月导出"
+        />
+        <template #feedback>
+          若未填写将自动以频道与时间命名；若不带扩展名会自动补齐当前格式的扩展名。
+        </template>
+      </n-form-item>
+
       <n-form-item v-if="showZipOptions" label="ZIP 分片">
         <div class="export-slice-settings">
           <div class="export-slice-settings__row">
             <div>
               <p class="row-title">单个文件消息上限</p>
-              <p class="row-desc">超过阈值会拆分为下一个 HTML 分片</p>
+              <p class="row-desc">超过阈值会自动拆分为下一个 HTML 分片</p>
             </div>
             <n-input-number
               v-model:value="form.maxExportMessages"
-              :min="SLICE_LIMIT_MIN"
-              :max="SLICE_LIMIT_MAX"
-              :step="500"
-              :show-button="true"
+              :min="50"
+              :max="HTML_SLICE_LIMIT_MAX"
+              :step="50"
+              :show-button="false"
               size="small"
             />
           </div>
           <div class="export-slice-settings__row">
             <div>
               <p class="row-title">最大并发渲染数</p>
-              <p class="row-desc">避免并发过大占满 CPU，建议 1-4</p>
+              <p class="row-desc">避免并发过大占满 CPU，建议 1-2</p>
             </div>
             <n-input-number
               v-model:value="form.maxExportConcurrency"
               :min="CONCURRENCY_MIN"
-              :max="CONCURRENCY_MAX"
+              :max="Math.min(CONCURRENCY_MAX, HTML_CONCURRENCY_MAX)"
               size="small"
             />
           </div>
           <p class="row-hint">
-            ZIP 内会生成多个 part-xxx.html，配套 Viewer 支持分片跳转与搜索。
+            HTML 导出默认分页 {{ HTML_SLICE_LIMIT_DEFAULT }} 条，最多 {{ HTML_SLICE_LIMIT_MAX }} 条；超出限制会自动截断并拆分。
+            并发渲染上限 {{ HTML_CONCURRENCY_MAX }}，以降低内存占用。
           </p>
         </div>
       </n-form-item>

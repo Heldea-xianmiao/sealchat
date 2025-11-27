@@ -59,6 +59,28 @@ export interface LogUploadConfig {
   note?: string;
 }
 
+export interface ExportTaskItem {
+  task_id: string;
+  format: string;
+  status: string;
+  display_name?: string;
+  file_name?: string;
+  file_size: number;
+  finished_at?: number;
+  requested_at: number;
+  message?: string;
+  upload_url?: string;
+  download_url: string;
+}
+
+export interface ExportTaskListResponse {
+  total: number;
+  total_size: number;
+  page: number;
+  size: number;
+  items: ExportTaskItem[];
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;

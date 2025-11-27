@@ -97,8 +97,15 @@ func main() {
 		log.Fatalf("初始化音频子系统失败: %v", err)
 	}
 
+	service.InitExportLimiter(service.ExportLimiterConfig{
+		BandwidthKBps: config.Export.DownloadBandwidthKBps,
+		BurstKB:       config.Export.DownloadBurstKB,
+	})
 	service.StartMessageExportWorker(service.MessageExportWorkerConfig{
-		StorageDir: "./data/exports",
+		StorageDir:          config.Export.StorageDir,
+		HTMLPageSizeDefault: config.Export.HTMLPageSizeDefault,
+		HTMLPageSizeMax:     config.Export.HTMLPageSizeMax,
+		HTMLMaxConcurrency:  config.Export.HTMLMaxConcurrency,
 	})
 
 	autoSave := func() {

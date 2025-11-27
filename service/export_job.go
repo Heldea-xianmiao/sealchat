@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -23,6 +24,9 @@ const (
 	DefaultExportConcurrency = 2
 	MinExportConcurrency     = 1
 	MaxExportConcurrency     = 8
+
+	exportListDefaultLimit = 20
+	exportListMaxLimit     = 100
 )
 
 var supportedExportFormats = map[string]struct{}{
@@ -36,6 +40,7 @@ type ExportJobOptions struct {
 	UserID           string
 	ChannelID        string
 	Format           string
+	DisplayName      string
 	IncludeOOC       bool
 	IncludeArchived  bool
 	WithoutTimestamp bool
@@ -80,6 +85,7 @@ func CreateMessageExportJob(opts *ExportJobOptions) (*model.MessageExportJobMode
 		UserID:           opts.UserID,
 		ChannelID:        opts.ChannelID,
 		Format:           format,
+		DisplayName:      normalizeExportDisplayName(opts.DisplayName),
 		IncludeOOC:       opts.IncludeOOC,
 		IncludeArchived:  opts.IncludeArchived,
 		WithoutTimestamp: opts.WithoutTimestamp,
@@ -334,4 +340,111 @@ func NormalizeExportConcurrency(value int) int {
 		return MaxExportConcurrency
 	}
 	return value
+}
+
+// ListMessageExportJobs 返回指定频道的导出任务及统计信息。
+func ListMessageExportJobs(channelID string, statuses []string, limit, offset int, keyword string) ([]*model.MessageExportJobModel, int64, int64, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, 0, 0, fmt.Errorf("channel_id 不能为空")
+	}
+	if limit <= 0 {
+		limit = exportListDefaultLimit
+	}
+	if limit > exportListMaxLimit {
+		limit = exportListMaxLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	base := model.GetDB().Model(&model.MessageExportJobModel{}).Where("channel_id = ?", channelID)
+	if len(statuses) > 0 {
+		base = base.Where("status IN ?", statuses)
+	}
+	if trimmed := strings.TrimSpace(keyword); trimmed != "" {
+		pattern := fmt.Sprintf("%%%s%%", trimmed)
+		base = base.Where("(display_name LIKE ? OR file_name LIKE ?)", pattern, pattern)
+	}
+
+	var total int64
+	if err := base.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, 0, err
+	}
+
+	var sizeRow struct {
+		TotalSize sql.NullInt64
+	}
+	if err := base.Session(&gorm.Session{}).Select("COALESCE(SUM(file_size), 0) AS total_size").Scan(&sizeRow).Error; err != nil {
+		return nil, 0, 0, err
+	}
+
+	var jobs []*model.MessageExportJobModel
+	query := base.Session(&gorm.Session{}).Order("finished_at DESC, created_at DESC").Limit(limit).Offset(offset)
+	if err := query.Find(&jobs).Error; err != nil {
+		return nil, 0, 0, err
+	}
+
+	return jobs, total, sizeRow.TotalSize.Int64, nil
+}
+
+// UpdateExportJobErrorMessage 只更新任务的错误描述，用于下载阶段反馈。
+func UpdateExportJobErrorMessage(jobID, message string) error {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return fmt.Errorf("job_id 不能为空")
+	}
+	updates := map[string]any{
+		"error_msg":  strings.TrimSpace(message),
+		"updated_at": time.Now(),
+	}
+	return model.GetDB().Model(&model.MessageExportJobModel{}).
+		Where("id = ?", jobID).
+		Updates(updates).Error
+}
+
+func normalizeExportDisplayName(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return ""
+	}
+	const maxLen = 120
+	runes := []rune(trimmed)
+	if len(runes) > maxLen {
+		return string(runes[:maxLen])
+	}
+	return trimmed
+}
+
+// RetryMessageExportJob 根据既有任务重新创建一条导出任务。
+func RetryMessageExportJob(job *model.MessageExportJobModel) (*model.MessageExportJobModel, error) {
+	if job == nil {
+		return nil, fmt.Errorf("任务不存在")
+	}
+	opts := &ExportJobOptions{
+		UserID:           job.UserID,
+		ChannelID:        job.ChannelID,
+		Format:           job.Format,
+		DisplayName:      job.DisplayName,
+		IncludeOOC:       job.IncludeOOC,
+		IncludeArchived:  job.IncludeArchived,
+		WithoutTimestamp: job.WithoutTimestamp,
+		MergeMessages:    job.MergeMessages,
+		StartTime:        job.StartTime,
+		EndTime:          job.EndTime,
+	}
+	extra := parseExportExtraOptions(job.ExtraOptions)
+	opts.DisplaySettings = extra.DisplaySettings
+	opts.SliceLimit = extra.SliceLimit
+	opts.MaxConcurrency = extra.MaxConcurrency
+	return CreateMessageExportJob(opts)
+}
+
+// ExportJobRuntimeSettings 返回任务当前的分页与并发配置。
+func ExportJobRuntimeSettings(job *model.MessageExportJobModel) (int, int) {
+	extra := parseExportExtraOptions("")
+	if job != nil {
+		extra = parseExportExtraOptions(job.ExtraOptions)
+	}
+	return extra.SliceLimit, extra.MaxConcurrency
 }

@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -2136,6 +2136,7 @@ export const useChatStore = defineStore({
       sliceLimit?: number;
       maxConcurrency?: number;
       displaySettings?: DisplaySettings;
+      displayName?: string;
     }) {
       const payload: Record<string, any> = {
         channel_id: params.channelId,
@@ -2145,6 +2146,9 @@ export const useChatStore = defineStore({
         without_timestamp: params.withoutTimestamp ?? false,
         merge_messages: params.mergeMessages ?? true,
       };
+      if (params.displayName) {
+        payload.display_name = params.displayName;
+      }
       if (params.timeRange && params.timeRange.length === 2) {
         payload.time_range = params.timeRange;
       }
@@ -2175,6 +2179,30 @@ export const useChatStore = defineStore({
         message?: string;
         finished_at?: number;
       };
+    },
+
+    async listExportTasks(
+      channelId: string,
+      opts?: { page?: number; size?: number; status?: string; keyword?: string }
+    ) {
+      if (!channelId) {
+        throw new Error('缺少频道 ID');
+      }
+      const params: Record<string, any> = { channel_id: channelId };
+      if (opts?.page) {
+        params.page = opts.page;
+      }
+      if (opts?.size) {
+        params.size = opts.size;
+      }
+      if (opts?.status) {
+        params.status = opts.status;
+      }
+      if (opts?.keyword) {
+        params.keyword = opts.keyword;
+      }
+      const resp = await api.get('api/v1/chat/export', { params });
+      return resp.data as ExportTaskListResponse;
     },
 
     async downloadExportResult(taskId: string, fileNameHint?: string) {
@@ -2212,6 +2240,17 @@ export const useChatStore = defineStore({
         name?: string;
         file_name?: string;
         uploaded_at?: number;
+      };
+    },
+
+    async retryExportTask(taskId: string) {
+      const resp = await api.post(`api/v1/chat/export/${taskId}/retry`);
+      return resp.data as {
+        task_id: string;
+        status: string;
+        message?: string;
+        requested_at?: number;
+        display_name?: string;
       };
     },
   }
