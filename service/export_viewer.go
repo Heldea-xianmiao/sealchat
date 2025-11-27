@@ -59,11 +59,13 @@ func processViewerExportJob(
 	extra.MaxConcurrency = concurrency
 
 	chunks := splitMessagesForViewer(messages, sliceLimit)
+	defer releaseViewerChunks(chunks)
 	partTotal := len(chunks)
 	generatedAt := time.Now()
 	assets := getViewerAssets()
 	embedder := newInlineImageEmbedder()
 	results := make([]partRenderResult, partTotal)
+	defer releasePartResults(results)
 
 	if err := renderViewerParts(job, channelName, chunks, assets, extra, generatedAt, results, embedder, concurrency); err != nil {
 		return err
@@ -232,6 +234,22 @@ func writeViewerArchive(
 	}
 
 	return nil
+}
+
+func releasePartResults(results []partRenderResult) {
+	for i := range results {
+		results[i].content = nil
+		results[i].meta = viewerManifestPart{}
+	}
+}
+
+func releaseViewerChunks(chunks [][]*model.MessageModel) {
+	for i := range chunks {
+		for j := range chunks[i] {
+			chunks[i][j] = nil
+		}
+		chunks[i] = nil
+	}
 }
 
 func writeZipEntry(zw *zip.Writer, name string, data []byte) error {

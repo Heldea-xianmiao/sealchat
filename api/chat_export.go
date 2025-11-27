@@ -542,6 +542,9 @@ func resolveDownloadFileName(job *model.MessageExportJobModel) string {
 	if job == nil {
 		return "export"
 	}
+	if fileName := strings.TrimSpace(job.FileName); fileName != "" {
+		return fileName
+	}
 	displayName := strings.TrimSpace(job.DisplayName)
 	if displayName != "" {
 		if !strings.Contains(displayName, ".") {
@@ -552,9 +555,6 @@ func resolveDownloadFileName(job *model.MessageExportJobModel) string {
 			return fmt.Sprintf("%s.%s", displayName, ext)
 		}
 		return displayName
-	}
-	if strings.TrimSpace(job.FileName) != "" {
-		return job.FileName
 	}
 	format := strings.TrimSpace(job.Format)
 	if format == "" {

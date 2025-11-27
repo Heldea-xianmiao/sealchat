@@ -155,9 +155,47 @@ const fetchTasks = async () => {
   }
 };
 
+const STREAMING_DOWNLOAD_THRESHOLD = 300 * 1024; // 300KB
+const DOWNLOAD_EXT_MAP: Record<string, string> = {
+  txt: '.txt',
+  json: '.json',
+  html: '.zip',
+};
+
+const resolveDownloadFileName = (item: ExportTaskItem) => {
+  const rawName = (item.file_name || item.display_name || `export-${item.task_id.slice(0, 8)}`).trim();
+  const formatExt = DOWNLOAD_EXT_MAP[item.format?.toLowerCase() || ''];
+  if (!formatExt) {
+    return rawName || item.task_id;
+  }
+  const lower = rawName.toLowerCase();
+  if (lower.endsWith(formatExt)) {
+    return rawName;
+  }
+  return `${rawName || item.task_id}${formatExt}`;
+};
+
+const startBrowserDownload = (item: ExportTaskItem) => {
+  const defaultUrl = new URL(`/api/v1/chat/export/${item.task_id}?download=1`, window.location.origin).toString();
+  const url = item.download_url?.trim() || defaultUrl;
+  const fileName = resolveDownloadFileName(item);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 const handleDownload = async (item: ExportTaskItem) => {
   if (item.file_missing) {
     message.warning('文件已被清理，请先重新生成。');
+    return;
+  }
+  const fileSize = Number(item.file_size || 0);
+  if (fileSize > STREAMING_DOWNLOAD_THRESHOLD) {
+    startBrowserDownload(item);
     return;
   }
   try {

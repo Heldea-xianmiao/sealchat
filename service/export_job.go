@@ -1,9 +1,9 @@
 package service
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -375,20 +375,20 @@ func ListMessageExportJobs(channelID string, statuses []string, limit, offset in
 		return nil, 0, 0, err
 	}
 
-	var sizeRow struct {
-		TotalSize sql.NullInt64
-	}
-	if err := base.Session(&gorm.Session{}).Select("COALESCE(SUM(file_size), 0) AS total_size").Scan(&sizeRow).Error; err != nil {
-		return nil, 0, 0, err
-	}
-
 	var jobs []*model.MessageExportJobModel
 	query := base.Session(&gorm.Session{}).Order("finished_at DESC, created_at DESC").Limit(limit).Offset(offset)
 	if err := query.Find(&jobs).Error; err != nil {
 		return nil, 0, 0, err
 	}
 
-	return jobs, total, sizeRow.TotalSize.Int64, nil
+	totalSize := int64(0)
+	for _, job := range jobs {
+		if exportJobFileExists(job) {
+			totalSize += job.FileSize
+		}
+	}
+
+	return jobs, total, totalSize, nil
 }
 
 // UpdateExportJobErrorMessage 只更新任务的错误描述，用于下载阶段反馈。
@@ -417,6 +417,21 @@ func normalizeExportDisplayName(input string) string {
 		return string(runes[:maxLen])
 	}
 	return trimmed
+}
+
+func exportJobFileExists(job *model.MessageExportJobModel) bool {
+	if job == nil {
+		return false
+	}
+	path := strings.TrimSpace(job.FilePath)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 // RetryMessageExportJob 根据既有任务重新创建一条导出任务。
