@@ -81,3 +81,47 @@ func SyncBotMembers(token *model.BotTokenModel) error {
 		Where("user_id = ?", token.ID).
 		Update("nickname", name).Error
 }
+
+// EnsureBotChannelIdentity creates a default channel identity for bot users once they join a channel.
+func EnsureBotChannelIdentity(userID, channelID string) error {
+	userID = strings.TrimSpace(userID)
+	channelID = strings.TrimSpace(channelID)
+	if userID == "" || channelID == "" {
+		return nil
+	}
+	user := model.UserGet(userID)
+	if user == nil || !user.IsBot {
+		return nil
+	}
+	displayName := strings.TrimSpace(user.Nickname)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	if displayName == "" {
+		displayName = "Bot"
+	}
+	if _, err := model.MemberGetByUserIDAndChannelIDBase(user.ID, channelID, displayName, true); err != nil {
+		return err
+	}
+	existing, err := model.ChannelIdentityList(channelID, user.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	sortOrder, err := model.ChannelIdentityMaxSort(channelID, user.ID)
+	if err != nil {
+		return err
+	}
+	identity := &model.ChannelIdentityModel{
+		ChannelID:          channelID,
+		UserID:             user.ID,
+		DisplayName:        displayName,
+		Color:              model.ChannelIdentityNormalizeColor(user.NickColor),
+		AvatarAttachmentID: strings.TrimSpace(user.Avatar),
+		SortOrder:          sortOrder + 1,
+		IsDefault:          true,
+	}
+	return model.ChannelIdentityUpsert(identity)
+}

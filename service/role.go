@@ -51,6 +51,31 @@ func UserRoleUnlink(roleIds []string, userIds []string) (int64, error) {
 
 func UserRoleLink(roleIds []string, userIds []string) (int64, error) {
 	num, err := model.UserRoleLink(roleIds, userIds)
-	// 也是特殊处理
-	return num, err
+	if err != nil {
+		return num, err
+	}
+
+	type identityKey struct {
+		userID    string
+		channelID string
+	}
+	processed := make(map[identityKey]struct{})
+	for _, roleID := range roleIds {
+		channelID := model.ExtractChIdFromRoleId(roleID)
+		if channelID == "" {
+			continue
+		}
+		for _, userID := range userIds {
+			key := identityKey{userID: userID, channelID: channelID}
+			if _, exists := processed[key]; exists {
+				continue
+			}
+			if errEnsure := EnsureBotChannelIdentity(userID, channelID); errEnsure != nil {
+				log.Printf("自动创建机器人身份失败[user=%s channel=%s]: %v", userID, channelID, errEnsure)
+			}
+			processed[key] = struct{}{}
+		}
+	}
+
+	return num, nil
 }
