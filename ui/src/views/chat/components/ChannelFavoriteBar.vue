@@ -2,13 +2,18 @@
 import { computed, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useDisplayStore } from '@/stores/display'
+import type { FavoriteHotkey } from '@/stores/display'
 import type { SChannel } from '@/types'
 import { useMessage } from 'naive-ui'
 import { Settings as SettingsIcon } from '@vicons/tabler'
+import { useEventListener } from '@vueuse/core'
+import { isHotkeyMatchingEvent, formatHotkeyCombo } from '@/utils/hotkey'
 
 interface FavoriteEntry {
   id: string
   channel: SChannel | null
+  hotkey: FavoriteHotkey | null
+  unread: number
 }
 
 const emit = defineEmits<{
@@ -56,6 +61,9 @@ const channelMap = computed(() => {
 
 const currentWorldId = computed(() => chat.currentWorldId || undefined)
 const currentFavoriteIds = computed(() => display.getFavoriteChannelIds(currentWorldId.value))
+const favoriteHotkeyMap = computed<Record<string, FavoriteHotkey>>(
+  () => display.getFavoriteHotkeyMap(currentWorldId.value),
+)
 
 const favoriteDataReady = computed(() => {
   const worldId = currentWorldId.value
@@ -67,6 +75,8 @@ const favoriteEntries = computed<FavoriteEntry[]>(() =>
   currentFavoriteIds.value.map((id) => ({
     id,
     channel: channelMap.value.get(id) ?? null,
+    hotkey: favoriteHotkeyMap.value[id] || null,
+    unread: chat.unreadCountMap[id] || 0,
   })),
 )
 
@@ -90,6 +100,25 @@ const handleFavoriteClick = async (entry: FavoriteEntry) => {
 }
 
 const handleManageClick = () => emit('manage')
+
+const handleFavoriteHotkey = (event: KeyboardEvent) => {
+  if (!display.favoriteBarEnabled) return
+  if (!favoriteEntries.value.length) return
+  const target = favoriteEntries.value.find((entry) => entry.hotkey && isHotkeyMatchingEvent(event, entry.hotkey))
+  if (!target) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (!target.channel) {
+    display.removeFavoriteChannel(target.id, currentWorldId.value)
+    message.warning('频道不可用，已自动移除')
+    return
+  }
+  void chat.channelSwitchTo(target.id).catch(() => {
+    message.error('切换频道失败，请检查权限')
+  })
+}
+
+useEventListener(window, 'keydown', handleFavoriteHotkey, { passive: false })
 
 watch(
   () => ({
@@ -124,7 +153,13 @@ watch(
       @click="handleFavoriteClick(entry)"
       role="listitem"
     >
+      <span
+        v-if="entry.unread > 0"
+        class="favorite-bar__pill-unread"
+        :title="`有 ${entry.unread} 条未读消息`"
+      ></span>
       <span class="favorite-bar__pill-text">{{ entry.channel?.name || '频道不可用' }}</span>
+      <span v-if="entry.hotkey" class="favorite-bar__pill-hotkey">{{ formatHotkeyCombo(entry.hotkey) }}</span>
     </button>
   </div>
   <span v-else class="favorite-bar__placeholder">暂无收藏</span>
@@ -186,12 +221,16 @@ watch(
 }
 
 .favorite-bar__pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   border-radius: 999px;
   border: 1px solid transparent;
   background-color: transparent;
   color: var(--sc-text-primary);
   font-size: 0.78rem;
-  padding: 0.05rem 0.5rem;
+  padding: 0.05rem 0.65rem;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -222,6 +261,27 @@ watch(
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-right: 0.35rem;
+}
+
+.favorite-bar__pill-hotkey {
+  font-size: 0.68rem;
+  color: var(--sc-text-secondary);
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 0 0.35rem;
+  line-height: 1.1;
+}
+
+.favorite-bar__pill-unread {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.1rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background-color: #f43f5e;
+  box-shadow: 0 0 0 2px var(--sc-bg-base, #fff);
 }
 
 .favorite-bar__placeholder {

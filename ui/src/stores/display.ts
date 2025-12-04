@@ -4,6 +4,15 @@ import { useChatStore } from './chat'
 export type DisplayLayout = 'bubble' | 'compact'
 export type DisplayPalette = 'day' | 'night'
 
+export interface FavoriteHotkey {
+  combo: string
+  key: string
+  ctrl?: boolean
+  meta?: boolean
+  alt?: boolean
+  shift?: boolean
+}
+
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
@@ -21,8 +30,10 @@ export interface DisplaySettings {
   messagePaddingX: number
   messagePaddingY: number
   sendShortcut: 'enter' | 'ctrlEnter'
+  enableIcToggleHotkey: boolean
   favoriteChannelBarEnabled: boolean
   favoriteChannelIdsByWorld: Record<string, string[]>
+  favoriteChannelHotkeysByWorld: Record<string, Record<string, FavoriteHotkey>>
   worldKeywordHighlightEnabled: boolean
   worldKeywordUnderlineOnly: boolean
   worldKeywordTooltipEnabled: boolean
@@ -116,6 +127,72 @@ const normalizeFavoriteMap = (value: any): Record<string, string[]> => {
   return result
 }
 
+const isPlainObject = (value: unknown): value is Record<string, any> =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
+
+const composeHotkeyComboLabel = (key: string, flags: { ctrl?: boolean; meta?: boolean; alt?: boolean; shift?: boolean }) => {
+  const parts: string[] = []
+  if (flags.ctrl) parts.push('Ctrl')
+  if (flags.meta) parts.push('Cmd')
+  if (flags.alt) parts.push('Alt')
+  if (flags.shift) parts.push('Shift')
+  parts.push(key.length === 1 ? key.toUpperCase() : key)
+  return parts.join('+')
+}
+
+const normalizeFavoriteHotkeyEntry = (value: any): FavoriteHotkey | null => {
+  if (!isPlainObject(value)) return null
+  const key = typeof value.key === 'string' ? value.key.trim() : ''
+  if (!key) return null
+  const flags = {
+    ctrl: value.ctrl ? true : undefined,
+    meta: value.meta ? true : undefined,
+    alt: value.alt ? true : undefined,
+    shift: value.shift ? true : undefined,
+  }
+  const combo =
+    typeof value.combo === 'string' && value.combo.trim()
+      ? value.combo.trim()
+      : composeHotkeyComboLabel(key, flags)
+  return {
+    combo,
+    key,
+    ctrl: flags.ctrl,
+    meta: flags.meta,
+    alt: flags.alt,
+    shift: flags.shift,
+  }
+}
+
+const normalizeFavoriteHotkeyMap = (value: any): Record<string, Record<string, FavoriteHotkey>> => {
+  if (!isPlainObject(value)) return {}
+  const result: Record<string, Record<string, FavoriteHotkey>> = {}
+  Object.entries(value).forEach(([worldId, entries]) => {
+    if (!isPlainObject(entries)) {
+      return
+    }
+    const normalizedWorld: Record<string, FavoriteHotkey> = {}
+    Object.entries(entries as Record<string, unknown>).forEach(([channelId, hotkey]) => {
+      const normalized = normalizeFavoriteHotkeyEntry(hotkey)
+      if (normalized) {
+        normalizedWorld[channelId] = normalized
+      }
+    })
+    if (Object.keys(normalizedWorld).length) {
+      result[worldId] = normalizedWorld
+    }
+  })
+  return result
+}
+
+const cloneDeepHotkeys = (value: Record<string, Record<string, FavoriteHotkey>>): Record<string, Record<string, FavoriteHotkey>> => {
+  const clone: Record<string, Record<string, FavoriteHotkey>> = {}
+  Object.entries(value || {}).forEach(([worldId, entries]) => {
+    clone[worldId] = { ...entries }
+  })
+  return clone
+}
+
 const WORLD_FALLBACK_KEY = '__global__'
 
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
@@ -135,8 +212,10 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   messagePaddingX: MESSAGE_PADDING_X_DEFAULT,
   messagePaddingY: MESSAGE_PADDING_Y_DEFAULT,
   sendShortcut: SEND_SHORTCUT_DEFAULT,
+  enableIcToggleHotkey: true,
   favoriteChannelBarEnabled: false,
   favoriteChannelIdsByWorld: {},
+  favoriteChannelHotkeysByWorld: {},
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
@@ -154,6 +233,9 @@ const loadSettings = (): DisplaySettings => {
     }
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
     const favoriteChannelIdsByWorld = normalizeFavoriteMap((parsed as any)?.favoriteChannelIdsByWorld)
+    const favoriteChannelHotkeysByWorld = normalizeFavoriteHotkeyMap(
+      (parsed as any)?.favoriteChannelHotkeysByWorld,
+    )
     if (Object.keys(favoriteChannelIdsByWorld).length === 0 && Array.isArray((parsed as any)?.favoriteChannelIds)) {
       const legacyIds = normalizeFavoriteIds((parsed as any)?.favoriteChannelIds)
       if (legacyIds.length) {
@@ -212,8 +294,10 @@ const loadSettings = (): DisplaySettings => {
         MESSAGE_PADDING_Y_MAX,
       ),
       sendShortcut: coerceSendShortcut((parsed as any)?.sendShortcut),
+      enableIcToggleHotkey: coerceBoolean((parsed as any)?.enableIcToggleHotkey ?? true),
       favoriteChannelBarEnabled: coerceBoolean(parsed.favoriteChannelBarEnabled),
       favoriteChannelIdsByWorld,
+      favoriteChannelHotkeysByWorld,
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
@@ -308,6 +392,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
       ? coerceSendShortcut((patch as any).sendShortcut)
       : base.sendShortcut,
+  enableIcToggleHotkey:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'enableIcToggleHotkey')
+      ? coerceBoolean((patch as any).enableIcToggleHotkey)
+      : base.enableIcToggleHotkey,
   favoriteChannelBarEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelBarEnabled')
       ? coerceBoolean(patch.favoriteChannelBarEnabled)
@@ -316,6 +404,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelIdsByWorld')
       ? normalizeFavoriteMap((patch as any).favoriteChannelIdsByWorld)
       : { ...base.favoriteChannelIdsByWorld },
+  favoriteChannelHotkeysByWorld:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'favoriteChannelHotkeysByWorld')
+      ? normalizeFavoriteHotkeyMap((patch as any).favoriteChannelHotkeysByWorld)
+      : cloneDeepHotkeys(base.favoriteChannelHotkeysByWorld),
   worldKeywordHighlightEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordHighlightEnabled')
       ? coerceBoolean((patch as any).worldKeywordHighlightEnabled)
@@ -349,6 +441,58 @@ export const useDisplayStore = defineStore('display', {
     getFavoriteChannelIds(worldId?: string) {
       const key = this.getCurrentWorldKey(worldId);
       return this.settings.favoriteChannelIdsByWorld[key] || [];
+    },
+    getFavoriteHotkeyMap(worldId?: string) {
+      const key = this.getCurrentWorldKey(worldId);
+      return this.settings.favoriteChannelHotkeysByWorld[key] || {};
+    },
+    getFavoriteHotkey(channelId: string, worldId?: string) {
+      const map = this.getFavoriteHotkeyMap(worldId);
+      return map[channelId];
+    },
+    setFavoriteHotkey(
+      channelId: string,
+      hotkey: FavoriteHotkey | null | undefined,
+      worldId?: string,
+    ): { success: boolean; reason?: 'conflict' | 'invalid'; conflictChannelId?: string } {
+      const id = typeof channelId === 'string' ? channelId.trim() : '';
+      if (!id) {
+        return { success: false, reason: 'invalid' };
+      }
+      const key = this.getCurrentWorldKey(worldId);
+      const normalized = hotkey ? normalizeFavoriteHotkeyEntry(hotkey) : null;
+      if (hotkey && !normalized) {
+        return { success: false, reason: 'invalid' };
+      }
+      const existingWorld = this.settings.favoriteChannelHotkeysByWorld[key] || {};
+      if (normalized) {
+        const conflict = Object.entries(existingWorld).find(
+          ([otherId, entry]) => otherId !== id && entry.combo === normalized.combo,
+        );
+        if (conflict) {
+          return { success: false, reason: 'conflict', conflictChannelId: conflict[0] };
+        }
+      }
+      const nextWorld: Record<string, FavoriteHotkey> = { ...existingWorld };
+      if (normalized) {
+        nextWorld[id] = normalized;
+      } else {
+        delete nextWorld[id];
+      }
+      if (Object.keys(nextWorld).length === 0) {
+        const { [key]: _removed, ...rest } = this.settings.favoriteChannelHotkeysByWorld;
+        this.settings.favoriteChannelHotkeysByWorld = rest;
+      } else {
+        this.settings.favoriteChannelHotkeysByWorld = {
+          ...this.settings.favoriteChannelHotkeysByWorld,
+          [key]: nextWorld,
+        };
+      }
+      this.persist();
+      return { success: true };
+    },
+    clearFavoriteHotkey(channelId: string, worldId?: string) {
+      this.setFavoriteHotkey(channelId, null, worldId);
     },
     setFavoriteChannelIds(ids: string[], worldId?: string) {
       const key = this.getCurrentWorldKey(worldId);
@@ -385,10 +529,31 @@ export const useDisplayStore = defineStore('display', {
         ...this.settings.favoriteChannelIdsByWorld,
         [key]: next,
       };
+      this.clearFavoriteHotkey(id, worldId);
       this.persist();
     },
     reorderFavoriteChannels(nextOrder: string[], worldId?: string) {
       this.setFavoriteChannelIds(nextOrder, worldId);
+    },
+    pruneFavoriteHotkeys(allowedIds: string[], worldId?: string) {
+      const key = this.getCurrentWorldKey(worldId);
+      const current = this.settings.favoriteChannelHotkeysByWorld[key];
+      if (!current) return;
+      const allowed = new Set(allowedIds);
+      const nextEntries = Object.entries(current).filter(([channelId]) => allowed.has(channelId));
+      if (nextEntries.length === Object.keys(current).length) {
+        return;
+      }
+      if (nextEntries.length === 0) {
+        const { [key]: _removed, ...rest } = this.settings.favoriteChannelHotkeysByWorld;
+        this.settings.favoriteChannelHotkeysByWorld = rest;
+      } else {
+        this.settings.favoriteChannelHotkeysByWorld = {
+          ...this.settings.favoriteChannelHotkeysByWorld,
+          [key]: Object.fromEntries(nextEntries),
+        };
+      }
+      this.persist();
     },
     syncFavoritesWithChannels(availableIds: string[], worldId?: string) {
       const key = this.getCurrentWorldKey(worldId);
@@ -408,6 +573,7 @@ export const useDisplayStore = defineStore('display', {
         ...this.settings.favoriteChannelIdsByWorld,
         [key]: filtered,
       };
+      this.pruneFavoriteHotkeys(filtered, worldId);
       this.persist();
     },
     updateSettings(patch: Partial<DisplaySettings>) {

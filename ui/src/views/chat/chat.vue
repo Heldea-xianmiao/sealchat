@@ -852,6 +852,7 @@ const toggleWideInputMode = () => {
   nextTick(() => textInputRef.value?.focus?.());
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
+const icHotkeyEnabled = computed(() => display.settings.enableIcToggleHotkey !== false);
 
 type SelectionRange = { start: number; end: number };
 
@@ -6290,6 +6291,21 @@ const keyDown = function (e: KeyboardEvent) {
 
   if (e.key === 'Escape' && isEditing.value) {
     cancelEditing();
+    e.preventDefault();
+    return;
+  }
+
+  if (
+    e.key === 'Escape' &&
+    icHotkeyEnabled.value &&
+    !isEditing.value &&
+    !dragState.activeId &&
+    !whisperPanelVisible.value
+  ) {
+    const nextMode: 'ic' | 'ooc' = inputIcMode.value === 'ic' ? 'ooc' : 'ic';
+    inputIcMode.value = nextMode;
+    emitTypingPreview();
+    message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
     e.preventDefault();
     return;
   }

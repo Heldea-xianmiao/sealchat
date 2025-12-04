@@ -37,13 +37,14 @@ watch(
     draft.bubbleGap = value.bubbleGap
     draft.compactBubbleGap = value.compactBubbleGap
     draft.paragraphSpacing = value.paragraphSpacing
-    draft.messagePaddingX = value.messagePaddingX
-    draft.messagePaddingY = value.messagePaddingY
-    draft.sendShortcut = value.sendShortcut
-    syncFavoriteBar(value)
-    draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
-    draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
-    draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
+  draft.messagePaddingX = value.messagePaddingX
+  draft.messagePaddingY = value.messagePaddingY
+  draft.sendShortcut = value.sendShortcut
+  draft.enableIcToggleHotkey = value.enableIcToggleHotkey
+  syncFavoriteBar(value)
+  draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
+  draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
+  draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
   },
   { deep: true, immediate: true },
 )
@@ -366,6 +367,19 @@ const handleConfirm = () => emit('save', { ...draft })
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">场内/场外快捷键</p>
+            <p class="section-desc">开启后，可在输入框中按 ESC 快速切换 IC/OOC</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.enableIcToggleHotkey">
+          <template #checked>快捷键开启</template>
+          <template #unchecked>快捷键关闭</template>
+        </n-switch>
       </section>
 
       <section class="display-settings__section">
