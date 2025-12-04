@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useDisplayStore, FAVORITE_CHANNEL_LIMIT } from '@/stores/display'
+import type { FavoriteHotkey } from '@/stores/display'
 import type { SChannel } from '@/types'
 import { useMessage } from 'naive-ui'
 import { Plus as PlusIcon, Trash as TrashIcon, Star as StarIcon } from '@vicons/tabler'
+import { useEventListener } from '@vueuse/core'
+import { buildHotkeyDescriptor, formatHotkeyCombo } from '@/utils/hotkey'
 
 interface Props {
   show: boolean
@@ -20,6 +23,9 @@ const display = useDisplayStore()
 const message = useMessage()
 
 const selectedChannelId = ref<string | null>(null)
+const newFavoriteHotkey = ref<FavoriteHotkey | null>(null)
+const shortcutRecordingTarget = ref<{ type: 'existing' | 'new'; channelId?: string } | null>(null)
+let stopShortcutListener: (() => void) | null = null
 
 const flattenChannels = (channels?: SChannel[]): SChannel[] => {
   if (!channels || channels.length === 0) return []
@@ -47,6 +53,9 @@ const allChannels = computed<SChannel[]>(() => {
 
 const currentWorldId = computed(() => chat.currentWorldId || undefined)
 const favoriteIds = computed(() => display.getFavoriteChannelIds(currentWorldId.value))
+const favoriteHotkeyMap = computed<Record<string, FavoriteHotkey>>(
+  () => display.getFavoriteHotkeyMap(currentWorldId.value),
+)
 
 const favoriteDataReady = computed(() => {
   const worldId = currentWorldId.value
@@ -66,6 +75,7 @@ const favoriteDetails = computed(() =>
   favoriteIds.value.map((id) => ({
     id,
     channel: allChannels.value.find((channel) => channel.id === id) ?? null,
+    hotkey: favoriteHotkeyMap.value[id] || null,
   })),
 )
 
@@ -76,7 +86,8 @@ const hasChannelsAvailable = computed(() =>
 )
 
 const handleAddFavorite = () => {
-  if (!selectedChannelId.value) {
+  const channelId = selectedChannelId.value
+  if (!channelId) {
     message.warning('请选择要收藏的频道')
     return
   }
@@ -84,7 +95,20 @@ const handleAddFavorite = () => {
     message.error('已达到收藏上限')
     return
   }
-  display.addFavoriteChannel(selectedChannelId.value, currentWorldId.value)
+  display.addFavoriteChannel(channelId, currentWorldId.value)
+  if (newFavoriteHotkey.value) {
+    const result = display.setFavoriteHotkey(channelId, newFavoriteHotkey.value, currentWorldId.value)
+    if (!result.success) {
+      if (result.reason === 'conflict') {
+        message.error('该快捷键已被其他频道使用')
+      } else {
+        message.error('快捷键记录失败，请重试')
+      }
+    } else {
+      message.success('快捷键已记录')
+      newFavoriteHotkey.value = null
+    }
+  }
   selectedChannelId.value = null
   message.success('已添加到收藏')
 }
@@ -92,6 +116,77 @@ const handleAddFavorite = () => {
 const handleRemoveFavorite = (id: string) => {
   display.removeFavoriteChannel(id, currentWorldId.value)
   message.success('已从收藏中移除')
+}
+
+const stopShortcutRecording = () => {
+  stopShortcutListener?.()
+  stopShortcutListener = null
+  shortcutRecordingTarget.value = null
+}
+
+const applyRecordedHotkey = (channelId: string, hotkey: FavoriteHotkey) => {
+  const result = display.setFavoriteHotkey(channelId, hotkey, currentWorldId.value)
+  if (!result.success) {
+    if (result.reason === 'conflict') {
+      message.error('该快捷键已被其他频道使用')
+    } else {
+      message.error('快捷键设置失败')
+    }
+    return false
+  }
+  message.success('快捷键已更新')
+  return true
+}
+
+const handleShortcutCapture = (event: KeyboardEvent) => {
+  if (!shortcutRecordingTarget.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'Escape' && !event.shiftKey) {
+    stopShortcutRecording()
+    message.info('已取消快捷键录制')
+    return
+  }
+  const descriptor = buildHotkeyDescriptor(event)
+  if (!descriptor) {
+    message.warning('请按下包含 Ctrl/Cmd/Alt 的组合键')
+    return
+  }
+  const target = shortcutRecordingTarget.value
+  if (target.type === 'existing' && target.channelId) {
+    const success = applyRecordedHotkey(target.channelId, descriptor)
+    if (success) {
+      stopShortcutRecording()
+    }
+    return
+  }
+  if (target.type === 'new') {
+    newFavoriteHotkey.value = descriptor
+    message.success(`已记录 ${descriptor.combo}`)
+    stopShortcutRecording()
+  }
+}
+
+const beginShortcutRecording = (target: { type: 'existing' | 'new'; channelId?: string }) => {
+  stopShortcutRecording()
+  shortcutRecordingTarget.value = target
+  stopShortcutListener = useEventListener(window, 'keydown', handleShortcutCapture, {
+    capture: true,
+    passive: false,
+  })
+  message.info('请按下要绑定的组合键，按 ESC 退出')
+}
+
+const clearFavoriteHotkey = (channelId: string) => {
+  display.clearFavoriteHotkey(channelId, currentWorldId.value)
+  message.success('已清除快捷键')
+}
+
+const clearPendingHotkey = () => {
+  if (newFavoriteHotkey.value) {
+    newFavoriteHotkey.value = null
+    message.success('已清除待添加快捷键')
+  }
 }
 
 const handleToggleBar = (value: boolean) => {
@@ -118,9 +213,15 @@ watch(
   (visible) => {
     if (!visible) {
       selectedChannelId.value = null
+      newFavoriteHotkey.value = null
+      stopShortcutRecording()
     }
   },
 )
+
+onBeforeUnmount(() => {
+  stopShortcutRecording()
+})
 </script>
 
 <template>
@@ -146,6 +247,16 @@ watch(
       </n-switch>
     </section>
 
+    <n-alert
+      v-if="shortcutRecordingTarget"
+      type="info"
+      size="small"
+      :bordered="false"
+      class="favorite-manager__section"
+    >
+      正在录制快捷键，按 ESC 取消。
+    </n-alert>
+
     <section class="favorite-manager__section">
       <header>
         <div class="section-title">
@@ -165,6 +276,28 @@ watch(
               <p class="favorite-manager__item-desc">
                 {{ item.channel ? `ID：${item.channel.id}` : '该频道可能已删除或不可访问' }}
               </p>
+              <div class="favorite-manager__shortcut">
+                <span class="favorite-manager__shortcut-label">
+                  快捷键：{{ formatHotkeyCombo(item.hotkey) || '未设置' }}
+                </span>
+                <div class="favorite-manager__shortcut-actions">
+                  <n-button
+                    text
+                    size="tiny"
+                    @click="beginShortcutRecording({ type: 'existing', channelId: item.id })"
+                  >
+                    录制
+                  </n-button>
+                  <n-button
+                    text
+                    size="tiny"
+                    :disabled="!item.hotkey"
+                    @click="clearFavoriteHotkey(item.id)"
+                  >
+                    清除
+                  </n-button>
+                </div>
+              </div>
             </div>
             <n-button text size="small" type="error" @click="handleRemoveFavorite(item.id)">
               <template #icon>
@@ -202,6 +335,26 @@ watch(
           </template>
           添加
         </n-button>
+      </div>
+      <div class="favorite-manager__shortcut-new">
+        <div>
+          <span class="favorite-manager__shortcut-label">
+            预设快捷键：{{ formatHotkeyCombo(newFavoriteHotkey) || '未设置' }}
+          </span>
+          <p class="favorite-manager__shortcut-desc">快捷键需包含 Ctrl/Cmd/Alt 中至少一个按键</p>
+        </div>
+        <div class="favorite-manager__shortcut-actions">
+          <n-button
+            text
+            size="small"
+            @click="beginShortcutRecording({ type: 'new' })"
+          >
+            录制
+          </n-button>
+          <n-button text size="small" :disabled="!newFavoriteHotkey" @click="clearPendingHotkey">
+            清除
+          </n-button>
+        </div>
       </div>
       <n-alert
         v-if="!hasChannelsAvailable"
@@ -257,8 +410,9 @@ watch(
 
 .favorite-manager__item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.6rem 0.4rem;
   border-bottom: 1px solid var(--sc-border-soft, rgba(148, 163, 184, 0.2));
 }
@@ -270,6 +424,7 @@ watch(
 .favorite-manager__item-meta {
   display: flex;
   flex-direction: column;
+  gap: 0.4rem;
 }
 
 .favorite-manager__item-name {
@@ -280,6 +435,43 @@ watch(
 .favorite-manager__item-desc {
   margin: 0.2rem 0 0;
   font-size: 0.8rem;
+  color: var(--sc-text-secondary);
+}
+
+.favorite-manager__shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.favorite-manager__shortcut-label {
+  font-size: 0.85rem;
+  color: var(--sc-text-primary);
+}
+
+.favorite-manager__shortcut-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.favorite-manager__shortcut-new {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+  border: 1px dashed var(--sc-border-soft, rgba(148, 163, 184, 0.5));
+  border-radius: 6px;
+}
+
+.favorite-manager__shortcut-desc {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
   color: var(--sc-text-secondary);
 }
 
