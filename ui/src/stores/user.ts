@@ -65,10 +65,14 @@ export const useUserStore = defineStore({
       return resp;
     },
 
-    async signIn(username: string, password: string) {
+    async signIn(payload: { username: string; password: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
       // 在此处进行用户鉴权操作，获取 accessToken
       const resp = await api.post('api/v1/user-signin', {
-        username, password
+        username: payload.username,
+        password: payload.password,
+        captchaId: payload.captchaId,
+        captchaValue: payload.captchaValue,
+        turnstileToken: payload.turnstileToken,
       })
 
       const data = resp.data as { token: string, message: string };

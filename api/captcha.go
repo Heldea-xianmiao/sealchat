@@ -2,19 +2,30 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"sealchat/model"
+	"sealchat/utils"
 )
+
+func captchaSceneFromCtx(c *fiber.Ctx) utils.CaptchaScene {
+	scene := strings.TrimSpace(strings.ToLower(c.Query("scene")))
+	if scene == string(utils.CaptchaSceneSignin) {
+		return utils.CaptchaSceneSignin
+	}
+	return utils.CaptchaSceneSignup
+}
 
 // CaptchaNew 生成新的验证码
 // GET /api/v1/captcha/new
 func CaptchaNew(c *fiber.Ctx) error {
-	// 检查是否启用本地验证码
-	if appConfig.Captcha.Mode != "local" {
+	scene := captchaSceneFromCtx(c)
+	conf := appConfig.Captcha.Target(scene)
+	if conf.Mode != utils.CaptchaModeLocal {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{
-			"message": "本地验证码未启用",
+			"message": "当前场景未启用本地验证码",
 		})
 	}
 
@@ -27,8 +38,7 @@ func CaptchaNew(c *fiber.Ctx) error {
 // CaptchaImage 获取验证码图片
 // GET /api/v1/captcha/:id.png
 func CaptchaImage(c *fiber.Ctx) error {
-	// 检查是否启用本地验证码
-	if appConfig.Captcha.Mode != "local" {
+	if !appConfig.Captcha.HasLocalEnabled() {
 		return c.Status(http.StatusNotFound).SendString("本地验证码未启用")
 	}
 
@@ -47,17 +57,18 @@ func CaptchaImage(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
-	
+
 	return c.Send(imageData)
 }
 
 // CaptchaReload 刷新验证码
 // GET /api/v1/captcha/:id/reload
 func CaptchaReload(c *fiber.Ctx) error {
-	// 检查是否启用本地验证码
-	if appConfig.Captcha.Mode != "local" {
+	scene := captchaSceneFromCtx(c)
+	conf := appConfig.Captcha.Target(scene)
+	if conf.Mode != utils.CaptchaModeLocal {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{
-			"message": "本地验证码未启用",
+			"message": "当前场景未启用本地验证码",
 		})
 	}
 

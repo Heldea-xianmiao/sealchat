@@ -21,6 +21,8 @@ let turnstileScriptPromise: Promise<void> | null = null;
 
 const userStore = useUserStore();
 
+const CAPTCHA_SCENE = 'signup';
+
 const form = reactive({
   username: '',
   password: '',
@@ -53,12 +55,12 @@ const usernameError = computed(() => {
 
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
-const captchaMode = computed(() => config.value?.captcha?.mode ?? 'off');
+const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) {
     return '';
   }
-  return `${urlBase}/api/v1/captcha/${captchaId.value}.png?ts=${captchaImageSeed.value}`;
+  return `${urlBase}/api/v1/captcha/${captchaId.value}.png?scene=${CAPTCHA_SCENE}&ts=${captchaImageSeed.value}`;
 });
 
 const ensureTurnstileScript = async () => {
@@ -106,7 +108,7 @@ const fetchCaptcha = async () => {
   captchaLoading.value = true;
   captchaError.value = '';
   try {
-    const resp = await api.get<{ id: string }>('api/v1/captcha/new');
+    const resp = await api.get<{ id: string }>('api/v1/captcha/new', { params: { scene: CAPTCHA_SCENE } });
     captchaId.value = resp.data.id;
     captchaInput.value = '';
     captchaImageSeed.value = Date.now();
@@ -129,7 +131,7 @@ const reloadCaptchaImage = async () => {
   captchaLoading.value = true;
   captchaError.value = '';
   try {
-    await api.get(`api/v1/captcha/${captchaId.value}/reload`);
+    await api.get(`api/v1/captcha/${captchaId.value}/reload`, { params: { scene: CAPTCHA_SCENE } });
     captchaImageSeed.value = Date.now();
     captchaInput.value = '';
   } catch (err) {
@@ -165,7 +167,8 @@ const renderTurnstileWidget = async () => {
   try {
     await ensureTurnstileScript();
     await nextTick();
-    const siteKey = config.value?.captcha?.turnstile?.siteKey?.trim();
+    const siteKey = config.value?.captcha?.signup?.turnstile?.siteKey?.trim()
+      || config.value?.captcha?.turnstile?.siteKey?.trim();
     if (!siteKey) {
       turnstileError.value = '未配置 Turnstile siteKey';
       return;
@@ -201,7 +204,7 @@ const renderTurnstileWidget = async () => {
 };
 
 watch(
-  () => config.value?.captcha?.mode,
+  () => captchaMode.value,
   (mode) => {
     if (!mode || mode === 'off') {
       resetLocalCaptchaState();

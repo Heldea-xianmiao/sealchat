@@ -64,8 +64,15 @@ export interface TurnstileConfig {
   secretKey?: string;
 }
 
+export interface CaptchaTargetConfig {
+  mode?: 'off' | 'local' | 'turnstile';
+  turnstile?: TurnstileConfig;
+}
+
 export interface CaptchaConfig {
-  mode: 'off' | 'local' | 'turnstile';
+  signup?: CaptchaTargetConfig;
+  signin?: CaptchaTargetConfig;
+  mode?: 'off' | 'local' | 'turnstile';
   turnstile?: TurnstileConfig;
 }
 
