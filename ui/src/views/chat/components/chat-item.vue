@@ -585,6 +585,7 @@ onBeforeUnmount(() => {
   }
   destroyImageViewer();
   keywordTooltip.hide()
+  keywordTooltip.destroy()
 });
 
 const nick = computed(() => {
