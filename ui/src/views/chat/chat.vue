@@ -3979,12 +3979,18 @@ const scheduleHistoryAutoRestore = () => {
   pendingHistoryRestoreChannelKey.value = String(channelId);
 };
 
+interface HistoryImageInfo {
+  markerId: string;
+  attachmentId: string;
+}
+
 interface InputHistoryEntry {
   id: string;
   channelKey: string;
   mode: 'plain' | 'rich';
   content: string;
   createdAt: number;
+  images?: HistoryImageInfo[];
 }
 
 type HistoryStore = Record<string, InputHistoryEntry[]>;
@@ -4099,7 +4105,17 @@ const normalizeHistoryEntries = (entries: any[]): InputHistoryEntry[] => {
       const createdAt = typeof entry.createdAt === 'number' ? entry.createdAt : Date.now();
       const id = typeof entry.id === 'string' ? entry.id : nanoid();
       const channelKey = typeof entry.channelKey === 'string' ? entry.channelKey : currentChannelKey.value;
-      return { id, channelKey, mode, content, createdAt } as InputHistoryEntry;
+      // 解析图片信息
+      let images: HistoryImageInfo[] | undefined;
+      if (Array.isArray(entry.images)) {
+        images = entry.images
+          .filter((img: any) => img && typeof img.markerId === 'string' && typeof img.attachmentId === 'string')
+          .map((img: any) => ({ markerId: img.markerId, attachmentId: img.attachmentId }));
+        if (images.length === 0) {
+          images = undefined;
+        }
+      }
+      return { id, channelKey, mode, content, createdAt, images } as InputHistoryEntry;
     })
     .filter((entry): entry is InputHistoryEntry => !!entry);
 };
@@ -4151,6 +4167,20 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   return !isRichContentEmpty(content);
 };
 
+// 从当前 inlineImages Map 中提取图片信息用于历史保存
+const collectCurrentImageInfo = (): HistoryImageInfo[] => {
+  const images: HistoryImageInfo[] = [];
+  inlineImages.forEach((draft, markerId) => {
+    if (draft.status === 'uploaded' && draft.attachmentId) {
+      const attachmentId = draft.attachmentId.startsWith('id:')
+        ? draft.attachmentId.slice(3)
+        : draft.attachmentId;
+      images.push({ markerId, attachmentId });
+    }
+  });
+  return images;
+};
+
 const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { force?: boolean } = {}): boolean => {
   if (!isContentMeaningful(mode, content)) {
     return false;
@@ -4169,12 +4199,17 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   const store = readHistoryStore();
   const existing = normalizeHistoryEntries(store[channelKey] || []);
   const filtered = existing.filter((entry) => buildHistorySignature(entry.mode, entry.content) !== signature);
+  
+  // 提取当前图片信息
+  const images = mode === 'plain' ? collectCurrentImageInfo() : undefined;
+  
   const newEntry: InputHistoryEntry = {
     id: nanoid(),
     channelKey,
     mode,
     content,
     createdAt: Date.now(),
+    images: images?.length ? images : undefined,
   };
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
@@ -4194,9 +4229,14 @@ const getHistoryPreview = (entry: InputHistoryEntry) => {
   try {
     if (entry.mode === 'rich' && isTipTapJson(entry.content)) {
       const plain = tiptapJsonToPlainText(entry.content).replace(/\s+/g, ' ').trim();
-      return plain;
+      return plain || '[富文本内容]';
     }
-    return contentUnescape(entry.content).replace(/\s+/g, ' ').trim();
+    // 将图片标记替换为友好的显示文本
+    let preview = contentUnescape(entry.content)
+      .replace(/\[\[图片:[^\]]+\]\]/g, '[图片]')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return preview || (entry.images?.length ? '[图片]' : '[空内容]');
   } catch (e) {
     console.warn('生成历史预览失败', e);
     return entry.mode === 'rich' ? '[富文本内容]' : entry.content;
@@ -4246,13 +4286,42 @@ const restoreHistoryEntry = (entryId: string) => {
   proceed();
 };
 
+// 从历史记录中恢复图片信息到 inlineImages Map
+const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
+  if (entry.mode !== 'plain' || !entry.images?.length) {
+    return;
+  }
+  // 检查内容中包含哪些图片标记
+  const contentMarkers = collectInlineMarkerIds(entry.content);
+  
+  // 只恢复内容中存在的图片标记
+  entry.images.forEach((imageInfo) => {
+    if (contentMarkers.has(imageInfo.markerId) && !inlineImages.has(imageInfo.markerId)) {
+      const attachmentId = imageInfo.attachmentId.startsWith('id:')
+        ? imageInfo.attachmentId
+        : `id:${imageInfo.attachmentId}`;
+      const record: InlineImageDraft = reactive({
+        id: imageInfo.markerId,
+        token: `[[图片:${imageInfo.markerId}]]`,
+        status: 'uploaded',
+        attachmentId: attachmentId.slice(3), // 存储时不带 id: 前缀
+      });
+      inlineImages.set(imageInfo.markerId, record);
+    }
+  });
+};
+
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
     inputMode.value = entry.mode;
     suspendInlineSync = true;
     textToSend.value = entry.content;
     suspendInlineSync = false;
+    
+    // 恢复图片信息
+    restoreImagesFromHistory(entry);
     syncInlineMarkersWithText(entry.content);
+    
     markAutoRestoreEntry(currentChannelKey.value, entry.id);
     if (!options?.silent) {
       message.success('已恢复历史输入');
