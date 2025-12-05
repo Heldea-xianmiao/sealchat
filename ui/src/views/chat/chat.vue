@@ -48,18 +48,19 @@ import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcast
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings } from '@vicons/ionicons5';
+import { Settings, Close as CloseIcon } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
 import DOMPurify from 'dompurify';
-import type { DisplaySettings } from '@/stores/display';
+import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
+import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -289,6 +290,17 @@ watch(diceSettingsVisible, (visible) => {
   }
 });
 
+const handleGlobalOverlayToggle = (payload?: { source?: string; open?: boolean }) => {
+  if (!payload?.open) {
+    return;
+  }
+  diceTrayVisible.value = false;
+  diceSettingsVisible.value = false;
+  if (payload.source !== 'emoji-panel') {
+    emojiPopoverShow.value = false;
+  }
+};
+
 const ensureBotOptionsLoaded = async (force = false) => {
 	if (botOptionsLoading.value) {
 		return;
@@ -316,8 +328,10 @@ const handleBotListUpdated = async () => {
   }
 };
 chatEvent.on('bot-list-updated', handleBotListUpdated as any);
+chatEvent.on('global-overlay-toggle', handleGlobalOverlayToggle as any);
 onBeforeUnmount(() => {
   chatEvent.off('bot-list-updated', handleBotListUpdated as any);
+  chatEvent.off('global-overlay-toggle', handleGlobalOverlayToggle as any);
 });
 
 const refreshChannelBotSelection = async () => {
@@ -852,7 +866,13 @@ const toggleWideInputMode = () => {
   nextTick(() => textInputRef.value?.focus?.());
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
-const icHotkeyEnabled = computed(() => display.settings.enableIcToggleHotkey !== false);
+const icHotkeyEnabled = computed(() => {
+  const config = display.settings.toolbarHotkeys?.icToggle;
+  if (config) {
+    return config.enabled !== false;
+  }
+  return display.settings.enableIcToggleHotkey !== false;
+});
 
 type SelectionRange = { start: number; end: number };
 
@@ -929,7 +949,7 @@ watch(
   }
 );
 
-watch(emojiPopoverShow, (show) => {
+watch(emojiPopoverShow, (show, prevShow) => {
   if (!show) {
     isManagingEmoji.value = false;
     emojiSearchQuery.value = '';
@@ -938,6 +958,11 @@ watch(emojiPopoverShow, (show) => {
       syncEmojiPopoverPosition();
     });
     gallery.loadEmojiCollection();
+  }
+  if (show) {
+    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: true } as any);
+  } else if (prevShow) {
+    chatEvent.emit('global-overlay-toggle', { source: 'emoji-panel', open: false } as any);
   }
 });
 
@@ -6268,6 +6293,96 @@ const handleMentionSelect = () => {
   pauseKeydown.value = false;
 };
 
+const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+  'icToggle',
+  'whisper',
+  'upload',
+  'richMode',
+  'broadcast',
+  'emoji',
+  'wideInput',
+  'history',
+  'diceTray',
+];
+
+const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
+  icToggle: () => {
+    if (
+      !icHotkeyEnabled.value ||
+      isEditing.value ||
+      dragState.activeId ||
+      whisperPanelVisible.value
+    ) {
+      return false;
+    }
+    const nextMode: 'ic' | 'ooc' = inputIcMode.value === 'ic' ? 'ooc' : 'ic';
+    inputIcMode.value = nextMode;
+    emitTypingPreview();
+    message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
+    return true;
+  },
+  whisper: () => {
+    if (whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
+      closeWhisperPanel();
+      return true;
+    }
+    startWhisperSelection();
+    return true;
+  },
+  upload: () => {
+    doUpload();
+    return true;
+  },
+  richMode: () => {
+    toggleInputMode();
+    return true;
+  },
+  broadcast: () => {
+    toggleTypingPreview();
+    return true;
+  },
+  emoji: () => {
+    handleEmojiTriggerClick();
+    return true;
+  },
+  wideInput: () => {
+    toggleWideInputMode();
+    return true;
+  },
+  history: () => {
+    handleHistoryPopoverShow(!historyPopoverVisible.value);
+    return true;
+  },
+  diceTray: () => {
+    toggleDiceTray();
+    return true;
+  },
+};
+
+const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
+  const configs = display.settings.toolbarHotkeys;
+  for (const key of toolbarHotkeyOrder) {
+    const config = configs[key];
+    if (!config?.enabled || !config.hotkey) {
+      continue;
+    }
+    if (!isHotkeyMatchingEvent(event, config.hotkey)) {
+      continue;
+    }
+    const handler = toolbarHotkeyHandlers[key];
+    if (!handler) {
+      continue;
+    }
+    const result = handler();
+    if (result !== false) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return result !== false;
+  }
+  return false;
+};
+
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
@@ -6295,18 +6410,7 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (
-    e.key === 'Escape' &&
-    icHotkeyEnabled.value &&
-    !isEditing.value &&
-    !dragState.activeId &&
-    !whisperPanelVisible.value
-  ) {
-    const nextMode: 'ic' | 'ooc' = inputIcMode.value === 'ic' ? 'ooc' : 'ic';
-    inputIcMode.value = nextMode;
-    emitTypingPreview();
-    message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
-    e.preventDefault();
+  if (handleToolbarHotkeyEvent(e)) {
     return;
   }
 
@@ -7087,16 +7191,28 @@ onBeforeUnmount(() => {
                     >
                       <div class="emoji-panel">
                         <div class="emoji-panel__header">
-                          <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                          <div class="emoji-panel__header-left">
+                            <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button text size="small" @click="handleEmojiManageClick">
+                                  <template #icon>
+                                    <n-icon :component="Settings" />
+                                  </template>
+                                </n-button>
+                              </template>
+                              表情管理
+                            </n-tooltip>
+                          </div>
                           <n-tooltip trigger="hover">
                             <template #trigger>
-                              <n-button text size="small" @click="handleEmojiManageClick">
+                              <n-button text size="small" @click="emojiPopoverShow = false">
                                 <template #icon>
-                                  <n-icon :component="Settings" />
+                                  <n-icon :component="CloseIcon" />
                                 </template>
                               </n-button>
                             </template>
-                            表情管理
+                            关闭
                           </n-tooltip>
                         </div>
 
@@ -7346,6 +7462,7 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
+                      @close="diceTrayVisible = false"
                     >
                       <template v-if="canManageChannelFeatures" #header-actions>
                         <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
@@ -9333,6 +9450,12 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.emoji-panel__header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .emoji-panel__title {
