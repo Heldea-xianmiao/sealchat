@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { reactive, watch, computed } from 'vue'
+import { reactive, watch, computed, ref } from 'vue'
 import { createDefaultDisplaySettings, type DisplaySettings } from '@/stores/display'
+import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 
 interface Props {
   visible: boolean
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
+const shortcutPanelVisible = ref(false)
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
   if (!source) return
@@ -45,6 +47,7 @@ watch(
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
+  draft.toolbarHotkeys = value.toolbarHotkeys
   },
   { deep: true, immediate: true },
 )
@@ -372,14 +375,13 @@ const handleConfirm = () => emit('save', { ...draft })
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">场内/场外快捷键</p>
-            <p class="section-desc">开启后，可在输入框中按 ESC 快速切换 IC/OOC</p>
+            <p class="section-title">快捷键管理</p>
+            <p class="section-desc">自定义工具栏各功能的快捷键绑定，包括场内/场外切换、悄悄话、上传等</p>
           </div>
         </header>
-        <n-switch v-model:value="draft.enableIcToggleHotkey">
-          <template #checked>快捷键开启</template>
-          <template #unchecked>快捷键关闭</template>
-        </n-switch>
+        <n-button secondary size="small" @click="shortcutPanelVisible = true">
+          配置快捷键
+        </n-button>
       </section>
 
       <section class="display-settings__section">
@@ -471,6 +473,7 @@ const handleConfirm = () => emit('save', { ...draft })
       </n-space>
     </div>
   </n-modal>
+  <ShortcutSettingsPanel v-model:show="shortcutPanelVisible" />
 </template>
 
 <style scoped lang="scss">

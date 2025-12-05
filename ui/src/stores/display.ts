@@ -13,6 +13,22 @@ export interface FavoriteHotkey {
   shift?: boolean
 }
 
+export interface ToolbarHotkeyConfig {
+  enabled: boolean
+  hotkey: FavoriteHotkey | null
+}
+
+export type ToolbarHotkeyKey =
+  | 'icToggle'
+  | 'whisper'
+  | 'upload'
+  | 'richMode'
+  | 'broadcast'
+  | 'emoji'
+  | 'wideInput'
+  | 'history'
+  | 'diceTray'
+
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
@@ -37,6 +53,7 @@ export interface DisplaySettings {
   worldKeywordHighlightEnabled: boolean
   worldKeywordUnderlineOnly: boolean
   worldKeywordTooltipEnabled: boolean
+  toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -195,6 +212,46 @@ const cloneDeepHotkeys = (value: Record<string, Record<string, FavoriteHotkey>>)
 
 const WORLD_FALLBACK_KEY = '__global__'
 
+const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyConfig> => ({
+  icToggle: {
+    enabled: true,
+    hotkey: { combo: 'Esc', key: 'Escape' },
+  },
+  whisper: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+W', key: 'W', ctrl: true },
+  },
+  upload: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+U', key: 'U', ctrl: true },
+  },
+  richMode: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+Shift+R', key: 'R', ctrl: true, shift: true },
+  },
+  broadcast: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+B', key: 'B', ctrl: true },
+  },
+  emoji: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+E', key: 'E', ctrl: true },
+  },
+  wideInput: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+L', key: 'L', ctrl: true },
+  },
+  history: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+H', key: 'H', ctrl: true },
+  },
+  diceTray: {
+    enabled: true,
+    hotkey: { combo: 'Ctrl+D', key: 'D', ctrl: true },
+  },
+})
+
+
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'day',
@@ -219,8 +276,38 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
+  toolbarHotkeys: createDefaultToolbarHotkeys(),
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
+
+const normalizeToolbarHotkeyConfig = (value: any): ToolbarHotkeyConfig => {
+  const enabled = typeof value?.enabled === 'boolean' ? value.enabled : true
+  const hotkey = value?.hotkey ? normalizeFavoriteHotkeyEntry(value.hotkey) : null
+  return { enabled, hotkey }
+}
+
+const normalizeToolbarHotkeys = (value: any): Record<ToolbarHotkeyKey, ToolbarHotkeyConfig> => {
+  const defaults = createDefaultToolbarHotkeys()
+  if (!value || typeof value !== 'object') {
+    return defaults
+  }
+  const result: Record<string, ToolbarHotkeyConfig> = {}
+  const keys: ToolbarHotkeyKey[] = [
+    'icToggle',
+    'whisper',
+    'upload',
+    'richMode',
+    'broadcast',
+    'emoji',
+    'wideInput',
+    'history',
+    'diceTray',
+  ]
+  keys.forEach((key) => {
+    result[key] = value[key] ? normalizeToolbarHotkeyConfig(value[key]) : defaults[key]
+  })
+  return result as Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
+}
 
 const loadSettings = (): DisplaySettings => {
   if (typeof window === 'undefined') {
@@ -236,6 +323,13 @@ const loadSettings = (): DisplaySettings => {
     const favoriteChannelHotkeysByWorld = normalizeFavoriteHotkeyMap(
       (parsed as any)?.favoriteChannelHotkeysByWorld,
     )
+    const toolbarHotkeys = normalizeToolbarHotkeys((parsed as any)?.toolbarHotkeys)
+    if ((parsed as any)?.enableIcToggleHotkey === false && toolbarHotkeys.icToggle) {
+      toolbarHotkeys.icToggle = {
+        ...toolbarHotkeys.icToggle,
+        enabled: false,
+      }
+    }
     if (Object.keys(favoriteChannelIdsByWorld).length === 0 && Array.isArray((parsed as any)?.favoriteChannelIds)) {
       const legacyIds = normalizeFavoriteIds((parsed as any)?.favoriteChannelIds)
       if (legacyIds.length) {
@@ -301,6 +395,7 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
+      toolbarHotkeys,
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -330,11 +425,11 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
   maxExportConcurrency:
     patch && Object.prototype.hasOwnProperty.call(patch, 'maxExportConcurrency')
       ? coerceNumberInRange(
-          patch.maxExportConcurrency,
-          CONCURRENCY_DEFAULT,
-          CONCURRENCY_MIN,
-          CONCURRENCY_MAX,
-        )
+        patch.maxExportConcurrency,
+        CONCURRENCY_DEFAULT,
+        CONCURRENCY_MIN,
+        CONCURRENCY_MAX,
+      )
       : base.maxExportConcurrency,
   fontSize:
     patch && Object.prototype.hasOwnProperty.call(patch, 'fontSize')
@@ -347,11 +442,11 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
   letterSpacing:
     patch && Object.prototype.hasOwnProperty.call(patch, 'letterSpacing')
       ? coerceFloatInRange(
-          patch.letterSpacing,
-          LETTER_SPACING_DEFAULT,
-          LETTER_SPACING_MIN,
-          LETTER_SPACING_MAX,
-        )
+        patch.letterSpacing,
+        LETTER_SPACING_DEFAULT,
+        LETTER_SPACING_MIN,
+        LETTER_SPACING_MAX,
+      )
       : base.letterSpacing,
   bubbleGap:
     patch && Object.prototype.hasOwnProperty.call(patch, 'bubbleGap')
@@ -364,29 +459,29 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
   paragraphSpacing:
     patch && Object.prototype.hasOwnProperty.call(patch, 'paragraphSpacing')
       ? coerceNumberInRange(
-          patch.paragraphSpacing,
-          PARAGRAPH_SPACING_DEFAULT,
-          PARAGRAPH_SPACING_MIN,
-          PARAGRAPH_SPACING_MAX,
-        )
+        patch.paragraphSpacing,
+        PARAGRAPH_SPACING_DEFAULT,
+        PARAGRAPH_SPACING_MIN,
+        PARAGRAPH_SPACING_MAX,
+      )
       : base.paragraphSpacing,
   messagePaddingX:
     patch && Object.prototype.hasOwnProperty.call(patch, 'messagePaddingX')
       ? coerceNumberInRange(
-          patch.messagePaddingX,
-          MESSAGE_PADDING_X_DEFAULT,
-          MESSAGE_PADDING_X_MIN,
-          MESSAGE_PADDING_X_MAX,
-        )
+        patch.messagePaddingX,
+        MESSAGE_PADDING_X_DEFAULT,
+        MESSAGE_PADDING_X_MIN,
+        MESSAGE_PADDING_X_MAX,
+      )
       : base.messagePaddingX,
   messagePaddingY:
     patch && Object.prototype.hasOwnProperty.call(patch, 'messagePaddingY')
       ? coerceNumberInRange(
-          patch.messagePaddingY,
-          MESSAGE_PADDING_Y_DEFAULT,
-          MESSAGE_PADDING_Y_MIN,
-          MESSAGE_PADDING_Y_MAX,
-        )
+        patch.messagePaddingY,
+        MESSAGE_PADDING_Y_DEFAULT,
+        MESSAGE_PADDING_Y_MIN,
+        MESSAGE_PADDING_Y_MAX,
+      )
       : base.messagePaddingY,
   sendShortcut:
     patch && Object.prototype.hasOwnProperty.call(patch, 'sendShortcut')
@@ -420,6 +515,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordTooltipEnabled')
       ? coerceBoolean((patch as any).worldKeywordTooltipEnabled)
       : base.worldKeywordTooltipEnabled,
+  toolbarHotkeys:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
+      ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
+      : base.toolbarHotkeys,
 })
 
 export const useDisplayStore = defineStore('display', {

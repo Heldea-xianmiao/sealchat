@@ -55,11 +55,12 @@ import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/t
 import { resolveAttachmentUrl, fetchAttachmentMetaById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/utils/dice';
 import DOMPurify from 'dompurify';
-import type { DisplaySettings } from '@/stores/display';
+import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
+import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -865,7 +866,13 @@ const toggleWideInputMode = () => {
   nextTick(() => textInputRef.value?.focus?.());
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
-const icHotkeyEnabled = computed(() => display.settings.enableIcToggleHotkey !== false);
+const icHotkeyEnabled = computed(() => {
+  const config = display.settings.toolbarHotkeys?.icToggle;
+  if (config) {
+    return config.enabled !== false;
+  }
+  return display.settings.enableIcToggleHotkey !== false;
+});
 
 type SelectionRange = { start: number; end: number };
 
@@ -6286,6 +6293,96 @@ const handleMentionSelect = () => {
   pauseKeydown.value = false;
 };
 
+const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
+  'icToggle',
+  'whisper',
+  'upload',
+  'richMode',
+  'broadcast',
+  'emoji',
+  'wideInput',
+  'history',
+  'diceTray',
+];
+
+const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
+  icToggle: () => {
+    if (
+      !icHotkeyEnabled.value ||
+      isEditing.value ||
+      dragState.activeId ||
+      whisperPanelVisible.value
+    ) {
+      return false;
+    }
+    const nextMode: 'ic' | 'ooc' = inputIcMode.value === 'ic' ? 'ooc' : 'ic';
+    inputIcMode.value = nextMode;
+    emitTypingPreview();
+    message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
+    return true;
+  },
+  whisper: () => {
+    if (whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
+      closeWhisperPanel();
+      return true;
+    }
+    startWhisperSelection();
+    return true;
+  },
+  upload: () => {
+    doUpload();
+    return true;
+  },
+  richMode: () => {
+    toggleInputMode();
+    return true;
+  },
+  broadcast: () => {
+    toggleTypingPreview();
+    return true;
+  },
+  emoji: () => {
+    handleEmojiTriggerClick();
+    return true;
+  },
+  wideInput: () => {
+    toggleWideInputMode();
+    return true;
+  },
+  history: () => {
+    handleHistoryPopoverShow(!historyPopoverVisible.value);
+    return true;
+  },
+  diceTray: () => {
+    toggleDiceTray();
+    return true;
+  },
+};
+
+const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
+  const configs = display.settings.toolbarHotkeys;
+  for (const key of toolbarHotkeyOrder) {
+    const config = configs[key];
+    if (!config?.enabled || !config.hotkey) {
+      continue;
+    }
+    if (!isHotkeyMatchingEvent(event, config.hotkey)) {
+      continue;
+    }
+    const handler = toolbarHotkeyHandlers[key];
+    if (!handler) {
+      continue;
+    }
+    const result = handler();
+    if (result !== false) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return result !== false;
+  }
+  return false;
+};
+
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
 
@@ -6313,18 +6410,7 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (
-    e.key === 'Escape' &&
-    icHotkeyEnabled.value &&
-    !isEditing.value &&
-    !dragState.activeId &&
-    !whisperPanelVisible.value
-  ) {
-    const nextMode: 'ic' | 'ooc' = inputIcMode.value === 'ic' ? 'ooc' : 'ic';
-    inputIcMode.value = nextMode;
-    emitTypingPreview();
-    message.success(nextMode === 'ic' ? '已切换至场内模式' : '已切换至场外模式');
-    e.preventDefault();
+  if (handleToolbarHotkeyEvent(e)) {
     return;
   }
 
