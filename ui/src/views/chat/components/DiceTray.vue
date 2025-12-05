@@ -1142,10 +1142,10 @@ const handleSaveDefault = () => {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border: 1px solid var(--sc-border-mute, rgba(148, 163, 184, 0.35));
   border-radius: 0.45rem;
   padding: 0.35rem;
-  background: rgba(248, 250, 252, 0.85);
+  background: var(--sc-bg-layer-strong, rgba(248, 250, 252, 0.85));
 }
 
 .dice-tray__history-roll {
@@ -1312,6 +1312,7 @@ const handleSaveDefault = () => {
 :global([data-display-palette='night']) .dice-tray__column {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--sc-fg-primary, #eee);
 }
 
 :global([data-display-palette='night']) .dice-tray__column--quick {
@@ -1344,6 +1345,12 @@ const handleSaveDefault = () => {
 
 :global([data-display-palette='night']) .dice-tray__history {
   border-top-color: rgba(255, 255, 255, 0.12);
+  color: var(--sc-fg-primary, #f8fafc);
+}
+
+:global([data-display-palette='night']) .dice-tray__history-card {
+  background: rgba(18, 24, 39, 0.65);
+  border-color: rgba(255, 255, 255, 0.16);
   color: var(--sc-fg-primary, #f8fafc);
 }
 
