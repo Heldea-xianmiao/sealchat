@@ -1641,9 +1641,12 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		}{Success: false}, nil
 	}
 
-	runes := []rune(data.Content)
-	if len(runes) > 500 {
-		data.Content = string(runes[:500])
+	// 富文本 JSON 不截断，否则会破坏 JSON 结构导致无法渲染
+	if !service.LooksLikeTipTapJSON(data.Content) {
+		runes := []rune(data.Content)
+		if len(runes) > 500 {
+			data.Content = string(runes[:500])
+		}
 	}
 
 	now := time.Now().UnixMilli()
