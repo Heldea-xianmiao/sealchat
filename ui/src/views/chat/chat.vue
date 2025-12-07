@@ -3680,7 +3680,7 @@ const removeSelfTypingPreview = () => {
   }
 };
 const syncSelfTypingPreview = () => {
-  if (!inputPreviewEnabled.value) {
+  if (!inputPreviewEnabled.value || isEditing.value) {
     removeSelfTypingPreview();
     return;
   }
@@ -5637,6 +5637,14 @@ watch([
   () => chat.curChannel?.id,
   () => activeIdentityForPreview.value?.id,
 ], () => {
+  syncSelfTypingPreview();
+});
+
+watch(isEditing, (editing) => {
+  if (editing) {
+    removeSelfTypingPreview();
+    return;
+  }
   syncSelfTypingPreview();
 });
 
