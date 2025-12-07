@@ -53,7 +53,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             break;
           case 'highlight':
             const bgColor = mark.attrs?.color || '#fef08a';
-            text = `<mark style="background-color: ${escapeHtml(bgColor)}">${text}</mark>`;
+            text = `<mark style="background-color: ${escapeHtml(bgColor)} !important">${text}</mark>`;
             break;
           case 'link':
             const href = mark.attrs?.href || '#';
@@ -62,7 +62,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             break;
           case 'textStyle':
             if (mark.attrs?.color) {
-              text = `<span style="color: ${escapeHtml(mark.attrs.color)}">${text}</span>`;
+              text = `<span style="color: ${escapeHtml(mark.attrs.color)} !important">${text}</span>`;
             }
             break;
         }
