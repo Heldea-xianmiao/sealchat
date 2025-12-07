@@ -777,6 +777,28 @@ defineExpose({
   min-height: 3rem;
   max-height: 12rem;
   overflow-y: auto;
+
+  /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 2px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+  }
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
 
 .tiptap-bubble-menu {
@@ -803,8 +825,6 @@ defineExpose({
   padding: 0.75rem 1rem;
   outline: none;
   min-height: 3rem;
-  max-height: 20rem;
-  overflow-y: auto;
   color: #1f2937; /* 日间模式默认文字颜色 */
 
   /* 基础文本样式 */
@@ -1039,6 +1059,19 @@ defineExpose({
 
 :root[data-display-palette='night'] .tiptap-content hr {
   border-top-color: #52525b;
+}
+
+/* 夜间模式滚动条样式 */
+:root[data-display-palette='night'] .tiptap-editor-wrapper {
+  &::-webkit-scrollbar-thumb {
+    background: rgba(161, 161, 170, 0.35);
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: rgba(161, 161, 170, 0.55);
+  }
+
+  scrollbar-color: rgba(161, 161, 170, 0.35) transparent;
 }
 
 :root[data-display-palette='night'] .tiptap-content a {
