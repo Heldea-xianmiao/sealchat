@@ -6,6 +6,7 @@ import { useUserStore } from '@/stores/user'
 import { api, urlBase } from '@/stores/_config'
 import { uploadImageAttachment } from '../composables/useAttachmentUploader'
 import { InfoCircle } from '@vicons/tabler'
+import type { SChannel } from '@/types'
 
 interface ParsedEntry {
   rawLine: string
@@ -93,6 +94,63 @@ const form = reactive({
   roleMapping: {} as Record<string, RoleMappingConfig>,
 })
 
+const selectedChannelFilters = ref<string[]>([])
+const currentWorldId = computed(() => props.worldId || chat.currentWorldId || '')
+
+const flattenChannels = (channels?: SChannel[]): SChannel[] => {
+  if (!channels || channels.length === 0) return []
+  const stack = [...channels]
+  const result: SChannel[] = []
+  while (stack.length) {
+    const node = stack.shift()
+    if (!node) continue
+    result.push(node)
+    if (node.children && node.children.length > 0) {
+      stack.unshift(...node.children)
+    }
+  }
+  return result
+}
+
+const getChannelLabel = (channel: SChannel) => {
+  if (!channel) return '未命名频道'
+  const base = channel.name || '未命名频道'
+  return channel.isPrivate ? `${base}（私密）` : base
+}
+
+const channelFilterOptions = computed(() => {
+  const worldId = currentWorldId.value
+  const worldTree =
+    (worldId && chat.channelTreeByWorld?.[worldId]) ||
+    chat.channelTree ||
+    []
+  const publicChannels = flattenChannels(worldTree as SChannel[])
+  return publicChannels
+    .filter(channel => Boolean(channel?.id) && !channel.isPrivate)
+    .map(channel => ({
+      label: getChannelLabel(channel),
+      value: channel.id!,
+    }))
+})
+
+watch(channelFilterOptions, (options) => {
+  const validIds = new Set(options.map(option => option.value))
+  const filtered = selectedChannelFilters.value.filter(id => validIds.has(id))
+  if (filtered.length !== selectedChannelFilters.value.length) {
+    selectedChannelFilters.value = filtered
+  }
+})
+
+watch(currentWorldId, () => {
+  selectedChannelFilters.value = []
+})
+
+const clearChannelFilters = () => {
+  if (selectedChannelFilters.value.length) {
+    selectedChannelFilters.value = []
+  }
+}
+
 // 预览配置
 const previewLimit = ref(20)
 
@@ -159,16 +217,37 @@ const memberOptions = computed(() => {
   return options
 })
 
+const matchIdentityFilter = (identity?: ReusableIdentity) => {
+  if (!identity) return false
+  if (!selectedChannelFilters.value.length) return true
+  if (!identity.channelId) return true
+  return selectedChannelFilters.value.includes(identity.channelId)
+}
+
 // 获取指定用户的可复用身份选项
 const getIdentityOptions = (userId: string) => {
   const identities = reusableIdentities.value[userId] || []
+  const filteredIdentities = selectedChannelFilters.value.length
+    ? identities.filter(matchIdentityFilter)
+    : identities
   return [
     { label: '创建新身份', value: '' },
-    ...identities.map(i => ({
+    ...filteredIdentities.map(i => ({
       label: i.displayName || '未命名',
       value: i.id,
     }))
   ]
+}
+
+const isIdentityFilteredOut = (userId: string) => {
+  if (!selectedChannelFilters.value.length) return false
+  const identities = reusableIdentities.value[userId] || []
+  if (!identities.length) return false
+  return !identities.some(matchIdentityFilter)
+}
+
+const hasIdentityCandidates = (userId: string) => {
+  return (reusableIdentities.value[userId] || []).length > 0
 }
 
 // 当用户变化时加载其可复用身份
@@ -312,6 +391,7 @@ const handleClose = () => {
   form.timeIncrement = 1000
   form.roleMapping = {}
   previewResult.value = null
+  selectedChannelFilters.value = []
 }
 
 const goToStep = (s: number) => {
@@ -530,6 +610,30 @@ const importConfig = async (e: Event) => {
         </label>
       </div>
 
+      <div class="channel-filter-bar">
+        <div class="channel-filter-label">筛选频道</div>
+        <n-select
+          v-model:value="selectedChannelFilters"
+          multiple
+          filterable
+          clearable
+          :options="channelFilterOptions"
+          max-tag-count="responsive"
+          placeholder="选择频道以过滤可复用身份"
+          class="channel-filter-select"
+        />
+        <n-button
+          v-if="selectedChannelFilters.length"
+          size="tiny"
+          text
+          type="primary"
+          class="channel-filter-clear"
+          @click="clearChannelFilters"
+        >
+          清除
+        </n-button>
+      </div>
+
       <div class="role-list">
         <div v-for="role in detectedRoles" :key="role" class="role-card">
           <div class="role-header">
@@ -593,12 +697,21 @@ const importConfig = async (e: Event) => {
                 @update:value="onUserChange(role, $event)"
               />
             </n-form-item>
-            <n-form-item v-if="getIdentityOptions(form.roleMapping[role].bindToUserId).length > 1" label="复用身份">
+            <n-form-item
+              v-if="hasIdentityCandidates(form.roleMapping[role].bindToUserId)"
+              label="复用身份"
+            >
               <n-select
                 v-model:value="form.roleMapping[role].reuseIdentityId"
                 :options="getIdentityOptions(form.roleMapping[role].bindToUserId)"
                 placeholder="选择复用已有身份"
               />
+              <template
+                v-if="isIdentityFilteredOut(form.roleMapping[role].bindToUserId)"
+                #feedback
+              >
+                当前筛选下没有可复用身份，清除筛选以查看更多频道身份。
+              </template>
             </n-form-item>
           </n-form>
         </div>
@@ -823,6 +936,24 @@ const importConfig = async (e: Event) => {
 
 .config-import-btn {
   cursor: pointer;
+}
+
+.channel-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.channel-filter-label {
+  font-size: 0.9rem;
+  color: var(--sc-text-caption, #475467);
+}
+
+.channel-filter-select {
+  flex: 1 1 240px;
+  min-width: 220px;
 }
 
 .role-list {
