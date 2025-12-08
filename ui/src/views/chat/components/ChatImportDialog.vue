@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { api, urlBase } from '@/stores/_config'
 import { uploadImageAttachment } from '../composables/useAttachmentUploader'
+import { InfoCircle } from '@vicons/tabler'
 
 interface ParsedEntry {
   rawLine: string
@@ -94,6 +95,9 @@ const form = reactive({
 
 // 预览配置
 const previewLimit = ref(20)
+
+// 正则帮助模态框
+const regexHelpVisible = ref(false)
 
 // 加载模板列表
 const loadTemplates = async () => {
@@ -483,7 +487,13 @@ const importConfig = async (e: Event) => {
           />
         </n-form-item>
 
-        <n-form-item label="自定义正则">
+        <n-form-item>
+          <template #label>
+            <span>自定义正则</span>
+            <n-button text size="tiny" class="regex-help-btn" @click="regexHelpVisible = true">
+              <n-icon :component="InfoCircle" size="16" />
+            </n-button>
+          </template>
           <n-input
             v-model:value="form.regexPattern"
             placeholder="留空使用模板，或输入自定义正则表达式"
@@ -693,6 +703,85 @@ const importConfig = async (e: Event) => {
       </n-space>
     </template>
   </n-modal>
+
+  <!-- 正则表达式帮助模态框 -->
+  <n-modal
+    v-model:show="regexHelpVisible"
+    preset="card"
+    title="正则表达式帮助"
+    style="width: 600px; max-width: 90vw;"
+    :auto-focus="false"
+  >
+    <n-scrollbar style="max-height: 60vh;">
+      <div class="regex-help-content">
+        <h4>正则表达式基础</h4>
+        <p>正则表达式需要包含<strong>捕获组</strong>来提取角色名和内容。使用圆括号 <code>()</code> 来定义捕获组。</p>
+
+        <n-divider />
+
+        <h4>常用范例</h4>
+        <n-table :bordered="false" size="small">
+          <thead>
+            <tr>
+              <th>格式</th>
+              <th>正则表达式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>[时间]&lt;角色&gt;内容</code></td>
+              <td><code>\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]\s*&lt;([^&gt;]+)&gt;\s*[:：]?\s*(.*)</code></td>
+            </tr>
+            <tr>
+              <td><code>HH:mm:ss&lt;角色&gt;内容</code></td>
+              <td><code>(\d{2}:\d{2}:\d{2})\s*&lt;([^&gt;]+)&gt;\s*[:：]?\s*(.*)</code></td>
+            </tr>
+            <tr>
+              <td><code>&lt;角色&gt;内容</code></td>
+              <td><code>&lt;([^&gt;]+)&gt;\s*[:：]?\s*(.*)</code></td>
+            </tr>
+            <tr>
+              <td><code>[角色] 内容</code></td>
+              <td><code>\[([^\]]+)\]\s*[:：]?\s*(.*)</code></td>
+            </tr>
+            <tr>
+              <td><code>角色：内容</code></td>
+              <td><code>^([^:：\s]+)\s*[:：]\s*(.+)</code></td>
+            </tr>
+            <tr>
+              <td><code>【角色】内容</code></td>
+              <td><code>【([^】]+)】\s*[:：]?\s*(.*)</code></td>
+            </tr>
+          </tbody>
+        </n-table>
+
+        <n-divider />
+
+        <h4>AI 提示词示例</h4>
+        <p>你可以使用以下提示词让 AI 帮你生成正则表达式：</p>
+        <n-card size="small" class="ai-prompt-example">
+          <pre>请帮我写一个正则表达式，用于解析以下格式的聊天记录：
+
+示例行：
+[粘贴你的日志示例]
+
+要求：
+1. 提取角色名到第一个捕获组
+2. 提取消息内容到第二个捕获组
+3. 如果有时间戳，提取到独立的捕获组
+4. 返回可直接在 JavaScript 中使用的正则表达式</pre>
+        </n-card>
+
+        <n-divider />
+
+        <h4>捕获组顺序</h4>
+        <ul>
+          <li><strong>有时间戳</strong>：组1=时间，组2=角色名，组3=内容</li>
+          <li><strong>无时间戳</strong>：组1=角色名，组2=内容</li>
+        </ul>
+      </div>
+    </n-scrollbar>
+  </n-modal>
 </template>
 
 <style lang="scss" scoped>
@@ -782,5 +871,48 @@ const importConfig = async (e: Event) => {
 
 .avatar-upload-btn {
   cursor: pointer;
+}
+
+.regex-help-btn {
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+.regex-help-content {
+  h4 {
+    margin: 0.5rem 0;
+    font-size: 1rem;
+  }
+
+  p {
+    margin: 0.5rem 0;
+    line-height: 1.6;
+  }
+
+  ul {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+  }
+
+  code {
+    background: var(--n-action-color);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+  }
+
+  .ai-prompt-example {
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+  }
 }
 </style>
