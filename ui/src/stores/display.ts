@@ -29,12 +29,16 @@ export type ToolbarHotkeyKey =
   | 'history'
   | 'diceTray'
 
+export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSeconds'
+
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
   showAvatar: boolean
   showInputPreview: boolean
   mergeNeighbors: boolean
+  alwaysShowTimestamp: boolean
+  timestampFormat: TimestampFormat
   maxExportMessages: number
   maxExportConcurrency: number
   fontSize: number
@@ -93,6 +97,17 @@ const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
 const SEND_SHORTCUT_DEFAULT: 'enter' | 'ctrlEnter' = 'enter'
 const coerceSendShortcut = (value?: string): 'enter' | 'ctrlEnter' => (value === 'ctrlEnter' ? 'ctrlEnter' : 'enter')
+const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
+const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
+const coerceTimestampFormat = (value?: string): TimestampFormat => {
+  if (typeof value === 'string') {
+    const normalized = value.trim() as TimestampFormat
+    if (TIMESTAMP_FORMAT_VALUES.includes(normalized)) {
+      return normalized
+    }
+  }
+  return TIMESTAMP_FORMAT_DEFAULT
+}
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
 const coercePalette = (value?: string): DisplayPalette => (value === 'night' ? 'night' : 'day')
@@ -258,6 +273,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showAvatar: true,
   showInputPreview: true,
   mergeNeighbors: true,
+  alwaysShowTimestamp: false,
+  timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
   maxExportConcurrency: CONCURRENCY_DEFAULT,
   fontSize: FONT_SIZE_DEFAULT,
@@ -342,6 +359,8 @@ const loadSettings = (): DisplaySettings => {
       showAvatar: coerceBoolean(parsed.showAvatar),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
+      alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
+      timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
       maxExportMessages: coerceNumberInRange(
         parsed.maxExportMessages,
         SLICE_LIMIT_DEFAULT,
@@ -418,6 +437,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
       : base.mergeNeighbors,
+  alwaysShowTimestamp:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'alwaysShowTimestamp')
+      ? coerceBoolean((patch as any)?.alwaysShowTimestamp)
+      : base.alwaysShowTimestamp,
+  timestampFormat:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'timestampFormat')
+      ? coerceTimestampFormat((patch as any)?.timestampFormat)
+      : base.timestampFormat,
   maxExportMessages:
     patch && Object.prototype.hasOwnProperty.call(patch, 'maxExportMessages')
       ? coerceNumberInRange(patch.maxExportMessages, SLICE_LIMIT_DEFAULT, SLICE_LIMIT_MIN, SLICE_LIMIT_MAX)
