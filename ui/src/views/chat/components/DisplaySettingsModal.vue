@@ -16,6 +16,12 @@ const emit = defineEmits<{
 
 const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 const shortcutPanelVisible = ref(false)
+const timestampFormatOptions = [
+  { label: '相对时间（2 分钟前）', value: 'relative' },
+  { label: '仅时间（14:35）', value: 'time' },
+  { label: '日期 + 时间（2024-05-30 14:35）', value: 'datetime' },
+  { label: '日期 + 时间（含秒）', value: 'datetimeSeconds' },
+]
 
 const syncFavoriteBar = (source?: DisplaySettings) => {
   if (!source) return
@@ -31,6 +37,8 @@ watch(
     draft.showAvatar = value.showAvatar
     draft.showInputPreview = value.showInputPreview
     draft.mergeNeighbors = value.mergeNeighbors
+    draft.alwaysShowTimestamp = value.alwaysShowTimestamp
+    draft.timestampFormat = value.timestampFormat
     draft.maxExportMessages = value.maxExportMessages
     draft.maxExportConcurrency = value.maxExportConcurrency
     draft.fontSize = value.fontSize
@@ -169,6 +177,29 @@ const handleConfirm = () => emit('save', { ...draft })
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
         </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">时间戳显示</p>
+            <p class="section-desc">默认悬停延迟显示，可切换为始终展示并选择格式</p>
+          </div>
+        </header>
+        <div class="timestamp-settings">
+          <n-switch v-model:value="draft.alwaysShowTimestamp">
+            <template #checked>始终显示时间</template>
+            <template #unchecked>悬停后显示</template>
+          </n-switch>
+          <n-select
+            v-model:value="draft.timestampFormat"
+            :options="timestampFormatOptions"
+            size="small"
+            :consistent-menu-width="false"
+            style="min-width: 220px"
+          />
+        </div>
+        <p class="control-desc control-desc--hint">鼠标移入消息约 2 秒后会临时显示时间戳。</p>
       </section>
 
       <section class="display-settings__section">
@@ -652,6 +683,13 @@ const handleConfirm = () => emit('save', { ...draft })
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.timestamp-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .keyword-preview {

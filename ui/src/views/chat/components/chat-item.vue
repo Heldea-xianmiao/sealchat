@@ -19,7 +19,7 @@ import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
 import 'viewerjs/dist/viewer.css';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
-import { useDisplayStore } from '@/stores/display'
+import { useDisplayStore, type TimestampFormat } from '@/stores/display'
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 
@@ -46,18 +46,28 @@ const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
 
-function timeFormat(time?: string) {
-  if (!time) return '未知';
-  // console.log('???', time, typeof time)
-  // return dayjs(time).format('MM-DD HH:mm:ss');
-  return dayjs(time).fromNow();
-}
-
 function timeFormat2(time?: string) {
   if (!time) return '未知';
   // console.log('???', time, typeof time)
   return dayjs(time).format('YYYY-MM-DD HH:mm:ss');
 }
+
+const timestampFormatPatterns: Record<Exclude<TimestampFormat, 'relative'>, string> = {
+  time: 'HH:mm',
+  datetime: 'YYYY-MM-DD HH:mm',
+  datetimeSeconds: 'YYYY-MM-DD HH:mm:ss',
+};
+
+const formatTimestampByPreference = (time?: string, format: TimestampFormat = 'datetimeSeconds') => {
+  if (!time) return '未知';
+  if (format === 'relative') {
+    return dayjs(time).fromNow();
+  }
+  const pattern = timestampFormatPatterns[format] || timestampFormatPatterns.datetimeSeconds;
+  return dayjs(time).format(pattern);
+};
+
+const TIMESTAMP_HOVER_DELAY = 2000;
 
 let hasImage = ref(false);
 const messageContentRef = ref<HTMLElement | null>(null);
@@ -283,10 +293,16 @@ const props = defineProps({
   },
 })
 
-const timeText = ref(timeFormat(props.item?.createdAt));
-const timeText2 = ref(timeFormat2(props.item?.createdAt));
-const editedTimeText = ref(props.item?.isEdited ? timeFormat(props.item?.updatedAt) : '');
-const editedTimeText2 = ref(props.item?.isEdited ? timeFormat2(props.item?.updatedAt) : '');
+const timestampTicker = ref(Date.now());
+const inlineTimestampText = computed(() => {
+  timestampTicker.value;
+  return formatTimestampByPreference(props.item?.createdAt, displayStore.settings.timestampFormat);
+});
+const tooltipTimestampText = computed(() => {
+  timestampTicker.value;
+  return timeFormat2(props.item?.createdAt);
+});
+const editedTimeText2 = computed(() => (props.item?.isEdited ? timeFormat2(props.item?.updatedAt) : ''));
 
 const getMemberDisplayName = (item: any) => item?.whisperMeta?.senderMemberName
   || item?.identity?.displayName
@@ -348,6 +364,53 @@ const contentClassList = computed(() => {
 
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const canEdit = computed(() => props.item?.user?.id === user.info.id);
+
+const hoverTimestampVisible = ref(false);
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+let timestampInterval: ReturnType<typeof setInterval> | null = null;
+
+const shouldForceTimestampVisible = computed(() => displayStore.settings.alwaysShowTimestamp || isMobileUa);
+const timestampShouldRender = computed(() => {
+  if (!props.showHeader || props.bodyOnly) {
+    return false;
+  }
+  if (!props.item?.createdAt) {
+    return false;
+  }
+  return shouldForceTimestampVisible.value || hoverTimestampVisible.value;
+});
+
+const clearHoverTimer = () => {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+  }
+};
+
+const handleTimestampHoverStart = () => {
+  if (shouldForceTimestampVisible.value || isMobileUa) {
+    return;
+  }
+  clearHoverTimer();
+  hoverTimer = setTimeout(() => {
+    hoverTimestampVisible.value = true;
+  }, TIMESTAMP_HOVER_DELAY);
+};
+
+const handleTimestampHoverEnd = () => {
+  if (shouldForceTimestampVisible.value || isMobileUa) {
+    return;
+  }
+  clearHoverTimer();
+  hoverTimestampVisible.value = false;
+};
+
+watch(shouldForceTimestampVisible, (value) => {
+  if (value) {
+    clearHoverTimer();
+  }
+  hoverTimestampVisible.value = false;
+});
 
 const inlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
 
@@ -543,13 +606,8 @@ onMounted(() => {
   applyDiceTone();
   ensureImageViewer();
 
-  setInterval(() => {
-    timeText.value = timeFormat(props.item?.createdAt);
-    timeText2.value = timeFormat2(props.item?.createdAt);
-    if (props.item?.isEdited) {
-      editedTimeText.value = timeFormat(props.item?.updatedAt);
-      editedTimeText2.value = timeFormat2(props.item?.updatedAt);
-    }
+  timestampInterval = setInterval(() => {
+    timestampTicker.value = Date.now();
   }, 10000);
 
   void applyKeywordHighlights()
@@ -584,6 +642,11 @@ onBeforeUnmount(() => {
     stopMessageLongPress();
     stopMessageLongPress = null;
   }
+  clearHoverTimer();
+  if (timestampInterval) {
+    clearInterval(timestampInterval);
+    timestampInterval = null;
+  }
   destroyImageViewer();
   keywordTooltip.hide()
   keywordTooltip.destroy()
@@ -605,19 +668,15 @@ const nick = computed(() => {
 
 const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
 
-watch(() => props.item?.updatedAt, () => {
-  if (props.item?.isEdited) {
-    editedTimeText.value = timeFormat(props.item?.updatedAt);
-    editedTimeText2.value = timeFormat2(props.item?.updatedAt);
-  }
-});
-
 </script>
 
 <template>
   <div v-if="item?.is_deleted" class="py-4 text-center text-gray-400">一条消息已被删除</div>
   <div v-else-if="item?.is_revoked" class="py-4 text-center">一条消息已被撤回</div>
-  <div v-else :id="item?.id" class="chat-item"
+  <div
+    v-else
+    :id="item?.id"
+    class="chat-item"
     :class="[
       { 'is-rtl': props.isRtl },
       { 'is-editing': isEditing },
@@ -626,7 +685,10 @@ watch(() => props.item?.updatedAt, () => {
       { 'chat-item--self': props.isSelf },
       { 'chat-item--merged': props.isMerged },
       { 'chat-item--body-only': props.bodyOnly }
-    ]">
+    ]"
+    @mouseenter="handleTimestampHoverStart"
+    @mouseleave="handleTimestampHoverEnd"
+  >
     <div
       v-if="props.showAvatar"
       class="chat-item__avatar"
@@ -640,23 +702,23 @@ watch(() => props.item?.updatedAt, () => {
     <div class="right" :class="{ 'right--hidden-header': !props.showHeader || props.bodyOnly }">
       <span class="title" v-if="props.showHeader && !props.bodyOnly">
         <!-- 右侧 -->
-        <n-popover trigger="hover" placement="bottom" v-if="props.isRtl">
+        <n-popover trigger="hover" placement="bottom" v-if="props.isRtl && timestampShouldRender">
           <template #trigger>
-            <span class="time">{{ timeText }}</span>
+            <span class="time">{{ inlineTimestampText }}</span>
           </template>
-          <span>{{ timeText2 }}</span>
+          <span>{{ tooltipTimestampText }}</span>
         </n-popover>
         <span v-if="props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
 
         <span v-if="!props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
-        <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl">
+        <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>
-            <span class="time">{{ timeText }}</span>
+            <span class="time">{{ inlineTimestampText }}</span>
           </template>
-          <span>{{ timeText2 }}</span>
+          <span>{{ tooltipTimestampText }}</span>
         </n-popover>
 
-        <!-- <span v-if="props.isRtl" class="time">{{ timeText }}</span> -->
+        <!-- <span v-if="props.isRtl" class="time">{{ inlineTimestampText }}</span> -->
         <n-popover trigger="hover" placement="bottom" v-if="props.item?.isEdited">
           <template #trigger>
             <span class="edited-label">(已编辑)</span>
