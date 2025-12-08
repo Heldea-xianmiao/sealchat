@@ -39,9 +39,9 @@ type ChatImportProgressEvent struct {
 
 // 进度广播 channel
 var (
-	importProgressChan     = make(chan *ChatImportProgressEvent, 100)
-	importProgressSubMu    sync.RWMutex
-	importProgressSubs     = make(map[chan *ChatImportProgressEvent]struct{})
+	importProgressChan  = make(chan *ChatImportProgressEvent, 100)
+	importProgressSubMu sync.RWMutex
+	importProgressSubs  = make(map[chan *ChatImportProgressEvent]struct{})
 )
 
 // SubscribeImportProgress 订阅导入进度
@@ -275,43 +275,55 @@ func resolveImportIdentities(channelID string, userID string, entries []*model.P
 	roleNames := ExtractRoleNames(entries)
 
 	for _, roleName := range roleNames {
-		var identity *model.ChannelIdentityModel
 		var err error
 
 		mappingConfig := roleMapping[roleName]
 
+		var templateIdentity *model.ChannelIdentityModel
 		if mappingConfig != nil && mappingConfig.ReuseIdentityID != "" {
-			// 复用已有身份
-			identity, err = model.ChannelIdentityGetByID(mappingConfig.ReuseIdentityID)
+			// 复用已有身份时仅用作模板，需要在目标频道创建新的身份
+			templateIdentity, err = model.ChannelIdentityGetByID(mappingConfig.ReuseIdentityID)
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, err
 			}
 		}
 
-		if identity == nil {
-			// 创建新身份
-			bindUserID := userID // 默认绑定到导入执行者
-			if mappingConfig != nil && mappingConfig.BindToUserID != "" {
-				bindUserID = mappingConfig.BindToUserID
-			}
+		// 创建新身份
+		bindUserID := userID // 默认绑定到导入执行者
+		if templateIdentity != nil && templateIdentity.UserID != "" {
+			bindUserID = templateIdentity.UserID
+		}
+		if mappingConfig != nil && mappingConfig.BindToUserID != "" {
+			bindUserID = mappingConfig.BindToUserID
+		}
 
-			displayName := roleName
-			color := ""
-			avatarID := ""
+		displayName := roleName
+		if templateIdentity != nil && templateIdentity.DisplayName != "" {
+			displayName = templateIdentity.DisplayName
+		}
+		if mappingConfig != nil && mappingConfig.DisplayName != "" {
+			displayName = mappingConfig.DisplayName
+		}
 
-			if mappingConfig != nil {
-				if mappingConfig.DisplayName != "" {
-					displayName = mappingConfig.DisplayName
-				}
-				color = mappingConfig.Color
-				avatarID = mappingConfig.AvatarAttachmentID
-			}
+		color := ""
+		if templateIdentity != nil && templateIdentity.Color != "" {
+			color = templateIdentity.Color
+		}
+		if mappingConfig != nil && mappingConfig.Color != "" {
+			color = mappingConfig.Color
+		}
 
-			// 创建身份
-			identity, err = createImportIdentity(channelID, bindUserID, displayName, color, avatarID)
-			if err != nil {
-				return nil, err
-			}
+		avatarID := ""
+		if templateIdentity != nil && templateIdentity.AvatarAttachmentID != "" {
+			avatarID = templateIdentity.AvatarAttachmentID
+		}
+		if mappingConfig != nil && mappingConfig.AvatarAttachmentID != "" {
+			avatarID = mappingConfig.AvatarAttachmentID
+		}
+
+		identity, err := createImportIdentity(channelID, bindUserID, displayName, color, avatarID)
+		if err != nil {
+			return nil, err
 		}
 
 		identityMap[roleName] = identity

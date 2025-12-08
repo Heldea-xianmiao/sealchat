@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"sealchat/protocol"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -198,28 +199,42 @@ func ChannelIdentityOptionList(channelID string) ([]*ChannelIdentityOption, erro
 	return options, nil
 }
 
+// ChannelIdentityOptionListForFilters 返回频道可用身份，并补充消息记录中存在但未在频道内定义的身份
+func ChannelIdentityOptionListForFilters(channelID string) ([]*ChannelIdentityOption, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return []*ChannelIdentityOption{}, nil
+	}
+	options, err := ChannelIdentityOptionList(channelID)
+	if err != nil {
+		return nil, err
+	}
+	identitySet, err := fetchChannelIdentityIDsFromMessages(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if len(identitySet) == 0 {
+		return options, nil
+	}
+	existing := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		existing[option.ID] = struct{}{}
+	}
+	extras, err := channelIdentityOptionsFromSet(channelID, identitySet, existing)
+	if err != nil {
+		return nil, err
+	}
+	return append(options, extras...), nil
+}
+
 func ChannelIdentityOptionListActive(channelID string) ([]*ChannelIdentityOption, error) {
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
 		return []*ChannelIdentityOption{}, nil
 	}
-	var identityIDs []string
-	err := db.Model(&MessageModel{}).
-		Distinct("sender_identity_id").
-		Where("channel_id = ?", channelID).
-		Where("sender_identity_id IS NOT NULL AND sender_identity_id <> ''").
-		Pluck("sender_identity_id", &identityIDs).Error
+	identitySet, err := fetchChannelIdentityIDsFromMessages(channelID)
 	if err != nil {
 		return nil, err
-	}
-	if len(identityIDs) == 0 {
-		return []*ChannelIdentityOption{}, nil
-	}
-	identitySet := make(map[string]struct{}, len(identityIDs))
-	for _, id := range identityIDs {
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
-			identitySet[trimmed] = struct{}{}
-		}
 	}
 	if len(identitySet) == 0 {
 		return []*ChannelIdentityOption{}, nil
@@ -229,7 +244,9 @@ func ChannelIdentityOptionListActive(channelID string) ([]*ChannelIdentityOption
 		return nil, err
 	}
 	options := make([]*ChannelIdentityOption, 0, len(identitySet))
+	existing := make(map[string]struct{}, len(items))
 	for _, item := range items {
+		existing[item.ID] = struct{}{}
 		if _, ok := identitySet[item.ID]; !ok {
 			continue
 		}
@@ -243,5 +260,103 @@ func ChannelIdentityOptionListActive(channelID string) ([]*ChannelIdentityOption
 			Color: item.Color,
 		})
 	}
+	extras, err := channelIdentityOptionsFromSet(channelID, identitySet, existing)
+	if err != nil {
+		return nil, err
+	}
+	return append(options, extras...), nil
+}
+
+func fetchChannelIdentityIDsFromMessages(channelID string) (map[string]struct{}, error) {
+	var identityIDs []string
+	err := db.Model(&MessageModel{}).
+		Distinct("sender_identity_id").
+		Where("channel_id = ?", channelID).
+		Where("sender_identity_id IS NOT NULL AND sender_identity_id <> ''").
+		Pluck("sender_identity_id", &identityIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	identitySet := make(map[string]struct{}, len(identityIDs))
+	for _, id := range identityIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			identitySet[trimmed] = struct{}{}
+		}
+	}
+	return identitySet, nil
+}
+
+func channelIdentityOptionsFromSet(channelID string, idSet map[string]struct{}, exclude map[string]struct{}) ([]*ChannelIdentityOption, error) {
+	if len(idSet) == 0 {
+		return []*ChannelIdentityOption{}, nil
+	}
+	missing := make([]string, 0, len(idSet))
+	for id := range idSet {
+		if exclude != nil {
+			if _, ok := exclude[id]; ok {
+				continue
+			}
+		}
+		missing = append(missing, id)
+	}
+	if len(missing) == 0 {
+		return []*ChannelIdentityOption{}, nil
+	}
+	sort.Strings(missing)
+
+	var identities []*ChannelIdentityModel
+	if err := db.Where("id IN ?", missing).Find(&identities).Error; err != nil {
+		return nil, err
+	}
+	found := make(map[string]struct{}, len(identities))
+	options := make([]*ChannelIdentityOption, 0, len(missing))
+	for _, identity := range identities {
+		if identity == nil || strings.TrimSpace(identity.ID) == "" {
+			continue
+		}
+		label := strings.TrimSpace(identity.DisplayName)
+		if label == "" {
+			label = "未命名身份"
+		}
+		options = append(options, &ChannelIdentityOption{
+			ID:    identity.ID,
+			Label: label,
+			Color: identity.Color,
+		})
+		found[identity.ID] = struct{}{}
+	}
+
+	if len(found) == len(missing) {
+		return options, nil
+	}
+
+	for _, id := range missing {
+		if _, ok := found[id]; ok {
+			continue
+		}
+		var snapshot struct {
+			SenderIdentityID    string
+			SenderIdentityName  string
+			SenderIdentityColor string
+		}
+		if err := db.Model(&MessageModel{}).
+			Select("sender_identity_id", "sender_identity_name", "sender_identity_color").
+			Where("channel_id = ? AND sender_identity_id = ?", channelID, id).
+			Order("created_at DESC").
+			Limit(1).
+			Scan(&snapshot).Error; err != nil {
+			return nil, err
+		}
+		label := strings.TrimSpace(snapshot.SenderIdentityName)
+		if label == "" {
+			label = "未命名身份"
+		}
+		options = append(options, &ChannelIdentityOption{
+			ID:    id,
+			Label: label,
+			Color: snapshot.SenderIdentityColor,
+		})
+	}
+
 	return options, nil
 }
