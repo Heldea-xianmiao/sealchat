@@ -20,6 +20,7 @@ const TOOLTIP_PADDING = 8
 
 let tooltipStack: TooltipInstance[] = []
 let globalClickHandler: ((e: MouseEvent | TouchEvent) => void) | null = null
+let globalKeyHandler: ((e: KeyboardEvent) => void) | null = null
 let pendingHideTimer: ReturnType<typeof setTimeout> | null = null
 
 function clearPendingHide() {
@@ -27,6 +28,21 @@ function clearPendingHide() {
     clearTimeout(pendingHideTimer)
     pendingHideTimer = null
   }
+}
+
+// Clean up any orphaned tooltip elements that aren't tracked in the stack
+function cleanupOrphanedTooltips() {
+  const allTooltips = document.querySelectorAll('.keyword-tooltip')
+  const trackedElements = new Set(tooltipStack.map(t => t.element))
+
+  allTooltips.forEach(tooltip => {
+    if (!trackedElements.has(tooltip as HTMLDivElement)) {
+      // Check if it's a hover tooltip (those are managed separately)
+      if (!tooltip.classList.contains('keyword-tooltip--hover')) {
+        tooltip.remove()
+      }
+    }
+  })
 }
 
 let tooltipIdCounter = 0
@@ -149,19 +165,40 @@ function setupGlobalClickHandler(onClickOutside: () => void) {
     const isOnKeyword = target.closest('.keyword-highlight')
 
     if (!isInsideTooltip && !isOnKeyword) {
-      onClickOutside()
+      // Use requestAnimationFrame to ensure DOM state is stable
+      requestAnimationFrame(() => {
+        onClickOutside()
+        // Also clean up any orphaned tooltips
+        cleanupOrphanedTooltips()
+      })
     }
   }
 
-  document.addEventListener('click', globalClickHandler, true)
-  document.addEventListener('touchend', globalClickHandler, true)
+  // Use mousedown for faster response and to catch clicks before other handlers
+  document.addEventListener('mousedown', globalClickHandler, true)
+  document.addEventListener('touchstart', globalClickHandler, true)
+
+  // Also add Escape key handler
+  if (!globalKeyHandler) {
+    globalKeyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClickOutside()
+        cleanupOrphanedTooltips()
+      }
+    }
+    document.addEventListener('keydown', globalKeyHandler, true)
+  }
 }
 
 function removeGlobalClickHandler() {
   if (globalClickHandler) {
-    document.removeEventListener('click', globalClickHandler, true)
-    document.removeEventListener('touchend', globalClickHandler, true)
+    document.removeEventListener('mousedown', globalClickHandler, true)
+    document.removeEventListener('touchstart', globalClickHandler, true)
     globalClickHandler = null
+  }
+  if (globalKeyHandler) {
+    document.removeEventListener('keydown', globalKeyHandler, true)
+    globalKeyHandler = null
   }
 }
 
@@ -201,6 +238,8 @@ function updateParentHasChildClass() {
 function hideAllTooltips() {
   clearPendingHide()
   hideTooltipsFromLevel(0)
+  // Also clean up any orphaned tooltips
+  cleanupOrphanedTooltips()
 }
 
 export interface KeywordTooltipOptions {
