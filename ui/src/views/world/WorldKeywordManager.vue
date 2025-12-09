@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useChatStore } from '@/stores/chat'
 import { useDialog, useMessage } from 'naive-ui'
@@ -506,6 +506,45 @@ watch(
     }
   },
 )
+
+// Alias tags for tag-based input
+const aliasesArray = computed({
+  get: () => {
+    if (!formModel.aliases) return []
+    return formModel.aliases.split(',').map(s => s.trim()).filter(Boolean)
+  },
+  set: (value: string[]) => {
+    formModel.aliases = value.join(', ')
+  }
+})
+
+// Keyboard shortcuts
+const handleEditorKeydown = (e: KeyboardEvent) => {
+  if (!editorVisible.value) return
+  
+  // Ctrl+S or Cmd+S to save
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault()
+    submitEditor()
+  }
+  
+  // Esc to close (only if not in input focus that handles its own Esc)
+  if (e.key === 'Escape') {
+    const active = document.activeElement
+    const isInTextarea = active?.tagName === 'TEXTAREA'
+    if (!isInTextarea) {
+      glossary.closeEditor()
+    }
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleEditorKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleEditorKeydown)
+})
 </script>
 
 <template>
@@ -695,8 +734,8 @@ watch(
         </n-form-item>
       </div>
       <div class="keyword-editor__row keyword-editor__row--compact">
-        <n-form-item label="别名（逗号分隔）" class="keyword-editor__field keyword-editor__field--alias" :show-feedback="false">
-          <n-input v-model:value="formModel.aliases" placeholder="可选" :maxlength="KEYWORD_MAX_LENGTH" />
+        <n-form-item label="别名" class="keyword-editor__field keyword-editor__field--alias" :show-feedback="false">
+          <n-dynamic-tags v-model:value="aliasesArray" :max="10" />
         </n-form-item>
       </div>
       <div class="keyword-editor__row keyword-editor__toggles">
@@ -727,7 +766,7 @@ watch(
           <n-input
             v-model:value="formModel.description"
             type="textarea"
-            :autosize="{ minRows: 8, maxRows: 14 }"
+            :autosize="{ minRows: 10, maxRows: 18 }"
             :maxlength="KEYWORD_MAX_LENGTH"
             show-count
             placeholder="用于聊天中的提示和解释"
@@ -736,10 +775,13 @@ watch(
       </div>
     </n-form>
     <template #action>
-      <n-space>
-        <n-button @click="glossary.closeEditor()">取消</n-button>
-        <n-button type="primary" @click="submitEditor">保存</n-button>
-      </n-space>
+      <div class="keyword-editor__action-row">
+        <span class="keyboard-hint">Ctrl+S 保存 · Esc 取消</span>
+        <n-space>
+          <n-button @click="glossary.closeEditor()">取消</n-button>
+          <n-button type="primary" @click="submitEditor">保存</n-button>
+        </n-space>
+      </div>
     </template>
   </n-modal>
 
@@ -954,6 +996,41 @@ watch(
   }
 }
 </style>
-.keyword-editor__field--alias :deep(.n-input) {
-  font-size: 14px;
+
+<style scoped>
+/* Action Row Styles */
+.keyword-editor__action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 1rem;
 }
+
+.keyboard-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* Reduce action area padding to save space */
+.keyword-editor-form :deep(.n-card__action) {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+
+@media (max-width: 767px) {
+  .keyword-editor__action-row {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .keyboard-hint {
+    order: 2;
+  }
+  
+  .keyword-editor-form :deep(.n-card__action) {
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+  }
+}
+</style>
