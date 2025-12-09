@@ -436,6 +436,7 @@ const compiledKeywords = computed(() => {
 const keywordHighlightEnabled = computed(() => displayStore.settings.worldKeywordHighlightEnabled !== false)
 const keywordUnderlineOnly = computed(() => !!displayStore.settings.worldKeywordUnderlineOnly)
 const keywordTooltipEnabled = computed(() => displayStore.settings.worldKeywordTooltipEnabled !== false)
+const keywordDeduplicateEnabled = computed(() => !!displayStore.settings.worldKeywordDeduplicateEnabled)
 
 const keywordTooltipResolver = (keywordId: string) => {
   const keyword = worldGlossary.keywordById[keywordId]
@@ -487,6 +488,7 @@ const applyKeywordHighlights = async () => {
     compiled,
     {
       underlineOnly: keywordUnderlineOnly.value,
+      deduplicate: keywordDeduplicateEnabled.value,
       onKeywordDoubleInvoke: props.worldKeywordEditable ? handleKeywordQuickEdit : undefined,
     },
     keywordTooltipEnabled.value ? keywordTooltipInstance : undefined,
@@ -637,6 +639,7 @@ watch(
     () => displayStore.settings.worldKeywordHighlightEnabled,
     () => displayStore.settings.worldKeywordUnderlineOnly,
     () => displayStore.settings.worldKeywordTooltipEnabled,
+    () => displayStore.settings.worldKeywordDeduplicateEnabled,
     () => displayContent.value,
   ],
   () => {

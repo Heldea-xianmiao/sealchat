@@ -3,6 +3,7 @@ import type { KeywordTooltipController } from './keywordTooltip'
 
 interface HighlightOptions {
   underlineOnly: boolean
+  deduplicate?: boolean
   onKeywordDoubleInvoke?: (keywordId: string) => void
 }
 
@@ -88,6 +89,7 @@ function wrapRanges(
   node: Text,
   ranges: ReturnType<typeof buildRanges>,
   options: HighlightOptions,
+  highlightedKeywords: Set<string>,
   tooltip?: KeywordTooltipController
 ) {
   if (!ranges.length) return
@@ -96,6 +98,11 @@ function wrapRanges(
   let lastIndex = 0
 
   ranges.forEach((range) => {
+    // Skip if deduplication is enabled and this keyword was already highlighted
+    if (options.deduplicate && highlightedKeywords.has(range.keyword.id)) {
+      return
+    }
+
     if (range.start > lastIndex) {
       fragment.appendChild(document.createTextNode(text.slice(lastIndex, range.start)))
     }
@@ -184,6 +191,12 @@ function wrapRanges(
     }
 
     fragment.appendChild(span)
+
+    // Track this keyword as highlighted if deduplication is enabled
+    if (options.deduplicate) {
+      highlightedKeywords.add(range.keyword.id)
+    }
+
     lastIndex = range.end
   })
 
@@ -214,8 +227,12 @@ export function refreshWorldKeywordHighlights(
     }
     current = walker.nextNode()
   }
+
+  // Create shared Set for deduplication across all text nodes in this message
+  const highlightedKeywords = new Set<string>()
+
   nodes.forEach((node) => {
     const ranges = buildRanges(node.textContent || '', compiled)
-    wrapRanges(node, ranges, options, tooltip)
+    wrapRanges(node, ranges, options, highlightedKeywords, tooltip)
   })
 }
