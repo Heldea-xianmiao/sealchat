@@ -635,13 +635,14 @@ func apiMessageUnarchive(ctx *ChatContext, data *struct {
 }
 
 func apiMessageCreate(ctx *ChatContext, data *struct {
-	ChannelID  string `json:"channel_id"`
-	QuoteID    string `json:"quote_id"`
-	Content    string `json:"content"`
-	WhisperTo  string `json:"whisper_to"`
-	ClientID   string `json:"client_id"`
-	IdentityID string `json:"identity_id"`
-	ICMode     string `json:"ic_mode"`
+	ChannelID    string   `json:"channel_id"`
+	QuoteID      string   `json:"quote_id"`
+	Content      string   `json:"content"`
+	WhisperTo    string   `json:"whisper_to"`
+	ClientID     string   `json:"client_id"`
+	IdentityID   string   `json:"identity_id"`
+	ICMode       string   `json:"ic_mode"`
+	DisplayOrder *float64 `json:"display_order"`
 }) (any, error) {
 	echo := ctx.Echo
 	db := model.GetDB()
@@ -775,6 +776,9 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 	if identity == nil && ctx.User.IsBot && ctx.User.NickColor != "" {
 		m.SenderIdentityColor = ctx.User.NickColor
+	}
+	if data.DisplayOrder != nil && *data.DisplayOrder > 0 {
+		m.DisplayOrder = *data.DisplayOrder
 	}
 	if whisperUser != nil {
 		m.WhisperTarget = whisperUser
@@ -1612,16 +1616,17 @@ func normalizeIcMode(raw string) string {
 }
 
 func apiMessageTyping(ctx *ChatContext, data *struct {
-	ChannelID   string `json:"channel_id"`
-	State       string `json:"state"`
-	Content     string `json:"content"`
-	MessageID   string `json:"message_id"`
-	Mode        string `json:"mode"`
-	Enabled     *bool  `json:"enabled"`
-	IdentityID  string `json:"identity_id"`
-	WhisperTo   string `json:"whisper_to"`
-	ICModeSnake string `json:"ic_mode"`
-	ICModeCamel string `json:"icMode"`
+	ChannelID   string   `json:"channel_id"`
+	State       string   `json:"state"`
+	Content     string   `json:"content"`
+	MessageID   string   `json:"message_id"`
+	Mode        string   `json:"mode"`
+	Enabled     *bool    `json:"enabled"`
+	IdentityID  string   `json:"identity_id"`
+	WhisperTo   string   `json:"whisper_to"`
+	ICModeSnake string   `json:"ic_mode"`
+	ICModeCamel string   `json:"icMode"`
+	OrderKey    *float64 `json:"order_key"`
 }) (any, error) {
 	channelId := data.ChannelID
 	var privateOtherUser string
@@ -1666,6 +1671,10 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 
 	isActive := state != protocol.TypingStateSilent
 
+	var broadcastOrderKey float64
+	if data.OrderKey != nil && *data.OrderKey > 0 {
+		broadcastOrderKey = *data.OrderKey
+	}
 	if isActive {
 		if ctx.ConnInfo.TypingEnabled &&
 			ctx.ConnInfo.TypingState == state &&
@@ -1673,7 +1682,8 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 			ctx.ConnInfo.TypingContent == data.Content &&
 			ctx.ConnInfo.TypingWhisperTo == data.WhisperTo &&
 			ctx.ConnInfo.TypingIcMode == typingTone &&
-			ctx.ConnInfo.TypingIdentityID == data.IdentityID {
+			ctx.ConnInfo.TypingIdentityID == data.IdentityID &&
+			(broadcastOrderKey == 0 || ctx.ConnInfo.TypingOrderKey == broadcastOrderKey) {
 			return &struct {
 				Success bool `json:"success"`
 			}{Success: true}, nil
@@ -1685,6 +1695,9 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = now
 		ctx.ConnInfo.TypingIcMode = typingTone
 		ctx.ConnInfo.TypingIdentityID = data.IdentityID
+		if broadcastOrderKey > 0 {
+			ctx.ConnInfo.TypingOrderKey = broadcastOrderKey
+		}
 	} else {
 		ctx.ConnInfo.TypingEnabled = false
 		ctx.ConnInfo.TypingState = protocol.TypingStateSilent
@@ -1693,6 +1706,7 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		ctx.ConnInfo.TypingUpdatedAt = 0
 		ctx.ConnInfo.TypingIcMode = "ic"
 		ctx.ConnInfo.TypingIdentityID = ""
+		ctx.ConnInfo.TypingOrderKey = 0
 	}
 
 	channel, _ := model.ChannelGet(channelId)
@@ -1726,6 +1740,9 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 		content = ""
 	}
 
+	if broadcastOrderKey == 0 {
+		broadcastOrderKey = ctx.ConnInfo.TypingOrderKey
+	}
 	event := &protocol.Event{
 		Type:    protocol.EventTypingPreview,
 		Channel: channelData,
@@ -1742,6 +1759,9 @@ func apiMessageTyping(ctx *ChatContext, data *struct {
 	event.Typing.Tone = typingTone
 	if member != nil {
 		event.Member = member.ToProtocolType()
+	}
+	if broadcastOrderKey > 0 {
+		event.Typing.OrderKey = broadcastOrderKey
 	}
 	if data.IdentityID != "" {
 		identity, _ := model.ChannelIdentityGetByID(data.IdentityID)

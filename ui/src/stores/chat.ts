@@ -15,6 +15,7 @@ import { memoizeWithTimeout } from '@/utils/tools';
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { PermTreeNode } from '@/types-perm';
 import type { DisplaySettings } from './display';
+import { useDisplayStore } from './display';
 
 interface ChatState {
   subject: WebSocketSubject<any> | null;
@@ -100,6 +101,7 @@ interface ChatState {
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
+  channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
 }
 
 const apiMap = new Map<string, any>();
@@ -239,6 +241,7 @@ export const useChatStore = defineStore({
         return [];
       }
     })(),
+    channelIcOocRoleConfig: {},
   }),
 
   getters: {
@@ -814,6 +817,8 @@ export const useChatStore = defineStore({
 
       this.curMember = resp.data.member;
       await this.loadChannelIdentities(id);
+      // 确保默认场外角色存在
+      await this.ensureDefaultOocRole(id);
       localStorage.setItem('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
@@ -1618,7 +1623,14 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string, identityId?: string) {
+    async messageCreate(
+      content: string,
+      quote_id?: string,
+      whisper_to?: string,
+      clientId?: string,
+      identityId?: string,
+      displayOrder?: number,
+    ) {
       const payload: Record<string, any> = {
         channel_id: this.curChannel?.id,
         content,
@@ -1638,6 +1650,9 @@ export const useChatStore = defineStore({
       if (resolvedIdentityId) {
         payload.identity_id = resolvedIdentityId;
       }
+      if (typeof displayOrder === 'number' && displayOrder > 0) {
+        payload.display_order = displayOrder;
+      }
       const resp = await this.sendAPI('message.create', payload);
       const message = resp?.data;
       if (!message || typeof message !== 'object') {
@@ -1650,7 +1665,7 @@ export const useChatStore = defineStore({
       state: 'indicator' | 'content' | 'silent',
       content: string,
       channelId?: string,
-      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc' },
+      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc'; orderKey?: number },
     ) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
@@ -1688,6 +1703,9 @@ export const useChatStore = defineStore({
         const activeIdentity = this.getActiveIdentity(targetChannelId);
         if (activeIdentity) {
           payload.identity_id = activeIdentity.id;
+        }
+        if (typeof extra?.orderKey === 'number' && Number.isFinite(extra.orderKey) && extra.orderKey > 0) {
+          payload.order_key = extra.orderKey;
         }
         const debugEnabled =
           typeof window !== 'undefined' &&
@@ -1959,7 +1977,7 @@ export const useChatStore = defineStore({
     // 更新频道角色权限
     async rolePermsSet(roleId: string, permissions: string[]) {
       const resp = await api.post<{ data: boolean }>('api/v1/role-perms-apply', {
-        roleId, 
+        roleId,
         permissions
       });
       return resp?.data;
@@ -2292,6 +2310,131 @@ export const useChatStore = defineStore({
         requested_at?: number;
         display_name?: string;
       };
+    },
+
+    // IC/OOC 角色配置相关方法
+    getChannelIcOocRoleConfig(channelId: string): { icRoleId: string | null; oocRoleId: string | null } {
+      if (!channelId) {
+        return { icRoleId: null, oocRoleId: null };
+      }
+      if (this.channelIcOocRoleConfig[channelId]) {
+        return this.channelIcOocRoleConfig[channelId];
+      }
+      // 尝试从 localStorage 加载
+      if (typeof window !== 'undefined') {
+        try {
+          const key = `channelIcOocRole:${channelId}`;
+          const stored = localStorage.getItem(key);
+          if (stored) {
+            const config = JSON.parse(stored);
+            this.channelIcOocRoleConfig[channelId] = config;
+            return config;
+          }
+        } catch (err) {
+          console.warn('Failed to load IC/OOC role config from localStorage', err);
+        }
+      }
+      return { icRoleId: null, oocRoleId: null };
+    },
+
+    setChannelIcOocRoleConfig(
+      channelId: string,
+      config: { icRoleId?: string | null; oocRoleId?: string | null }
+    ) {
+      if (!channelId) {
+        return;
+      }
+      const current = this.getChannelIcOocRoleConfig(channelId);
+      const updated = {
+        icRoleId: config.icRoleId !== undefined ? config.icRoleId : current.icRoleId,
+        oocRoleId: config.oocRoleId !== undefined ? config.oocRoleId : current.oocRoleId,
+      };
+      this.channelIcOocRoleConfig = {
+        ...this.channelIcOocRoleConfig,
+        [channelId]: updated,
+      };
+      // 持久化到 localStorage
+      if (typeof window !== 'undefined') {
+        try {
+          const key = `channelIcOocRole:${channelId}`;
+          localStorage.setItem(key, JSON.stringify(updated));
+        } catch (err) {
+          console.warn('Failed to save IC/OOC role config to localStorage', err);
+        }
+      }
+    },
+
+    autoSwitchRoleOnIcOocChange(newMode: 'ic' | 'ooc') {
+      const display = useDisplayStore();
+      // 检查是否启用自动切换
+      if (!display.settings.autoSwitchRoleOnIcOocToggle) {
+        return;
+      }
+      const channelId = this.curChannel?.id;
+      if (!channelId) {
+        return;
+      }
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      const targetRoleId = newMode === 'ic' ? config.icRoleId : config.oocRoleId;
+
+      // 如果没有配置对应的角色，不进行切换
+      if (!targetRoleId) {
+        return;
+      }
+
+      // 检查角色是否存在
+      const identities = this.channelIdentities[channelId] || [];
+      const targetRole = identities.find((identity) => identity.id === targetRoleId);
+      if (!targetRole) {
+        console.warn(`Target role ${targetRoleId} for ${newMode} mode not found`);
+        return;
+      }
+
+      // 执行角色切换
+      this.setActiveIdentity(channelId, targetRoleId);
+    },
+
+    async ensureDefaultOocRole(channelId: string) {
+      const display = useDisplayStore();
+      const user = useUserStore();
+
+      // 检查是否启用自动切换
+      if (!display.settings.autoSwitchRoleOnIcOocToggle) {
+        return null;
+      }
+
+      if (!channelId) {
+        return null;
+      }
+
+      // 检查是否已经配置了场外角色
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      if (config.oocRoleId) {
+        return config.oocRoleId;
+      }
+
+      // 自动创建默认场外角色
+      const displayName = user.info.nick || user.info.username || '场外';
+      const avatarAttachmentId = user.info.avatar || '';
+
+      try {
+        const identity = await this.channelIdentityCreate({
+          channelId,
+          displayName,
+          color: '',
+          avatarAttachmentId,
+          isDefault: false,
+        });
+
+        // 设置为场外默认角色
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
+
+        console.log(`Created default OOC role for channel ${channelId}`, identity);
+        return identity.id;
+      } catch (err) {
+        console.warn('Failed to create default OOC role', err);
+        return null;
+      }
     },
   }
 });

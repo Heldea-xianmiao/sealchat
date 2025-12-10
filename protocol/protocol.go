@@ -329,6 +329,7 @@ type TypingPreview struct {
 	TargetUserID string      `json:"targetUserId,omitempty"`
 	ICMode       string      `json:"icMode,omitempty"`
 	Tone         string      `json:"tone,omitempty"`
+	OrderKey     float64     `json:"orderKey,omitempty"`
 }
 
 type GatewayPayloadStructure struct {

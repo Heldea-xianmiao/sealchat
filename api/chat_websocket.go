@@ -47,6 +47,7 @@ type ConnInfo struct {
 	TypingUpdatedAt  int64
 	TypingIcMode     string
 	TypingIdentityID string
+	TypingOrderKey   float64
 	Focused          bool
 }
 
@@ -479,6 +480,8 @@ func websocketWorks(app *fiber.App) {
 			curConnInfo.TypingContent = ""
 			curConnInfo.TypingUpdatedAt = 0
 			curConnInfo.TypingIcMode = "ic"
+			curConnInfo.TypingIdentityID = ""
+			curConnInfo.TypingOrderKey = 0
 		}
 
 		// 连接断开，后续封装成函数
