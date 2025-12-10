@@ -1618,12 +1618,19 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
-    async messageCreate(content: string, quote_id?: string, whisper_to?: string, clientId?: string, identityId?: string) {
-      const payload: Record<string, any> = {
-        channel_id: this.curChannel?.id,
-        content,
-        ic_mode: this.icMode,
-      };
+	async messageCreate(
+		content: string,
+		quote_id?: string,
+		whisper_to?: string,
+		clientId?: string,
+		identityId?: string,
+		displayOrder?: number,
+	) {
+		const payload: Record<string, any> = {
+			channel_id: this.curChannel?.id,
+			content,
+			ic_mode: this.icMode,
+		};
       if (quote_id) {
         payload.quote_id = quote_id;
       }
@@ -1634,11 +1641,14 @@ export const useChatStore = defineStore({
       if (clientId) {
         payload.client_id = clientId;
       }
-      const resolvedIdentityId = identityId || this.getActiveIdentityId(this.curChannel?.id);
-      if (resolvedIdentityId) {
-        payload.identity_id = resolvedIdentityId;
-      }
-      const resp = await this.sendAPI('message.create', payload);
+		const resolvedIdentityId = identityId || this.getActiveIdentityId(this.curChannel?.id);
+		if (resolvedIdentityId) {
+			payload.identity_id = resolvedIdentityId;
+		}
+		if (typeof displayOrder === 'number' && displayOrder > 0) {
+			payload.display_order = displayOrder;
+		}
+		const resp = await this.sendAPI('message.create', payload);
       const message = resp?.data;
       if (!message || typeof message !== 'object') {
         return null;
@@ -1646,12 +1656,12 @@ export const useChatStore = defineStore({
       return message;
     },
 
-    async messageTyping(
-      state: 'indicator' | 'content' | 'silent',
-      content: string,
-      channelId?: string,
-      extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc' },
-    ) {
+	async messageTyping(
+		state: 'indicator' | 'content' | 'silent',
+		content: string,
+		channelId?: string,
+		extra?: { mode?: string; messageId?: string; whisperTo?: string; icMode?: 'ic' | 'ooc'; orderKey?: number },
+	) {
       const targetChannelId = channelId || this.curChannel?.id;
       if (!targetChannelId) {
         return;
@@ -1686,9 +1696,12 @@ export const useChatStore = defineStore({
           payload.whisper_to = whisperTargetId;
         }
         const activeIdentity = this.getActiveIdentity(targetChannelId);
-        if (activeIdentity) {
-          payload.identity_id = activeIdentity.id;
-        }
+			if (activeIdentity) {
+				payload.identity_id = activeIdentity.id;
+			}
+			if (typeof extra?.orderKey === 'number' && Number.isFinite(extra.orderKey) && extra.orderKey > 0) {
+				payload.order_key = extra.orderKey;
+			}
         const debugEnabled =
           typeof window !== 'undefined' &&
           (window as any).__SC_DEBUG_TYPING__ === true;

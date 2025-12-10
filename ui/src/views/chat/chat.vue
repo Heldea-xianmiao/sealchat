@@ -3631,6 +3631,232 @@ if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
 const typingPreviewActive = ref(false);
 const typingPreviewList = ref<TypingPreviewItem[]>([]);
 let typingPreviewOrderSeq = 0;
+const selfPreviewOrderKey = ref<number>(Number.MAX_SAFE_INTEGER);
+const selfPreviewOrderModified = ref(false);
+const resetSelfPreviewOrder = () => {
+	selfPreviewOrderKey.value = Number.MAX_SAFE_INTEGER;
+	selfPreviewOrderModified.value = false;
+};
+const typingPreviewRowRefs = new Map<string, HTMLElement>();
+const typingPreviewItemKey = (preview: TypingPreviewItem | null | undefined) =>
+  preview ? `${preview.userId || ''}-${preview.mode}` : '';
+const registerTypingPreviewRow = (el: HTMLElement | null, preview: TypingPreviewItem) => {
+  const key = typingPreviewItemKey(preview);
+  if (!key) {
+    return;
+  }
+  if (el) {
+    typingPreviewRowRefs.set(key, el);
+  } else {
+    typingPreviewRowRefs.delete(key);
+  }
+};
+const getPreviewOrderValue = (item?: TypingPreviewItem | null) => {
+  if (!item) {
+    return null;
+  }
+  const value = typeof item.orderKey === 'number' ? item.orderKey : Number.NaN;
+  return Number.isFinite(value) ? value : null;
+};
+const derivePreviewOrderValue = (list: TypingPreviewItem[], index: number, fallback: number) => {
+  const prevOrder = getPreviewOrderValue(list[index - 1]);
+  const nextOrder = getPreviewOrderValue(list[index + 1]);
+  if (prevOrder !== null && nextOrder !== null) {
+    return (prevOrder + nextOrder) / 2;
+  }
+  if (prevOrder !== null) {
+    return prevOrder + 1;
+  }
+  if (nextOrder !== null) {
+    return nextOrder - 1;
+  }
+  return fallback;
+};
+interface PreviewDragState {
+  pointerId: number | null;
+  activeKey: string | null;
+  overKey: string | null;
+  position: 'before' | 'after' | null;
+  startY: number;
+  initialOrderKey: number | null;
+  handleEl: HTMLElement | null;
+  initialModified: boolean;
+}
+const previewDragState = reactive<PreviewDragState>({
+  pointerId: null,
+  activeKey: null,
+  overKey: null,
+  position: null,
+  startY: 0,
+  initialOrderKey: null,
+  handleEl: null,
+  initialModified: false,
+});
+const resetPreviewDragState = () => {
+  previewDragState.pointerId = null;
+  previewDragState.activeKey = null;
+  previewDragState.overKey = null;
+  previewDragState.position = null;
+  previewDragState.startY = 0;
+  previewDragState.initialOrderKey = null;
+  previewDragState.handleEl = null;
+  previewDragState.initialModified = false;
+};
+const updateSelfPreviewOrderKey = (orderKey: number | null, markModified = false) => {
+  if (orderKey === null || !Number.isFinite(orderKey)) {
+    return;
+  }
+  selfPreviewOrderKey.value = orderKey;
+  if (markModified) {
+    selfPreviewOrderModified.value = true;
+  }
+  typingPreviewList.value = typingPreviewList.value.map((item) => {
+    if (item.userId === selfPreviewUserId.value && item.mode === 'typing') {
+      return { ...item, orderKey };
+    }
+    return item;
+  });
+};
+const getPreviewTargetIndex = (list: TypingPreviewItem[], overKey: string | null, position: 'before' | 'after' | null) => {
+  if (!overKey || !position) {
+    return null;
+  }
+  const overIndex = list.findIndex((item) => typingPreviewItemKey(item) === overKey);
+  if (overIndex < 0) {
+    return null;
+  }
+  if (position === 'before') {
+    return overIndex;
+  }
+  return overIndex + 1;
+};
+const applyPreviewDragReorder = () => {
+  const activeKey = previewDragState.activeKey;
+  if (!activeKey) {
+    return;
+  }
+  const previews = typingPreviewItems.value.slice();
+  const fromIndex = previews.findIndex((item) => typingPreviewItemKey(item) === activeKey);
+  if (fromIndex < 0) {
+    return;
+  }
+  const [activeItem] = previews.splice(fromIndex, 1);
+  const targetIndex = getPreviewTargetIndex(previews, previewDragState.overKey, previewDragState.position);
+	if (targetIndex === null) {
+		previews.splice(fromIndex, 0, activeItem);
+		updateSelfPreviewOrderKey(previewDragState.initialOrderKey);
+		selfPreviewOrderModified.value = previewDragState.initialModified;
+		return;
+	}
+  const clampedTarget = Math.min(Math.max(targetIndex, 0), previews.length);
+  previews.splice(clampedTarget, 0, activeItem);
+  const fallback = getPreviewOrderValue(activeItem) ?? Date.now();
+  const derived = derivePreviewOrderValue(previews, clampedTarget, fallback);
+	updateSelfPreviewOrderKey(derived, true);
+	broadcastTypingOrderChange();
+};
+const detachPreviewDragListeners = () => {
+  window.removeEventListener('pointermove', onPreviewDragPointerMove);
+  window.removeEventListener('pointerup', onPreviewDragPointerUp);
+  window.removeEventListener('pointercancel', onPreviewDragPointerCancel);
+};
+const cancelPreviewDrag = () => {
+	detachPreviewDragListeners();
+	if (previewDragState.initialOrderKey !== null) {
+		updateSelfPreviewOrderKey(previewDragState.initialOrderKey);
+	}
+	selfPreviewOrderModified.value = previewDragState.initialModified;
+	if (previewDragState.handleEl && previewDragState.pointerId !== null) {
+		try {
+			previewDragState.handleEl.releasePointerCapture?.(previewDragState.pointerId);
+		} catch {
+			// ignore
+		}
+	}
+	document.body.style.userSelect = '';
+	resetPreviewDragState();
+	broadcastTypingOrderChange.flush();
+};
+const finalizePreviewDrag = () => {
+	detachPreviewDragListeners();
+	if (previewDragState.handleEl && previewDragState.pointerId !== null) {
+		try {
+			previewDragState.handleEl.releasePointerCapture?.(previewDragState.pointerId);
+		} catch {
+			// ignore
+		}
+	}
+	document.body.style.userSelect = '';
+	resetPreviewDragState();
+	broadcastTypingOrderChange.flush();
+};
+const updatePreviewDragTarget = (clientY: number) => {
+  const activeKey = previewDragState.activeKey;
+  if (!activeKey) {
+    return;
+  }
+  const previews = typingPreviewItems.value;
+  let matched = false;
+  for (const preview of previews) {
+    const key = typingPreviewItemKey(preview);
+    if (!key || key === activeKey) {
+      continue;
+    }
+    const el = typingPreviewRowRefs.get(key);
+    if (!el) {
+      continue;
+    }
+    const rect = el.getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    if (clientY <= mid) {
+      previewDragState.overKey = key;
+      previewDragState.position = 'before';
+      matched = true;
+      break;
+    }
+    if (clientY < rect.bottom) {
+      previewDragState.overKey = key;
+      previewDragState.position = 'after';
+      matched = true;
+      break;
+    }
+  }
+  if (!matched && previews.length > 0) {
+    const last = previews[previews.length - 1];
+    const lastKey = typingPreviewItemKey(last);
+    if (lastKey) {
+      previewDragState.overKey = lastKey;
+      previewDragState.position = 'after';
+      matched = true;
+    }
+  }
+  if (!matched) {
+    previewDragState.overKey = null;
+    previewDragState.position = null;
+  }
+};
+const onPreviewDragPointerMove = (event: PointerEvent) => {
+  if (event.pointerId !== previewDragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  updatePreviewDragTarget(event.clientY);
+  applyPreviewDragReorder();
+};
+const onPreviewDragPointerUp = (event: PointerEvent) => {
+  if (event.pointerId !== previewDragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  finalizePreviewDrag();
+};
+const onPreviewDragPointerCancel = (event: PointerEvent) => {
+  if (event.pointerId !== previewDragState.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  cancelPreviewDrag();
+};
 const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
   const existing = typingPreviewList.value.find((item) => item.userId === userId && item.mode === mode);
   if (existing) {
@@ -3639,17 +3865,69 @@ const getTypingOrderKey = (userId: string, mode: 'typing' | 'editing') => {
   return typingPreviewOrderSeq++;
 };
 const typingPreviewItemClass = (preview: TypingPreviewItem) => [
-  'typing-preview-item',
-  'message-row',
-  `message-row--tone-${preview.tone}`,
-  `typing-preview-item--${preview.tone}`,
-  { 'typing-preview-item--indicator': preview.indicatorOnly },
+	'typing-preview-item',
+	'message-row',
+	`message-row--tone-${preview.tone}`,
+	`typing-preview-item--${preview.tone}`,
+	{
+		'typing-preview-item--indicator': preview.indicatorOnly,
+		'typing-preview-item--dragging': typingPreviewItemKey(preview) === previewDragState.activeKey,
+	},
 ];
 const typingPreviewSurfaceClass = (preview: TypingPreviewItem) => [
   'typing-preview-surface',
   'message-row__surface',
   `message-row__surface--tone-${preview.tone}`,
 ];
+const typingPreviewHandleClass = (preview: TypingPreviewItem) => {
+  const classes = ['message-row__handle'];
+  const key = typingPreviewItemKey(preview);
+  const isSelfPreview = preview.userId === selfPreviewUserId.value;
+	if (isSelfPreview) {
+    classes.push('typing-preview-handle');
+    if (key && key === previewDragState.activeKey) {
+      classes.push('typing-preview-handle--dragging');
+    }
+  } else {
+    classes.push('message-row__handle--placeholder');
+  }
+  return classes;
+};
+const canDragTypingPreview = (preview: TypingPreviewItem) => preview.userId === selfPreviewUserId.value;
+const onPreviewDragHandlePointerDown = (event: PointerEvent, preview: TypingPreviewItem) => {
+  if (!canDragTypingPreview(preview)) {
+    return;
+  }
+  if (event.pointerType === 'mouse' && event.button !== 0) {
+    return;
+  }
+  const key = typingPreviewItemKey(preview);
+  if (!key) {
+    return;
+  }
+  const handleEl = event.currentTarget as HTMLElement | null;
+  if (handleEl) {
+    previewDragState.handleEl = handleEl;
+    try {
+      handleEl.setPointerCapture?.(event.pointerId);
+    } catch {
+      // ignore capture errors
+    }
+  }
+  previewDragState.pointerId = event.pointerId;
+  previewDragState.activeKey = key;
+  previewDragState.overKey = key;
+  previewDragState.position = 'after';
+  previewDragState.startY = event.clientY;
+  previewDragState.initialOrderKey = getPreviewOrderValue(preview) ?? selfPreviewOrderKey.value;
+  previewDragState.initialModified = selfPreviewOrderModified.value;
+  document.body.style.userSelect = 'none';
+  updatePreviewDragTarget(event.clientY);
+  window.addEventListener('pointermove', onPreviewDragPointerMove);
+  window.addEventListener('pointerup', onPreviewDragPointerUp);
+  window.addEventListener('pointercancel', onPreviewDragPointerCancel);
+  event.preventDefault();
+};
 const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
   if (!preview?.userId) {
     return false;
@@ -3668,6 +3946,21 @@ const typingPreviewItems = computed(() =>
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
 );
+const resolveDisplayOrderForSend = () => {
+	if (!selfPreviewOrderModified.value) {
+		return null;
+	}
+	const previews = typingPreviewItems.value;
+	if (!previews.length) {
+		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
+	}
+	const index = previews.findIndex((item) => item.userId === selfPreviewUserId.value);
+	if (index < 0) {
+		return Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : null;
+	}
+	const fallback = Number.isFinite(selfPreviewOrderKey.value) ? selfPreviewOrderKey.value : Date.now();
+	return derivePreviewOrderValue(previews, index, fallback);
+};
 const resolveSelfPreviewDisplayName = () => {
   const identity = activeIdentityForPreview.value;
   if (identity?.displayName) {
@@ -3723,10 +4016,11 @@ const syncSelfTypingPreview = () => {
   upsertTypingPreview(payload);
 };
 watch(selfPreviewUserId, (next, prev) => {
-  if (prev && prev !== next) {
-    removeTypingPreview(prev, 'typing');
-  }
-  syncSelfTypingPreview();
+	if (prev && prev !== next) {
+		removeTypingPreview(prev, 'typing');
+		resetSelfPreviewOrder();
+	}
+	syncSelfTypingPreview();
 });
 let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
@@ -3734,7 +4028,24 @@ let lastTypingWhisperTargetId: string | null = null;
 const upsertTypingPreview = (item: TypingPreviewItem) => {
   const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const isSelfPreview = item.userId === selfPreviewUserId.value;
-  const orderKey = isSelfPreview ? Number.MAX_SAFE_INTEGER : getTypingOrderKey(item.userId, item.mode);
+  let orderKey: number;
+  if (isSelfPreview) {
+    const existing = typingPreviewList.value.find((preview) => preview.userId === item.userId && preview.mode === item.mode);
+    if (existing && Number.isFinite(existing.orderKey)) {
+      orderKey = existing.orderKey;
+    } else if (Number.isFinite(selfPreviewOrderKey.value)) {
+      orderKey = selfPreviewOrderKey.value;
+    } else {
+      orderKey = Number.MAX_SAFE_INTEGER;
+    }
+		selfPreviewOrderKey.value = orderKey;
+	} else {
+		if (typeof item.orderKey === 'number' && Number.isFinite(item.orderKey)) {
+			orderKey = item.orderKey;
+		} else {
+			orderKey = getTypingOrderKey(item.userId, item.mode);
+		}
+	}
   const existingIndex = typingPreviewList.value.findIndex((i) => i.userId === item.userId && i.mode === item.mode);
   if (existingIndex >= 0) {
     typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
@@ -3747,29 +4058,49 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
 };
 
 const removeTypingPreview = (userId?: string, mode: 'typing' | 'editing' = 'typing') => {
-  if (!userId) {
-    return;
-  }
-  typingPreviewList.value = typingPreviewList.value.filter((item) => !(item.userId === userId && item.mode === mode));
+	if (!userId) {
+		return;
+	}
+	typingPreviewList.value = typingPreviewList.value.filter((item) => !(item.userId === userId && item.mode === mode));
 };
 
 const resetTypingPreview = () => {
-  typingPreviewList.value = [];
-  typingPreviewOrderSeq = 0;
+	typingPreviewList.value = [];
+	typingPreviewOrderSeq = 0;
+	resetSelfPreviewOrder();
+	typingPreviewRowRefs.clear();
 };
 
 const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.id || null;
 
-const sendTypingUpdate = throttle((state: TypingBroadcastState, content: string, channelId: string, whisperTo?: string | null) => {
-  const targetId = whisperTo ?? resolveCurrentWhisperTargetId();
-  const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
-  const extra: { whisperTo?: string; icMode: 'ic' | 'ooc' } = { icMode };
-  if (targetId) {
-    extra.whisperTo = targetId;
-  }
-  lastTypingWhisperTargetId = targetId ?? null;
-  chat.messageTyping(state, content, channelId, extra);
-}, 400, { leading: true, trailing: true });
+const sendTypingUpdate = throttle(
+	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
+		const targetId = options?.whisperTo ?? resolveCurrentWhisperTargetId();
+		const icMode = chat.icMode === 'ooc' ? 'ooc' : 'ic';
+		const extra: { whisperTo?: string; icMode: 'ic' | 'ooc'; orderKey?: number } = { icMode };
+		if (targetId) {
+			extra.whisperTo = targetId;
+		}
+		if (typeof options?.orderKey === 'number' && Number.isFinite(options.orderKey) && options.orderKey > 0) {
+			extra.orderKey = options.orderKey;
+		}
+		lastTypingWhisperTargetId = targetId ?? null;
+		chat.messageTyping(state, content, channelId, extra);
+	},
+	400,
+	{ leading: true, trailing: true },
+);
+const broadcastTypingOrderChange = throttle(
+	() => {
+		if (!typingPreviewActive.value || !chat.curChannel?.id) {
+			return;
+		}
+		emitTypingPreview();
+		sendTypingUpdate.flush();
+	},
+	250,
+	{ leading: false, trailing: true },
+);
 
 const stopTypingPreviewNow = () => {
   sendTypingUpdate.cancel();
@@ -3927,7 +4258,13 @@ const emitTypingPreview = () => {
   // 富文本模式不截断 JSON，否则会破坏 JSON 结构导致无法渲染
   const truncated = inputMode.value === 'rich' ? raw : (raw.length > 3000 ? raw.slice(0, 3000) : raw);
   const content = typingPreviewMode.value === 'content' ? truncated : '';
-  sendTypingUpdate(typingPreviewMode.value, content, channelId, resolveCurrentWhisperTargetId());
+	const orderKeyForBroadcast = Number.isFinite(selfPreviewOrderKey.value)
+		? selfPreviewOrderKey.value
+		: undefined;
+	sendTypingUpdate(typingPreviewMode.value, content, channelId, {
+		whisperTo: resolveCurrentWhisperTargetId(),
+		orderKey: orderKeyForBroadcast,
+	});
 };
 
 const emitEditingPreview = () => {
@@ -5489,8 +5826,9 @@ const send = throttle(async () => {
   // 记录发送前的输入历史，便于失败后回溯
   appendHistoryEntry(sendMode, draft);
 
-  const replyTo = chat.curReplyTo || undefined;
-  stopTypingPreviewNow();
+	const replyTo = chat.curReplyTo || undefined;
+	const pendingDisplayOrder = resolveDisplayOrderForSend();
+	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
   suspendInlineSync = false;
@@ -5499,15 +5837,18 @@ const send = throttle(async () => {
   const now = Date.now();
   const clientId = nanoid();
   const wasAtBottom = isNearBottom();
-  const tmpMsg: Message = {
-    id: clientId,
-    createdAt: now,
-    updatedAt: now,
-    content: draft,
+	const tmpMsg: Message = {
+		id: clientId,
+		createdAt: now,
+		updatedAt: now,
+		content: draft,
     user: user.info,
     member: chat.curMember || undefined,
     quote: replyTo,
-  };
+	};
+	if (typeof pendingDisplayOrder === 'number' && Number.isFinite(pendingDisplayOrder)) {
+		(tmpMsg as any).displayOrder = pendingDisplayOrder;
+	}
   const activeIdentity = chat.getActiveIdentity(chat.curChannel?.id);
   if (activeIdentity) {
     const normalizedIdentityColor = normalizeHexColor(activeIdentity.color || '') || undefined;
@@ -5536,9 +5877,10 @@ const send = throttle(async () => {
     (tmpMsg as any).whisperTo = whisperTargetForSend;
   }
 
-  (tmpMsg as any).failed = false;
-  rows.value.push(tmpMsg);
-  instantMessages.add(tmpMsg);
+	(tmpMsg as any).failed = false;
+	rows.value.push(tmpMsg);
+	sortRowsByDisplayOrder();
+	instantMessages.add(tmpMsg);
 
   try {
     let finalContent: string;
@@ -5552,7 +5894,14 @@ const send = throttle(async () => {
     }
 
     tmpMsg.content = finalContent;
-    const newMsg = await chat.messageCreate(finalContent, replyTo?.id, whisperTargetForSend?.id, clientId, identityIdOverride);
+		const newMsg = await chat.messageCreate(
+			finalContent,
+			replyTo?.id,
+			whisperTargetForSend?.id,
+			clientId,
+			identityIdOverride,
+			pendingDisplayOrder ?? undefined,
+		);
     if (!newMsg) {
       throw new Error('message.create returned empty result');
     }
@@ -6027,17 +6376,18 @@ chatEvent.on('typing-preview', (e?: Event) => {
     e.member?.avatar ||
     e.user?.avatar ||
     '';
-  upsertTypingPreview({
-    userId: typingUserId,
-    displayName,
-    avatar,
-    color: identityColor,
-    content: typingState === 'content' ? (e.typing?.content || '') : '',
-    indicatorOnly: typingState !== 'content' || !e.typing?.content,
-    mode,
-    messageId: e.typing?.messageId,
-    tone: resolveTypingTone(e.typing),
-  });
+	upsertTypingPreview({
+		userId: typingUserId,
+		displayName,
+		avatar,
+		color: identityColor,
+		content: typingState === 'content' ? (e.typing?.content || '') : '',
+		indicatorOnly: typingState !== 'content' || !e.typing?.content,
+		mode,
+		messageId: e.typing?.messageId,
+		tone: resolveTypingTone(e.typing),
+		orderKey: typeof e.typing?.orderKey === 'number' ? e.typing.orderKey : Number.NaN,
+	});
 });
 
 chatEvent.off('channel-presence-updated', '*');
@@ -7098,12 +7448,15 @@ onBeforeUnmount(() => {
           v-for="preview in typingPreviewItems"
           :key="`${preview.userId}-typing`"
           :class="typingPreviewItemClass(preview)"
+          :ref="el => registerTypingPreviewRow(el as HTMLElement | null, preview)"
         >
           <div :class="typingPreviewSurfaceClass(preview)" :data-tone="preview.tone">
             <div
               v-if="shouldShowTypingHandle(preview)"
-              class="message-row__handle message-row__handle--placeholder"
-              aria-hidden="true"
+              :class="typingPreviewHandleClass(preview)"
+              :aria-hidden="!canDragTypingPreview(preview)"
+              tabindex="-1"
+              @pointerdown="onPreviewDragHandlePointerDown($event, preview)"
             >
               <span class="message-row__dot" v-for="n in 3" :key="n"></span>
             </div>
@@ -8401,6 +8754,17 @@ onBeforeUnmount(() => {
   touch-action: none;
 }
 
+.typing-preview-handle {
+  opacity: 1 !important;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.typing-preview-handle--dragging,
+.typing-preview-handle:active {
+  cursor: grabbing;
+}
+
 .message-row.draggable-item .message-row__handle {
   pointer-events: auto;
 }
@@ -8657,6 +9021,16 @@ onBeforeUnmount(() => {
   margin-top: 0.75rem;
   font-size: 0.9375rem;
   color: var(--chat-text-secondary);
+}
+
+.typing-preview-item--dragging {
+  position: relative;
+  z-index: 10;
+}
+
+.typing-preview-item--dragging .typing-preview-surface {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.15);
+  border-radius: var(--chat-message-radius, 0.85rem);
 }
 
 .typing-preview-surface {
