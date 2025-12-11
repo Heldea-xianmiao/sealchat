@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useWindowSize } from '@vueuse/core'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
 import { presetThemes, type PresetTheme } from '@/config/presetThemes'
 
@@ -13,6 +14,19 @@ const emit = defineEmits<{
 }>()
 
 const display = useDisplayStore()
+
+// 响应式 drawer 宽度
+const { width: windowWidth } = useWindowSize()
+const MOBILE_BREAKPOINT = 600
+const DRAWER_WIDTH_DESKTOP = 480
+const drawerWidth = computed(() => {
+  // 移动端使用窗口宽度，但不超过桌面宽度
+  if (windowWidth.value <= MOBILE_BREAKPOINT) {
+    return Math.min(windowWidth.value, DRAWER_WIDTH_DESKTOP)
+  }
+  return DRAWER_WIDTH_DESKTOP
+})
+
 
 // 编辑模式：新建 or 编辑现有
 const editMode = ref<'create' | 'edit'>('create')
@@ -254,7 +268,7 @@ const handleImportFile = (event: Event) => {
 </script>
 
 <template>
-  <n-drawer :show="props.show" :width="480" placement="right" @update:show="emit('update:show', $event)">
+  <n-drawer :show="props.show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
     <n-drawer-content closable title="自定义主题">
       <div class="custom-theme-panel">
         <!-- 主题列表 -->
@@ -589,6 +603,81 @@ const handleImportFile = (event: Event) => {
   &::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.3);
     border-radius: 2px;
+  }
+}
+
+/* ========== 移动端响应式设计 ========== */
+@media (max-width: 600px) {
+  .custom-theme-panel {
+    gap: 0.75rem;
+  }
+
+  .theme-section {
+    gap: 0.5rem;
+  }
+
+  .section-title {
+    font-size: 0.85rem;
+  }
+
+  .theme-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
+
+  .theme-item__info {
+    width: 100%;
+  }
+
+  .theme-item__actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .color-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .color-item__picker {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .color-swatch-trigger {
+    width: 48px;
+    height: 32px;
+  }
+
+  .import-export-section {
+    width: 100%;
+  }
+
+  .import-export-section .n-button {
+    width: 100%;
+  }
+
+  .preset-select {
+    width: 100%;
+  }
+
+  /* 更大的触摸目标 */
+  .theme-item__actions .n-button {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  /* 颜色分组更紧凑 */
+  .color-groups {
+    gap: 0.75rem;
+  }
+
+  .color-group__items {
+    gap: 0.35rem;
   }
 }
 </style>
