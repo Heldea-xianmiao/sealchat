@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
 import { createDefaultDisplaySettings, useDisplayStore, type DisplaySettings } from '@/stores/display'
+import { useOnboardingStore } from '@/stores/onboarding'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
@@ -21,6 +22,7 @@ const shortcutPanelVisible = ref(false)
 const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
 const display = useDisplayStore()
+const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
@@ -114,6 +116,11 @@ const handleConfirm = () => {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = draft
   emit('save', rest as any)
+}
+
+const handleOpenTutorialHub = () => {
+  onboarding.restart()
+  emit('update:visible', false)
 }
 </script>
 
@@ -594,6 +601,18 @@ const handleConfirm = () => {
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">功能教程</p>
+            <p class="section-desc">重新学习平台核心功能，选择性查看各功能模块</p>
+          </div>
+        </header>
+        <n-button secondary size="small" @click="handleOpenTutorialHub">
+          📚 打开教程中心
+        </n-button>
       </section>
 
 
