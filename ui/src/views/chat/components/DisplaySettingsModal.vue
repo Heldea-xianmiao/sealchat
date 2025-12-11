@@ -109,7 +109,12 @@ const handleRestoreDefaults = () => {
 }
 
 const handleClose = () => emit('update:visible', false)
-const handleConfirm = () => emit('save', { ...draft })
+const handleConfirm = () => {
+  // Exclude custom theme fields - they are managed directly by store actions
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = draft
+  emit('save', rest as any)
+}
 </script>
 
 <template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
+import { presetThemes, type PresetTheme } from '@/config/presetThemes'
 
 interface Props {
   show: boolean
@@ -79,6 +80,39 @@ const startEdit = (theme: CustomTheme) => {
   editingThemeId.value = theme.id
   themeName.value = theme.name
   themeColors.value = { ...theme.colors }
+}
+
+// 预设主题选项
+const presetOptions = computed(() => 
+  presetThemes.map(p => ({ label: p.name, value: p.id, description: p.description }))
+)
+
+// 导入预设主题
+const importPreset = (presetId: string) => {
+  const preset = presetThemes.find(p => p.id === presetId)
+  if (!preset) return
+  
+  // 检查是否已存在同名主题
+  const existingTheme = themes.value.find(t => t.name === preset.name)
+  const uniqueName = existingTheme 
+    ? `${preset.name} ${Date.now().toString(36).slice(-4)}`
+    : preset.name
+  
+  const theme: CustomTheme = {
+    id: `preset_${Date.now()}`,
+    name: uniqueName,
+    colors: { ...preset.colors },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+  
+  // 先确保自定义主题功能已启用，这样后续的 applyTheme 才能生效
+  if (!display.settings.customThemeEnabled) {
+    display.setCustomThemeEnabled(true)
+  }
+  
+  display.saveCustomTheme(theme)
+  display.activateCustomTheme(theme.id)
 }
 
 const handleSave = () => {
@@ -164,6 +198,25 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
         </section>
 
         <n-divider v-if="themes.length > 0" />
+
+        <!-- 预设主题 -->
+        <section class="theme-section">
+          <p class="section-title">导入预设主题</p>
+          <div class="preset-import">
+            <n-select
+              :options="presetOptions"
+              placeholder="选择预设主题..."
+              size="small"
+              :render-label="(option: any) => option.label"
+              @update:value="importPreset"
+              :value="null"
+              class="preset-select"
+            />
+            <p class="preset-hint">选择后将自动导入并激活该预设主题</p>
+          </div>
+        </section>
+
+        <n-divider />
 
         <!-- 编辑/新建表单 -->
         <section class="theme-section">
@@ -297,6 +350,22 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
 .theme-item__actions {
   display: flex;
   gap: 0.25rem;
+}
+
+.preset-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.preset-select {
+  max-width: 100%;
+}
+
+.preset-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  margin: 0;
 }
 
 .color-groups {
