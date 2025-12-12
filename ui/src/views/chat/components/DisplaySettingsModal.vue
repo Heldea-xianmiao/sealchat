@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, watch, computed, ref } from 'vue'
 import { createDefaultDisplaySettings, useDisplayStore, type DisplaySettings } from '@/stores/display'
+import { useOnboardingStore } from '@/stores/onboarding'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
@@ -21,6 +22,7 @@ const shortcutPanelVisible = ref(false)
 const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
 const display = useDisplayStore()
+const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
   { label: '相对时间（2 分钟前）', value: 'relative' },
   { label: '仅时间（14:35）', value: 'time' },
@@ -60,6 +62,7 @@ watch(
   draft.worldKeywordHighlightEnabled = value.worldKeywordHighlightEnabled
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
+  draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   // Custom theme fields are managed directly by store actions, not by draft
@@ -108,7 +111,17 @@ const handleRestoreDefaults = () => {
 }
 
 const handleClose = () => emit('update:visible', false)
-const handleConfirm = () => emit('save', { ...draft })
+const handleConfirm = () => {
+  // Exclude custom theme fields - they are managed directly by store actions
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = draft
+  emit('save', rest as any)
+}
+
+const handleOpenTutorialHub = () => {
+  onboarding.restart()
+  emit('update:visible', false)
+}
 </script>
 
 <template>
@@ -361,6 +374,20 @@ const handleConfirm = () => emit('save', { ...draft })
             <template #unchecked>允许重复</template>
           </n-switch>
         </div>
+        <div class="keyword-indent-settings">
+          <span class="indent-label">多段首行缩进</span>
+          <n-input-number
+            v-model:value="draft.worldKeywordTooltipTextIndent"
+            size="small"
+            :min="0"
+            :max="4"
+            :step="0.5"
+            :disabled="!draft.worldKeywordHighlightEnabled || !draft.worldKeywordTooltipEnabled"
+            style="width: 90px"
+          />
+          <span class="indent-unit">em</span>
+          <span class="indent-hint">（0 为关闭）</span>
+        </div>
         <div class="keyword-preview">
           <span
             class="keyword-preview__text"
@@ -574,6 +601,18 @@ const handleConfirm = () => emit('save', { ...draft })
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">功能教程</p>
+            <p class="section-desc">重新学习平台核心功能，选择性查看各功能模块</p>
+          </div>
+        </header>
+        <n-button secondary size="small" @click="handleOpenTutorialHub">
+          📚 打开教程中心
+        </n-button>
       </section>
 
 
@@ -799,6 +838,30 @@ const handleConfirm = () => emit('save', { ...draft })
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.keyword-indent-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.indent-label {
+  font-size: 0.85rem;
+  color: var(--sc-text-primary);
+}
+
+.indent-unit {
+  font-size: 0.8rem;
+  color: var(--sc-text-secondary);
+}
+
+.indent-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  opacity: 0.85;
 }
 
 .timestamp-settings {

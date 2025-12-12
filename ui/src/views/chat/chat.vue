@@ -62,7 +62,9 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
+import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
+import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 
 // const uploadImages = useObservable<Thumb[]>(
@@ -76,6 +78,7 @@ const utils = useUtilsStore();
 const display = useDisplayStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
+const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
 const isEditing = computed(() => !!chat.editing);
@@ -6156,6 +6159,9 @@ onMounted(async () => {
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
 
+  // 检查并启动新用户引导
+  onboarding.checkAndStartOnboarding();
+
   const sound = new Howl({
     src: [SoundMessageCreated],
     html5: true
@@ -8387,6 +8393,9 @@ onBeforeUnmount(() => {
 
   <ChannelFavoriteManager v-model:show="channelFavoritesVisible" />
   <WorldKeywordManager />
+
+  <!-- 新用户引导系统 -->
+  <OnboardingRoot />
 </template>
 
 <style lang="scss" scoped>
@@ -11003,6 +11012,17 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: auto;
+}
+
+/* 多段首行缩进样式 */
+:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph) {
+  text-indent: var(--keyword-tooltip-text-indent, 0);
+  margin: 0;
+  padding: 0;
+}
+
+:global(.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph) {
+  margin-top: 0.5em;
 }
 
 :global(.keyword-tooltip__body .keyword-highlight) {

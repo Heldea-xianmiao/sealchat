@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useWindowSize } from '@vueuse/core'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors } from '@/stores/display'
+import { presetThemes, type PresetTheme } from '@/config/presetThemes'
 
 interface Props {
   show: boolean
@@ -12,6 +14,19 @@ const emit = defineEmits<{
 }>()
 
 const display = useDisplayStore()
+
+// 响应式 drawer 宽度
+const { width: windowWidth } = useWindowSize()
+const MOBILE_BREAKPOINT = 600
+const DRAWER_WIDTH_DESKTOP = 480
+const drawerWidth = computed(() => {
+  // 移动端使用窗口宽度，但不超过桌面宽度
+  if (windowWidth.value <= MOBILE_BREAKPOINT) {
+    return Math.min(windowWidth.value, DRAWER_WIDTH_DESKTOP)
+  }
+  return DRAWER_WIDTH_DESKTOP
+})
+
 
 // 编辑模式：新建 or 编辑现有
 const editMode = ref<'create' | 'edit'>('create')
@@ -81,6 +96,39 @@ const startEdit = (theme: CustomTheme) => {
   themeColors.value = { ...theme.colors }
 }
 
+// 预设主题选项
+const presetOptions = computed(() => 
+  presetThemes.map(p => ({ label: p.name, value: p.id, description: p.description }))
+)
+
+// 导入预设主题
+const importPreset = (presetId: string) => {
+  const preset = presetThemes.find(p => p.id === presetId)
+  if (!preset) return
+  
+  // 检查是否已存在同名主题
+  const existingTheme = themes.value.find(t => t.name === preset.name)
+  const uniqueName = existingTheme 
+    ? `${preset.name} ${Date.now().toString(36).slice(-4)}`
+    : preset.name
+  
+  const theme: CustomTheme = {
+    id: `preset_${Date.now()}`,
+    name: uniqueName,
+    colors: { ...preset.colors },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+  
+  // 先确保自定义主题功能已启用，这样后续的 applyTheme 才能生效
+  if (!display.settings.customThemeEnabled) {
+    display.setCustomThemeEnabled(true)
+  }
+  
+  display.saveCustomTheme(theme)
+  display.activateCustomTheme(theme.id)
+}
+
 const handleSave = () => {
   if (!themeName.value.trim()) return
   const id = editingThemeId.value || `theme_${Date.now()}`
@@ -134,10 +182,93 @@ const updateColor = (key: keyof CustomThemeColors, value: string | null) => {
 const getColorValue = (key: keyof CustomThemeColors): string | null => {
   return themeColors.value[key] || null
 }
+
+// JSON 导出主题
+const exportTheme = (theme: CustomTheme) => {
+  const exportData = {
+    name: theme.name,
+    colors: theme.colors,
+    exportedAt: new Date().toISOString(),
+    version: '1.0',
+  }
+  const json = JSON.stringify(exportData, null, 2)
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `sealchat-theme-${theme.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// JSON 导入主题
+const importFileInput = ref<HTMLInputElement | null>(null)
+const importError = ref<string | null>(null)
+
+const triggerImport = () => {
+  importFileInput.value?.click()
+}
+
+const handleImportFile = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+  
+  importError.value = null
+  
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const content = e.target?.result as string
+      const data = JSON.parse(content)
+      
+      // 验证必需字段
+      if (!data.name || typeof data.name !== 'string') {
+        importError.value = '无效的主题文件：缺少 name 字段'
+        return
+      }
+      if (!data.colors || typeof data.colors !== 'object') {
+        importError.value = '无效的主题文件：缺少 colors 字段'
+        return
+      }
+      
+      // 创建新主题
+      const existingTheme = themes.value.find(t => t.name === data.name)
+      const uniqueName = existingTheme 
+        ? `${data.name} ${Date.now().toString(36).slice(-4)}`
+        : data.name
+      
+      const theme: CustomTheme = {
+        id: `imported_${Date.now()}`,
+        name: uniqueName,
+        colors: { ...data.colors },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }
+      
+      // 确保自定义主题功能已启用
+      if (!display.settings.customThemeEnabled) {
+        display.setCustomThemeEnabled(true)
+      }
+      
+      display.saveCustomTheme(theme)
+      display.activateCustomTheme(theme.id)
+      
+      // 重置文件输入
+      target.value = ''
+    } catch (err) {
+      importError.value = '无效的 JSON 文件'
+      console.error('Import theme error:', err)
+    }
+  }
+  reader.readAsText(file)
+}
 </script>
 
 <template>
-  <n-drawer :show="props.show" :width="480" placement="right" @update:show="emit('update:show', $event)">
+  <n-drawer :show="props.show" :width="drawerWidth" placement="right" @update:show="emit('update:show', $event)">
     <n-drawer-content closable title="自定义主题">
       <div class="custom-theme-panel">
         <!-- 主题列表 -->
@@ -156,6 +287,7 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
                 <n-tag v-if="activeThemeId === theme.id" size="small" type="success">当前</n-tag>
               </div>
               <div class="theme-item__actions">
+                <n-button text size="small" @click.stop="exportTheme(theme)">导出</n-button>
                 <n-button text size="small" @click.stop="startEdit(theme)">编辑</n-button>
                 <n-button text size="small" type="error" @click.stop="handleDelete(theme.id)">删除</n-button>
               </div>
@@ -164,6 +296,43 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
         </section>
 
         <n-divider v-if="themes.length > 0" />
+
+        <!-- 导入/导出 JSON -->
+        <section class="theme-section">
+          <p class="section-title">导入/导出</p>
+          <div class="import-export-section">
+            <input
+              ref="importFileInput"
+              type="file"
+              accept=".json,application/json"
+              style="display: none"
+              @change="handleImportFile"
+            />
+            <n-button size="small" @click="triggerImport">从 JSON 文件导入</n-button>
+            <n-text v-if="importError" type="error" class="import-error">{{ importError }}</n-text>
+          </div>
+        </section>
+
+        <n-divider />
+
+        <!-- 预设主题 -->
+        <section class="theme-section">
+          <p class="section-title">导入预设主题</p>
+          <div class="preset-import">
+            <n-select
+              :options="presetOptions"
+              placeholder="选择预设主题..."
+              size="small"
+              :render-label="(option: any) => option.label"
+              @update:value="importPreset"
+              :value="null"
+              class="preset-select"
+            />
+            <p class="preset-hint">选择后将自动导入并激活该预设主题</p>
+          </div>
+        </section>
+
+        <n-divider />
 
         <!-- 编辑/新建表单 -->
         <section class="theme-section">
@@ -299,6 +468,34 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
   gap: 0.25rem;
 }
 
+.preset-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.preset-select {
+  max-width: 100%;
+}
+
+.preset-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  margin: 0;
+}
+
+.import-export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.import-error {
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
 .color-groups {
   display: flex;
   flex-direction: column;
@@ -406,6 +603,81 @@ const getColorValue = (key: keyof CustomThemeColors): string | null => {
   &::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.3);
     border-radius: 2px;
+  }
+}
+
+/* ========== 移动端响应式设计 ========== */
+@media (max-width: 600px) {
+  .custom-theme-panel {
+    gap: 0.75rem;
+  }
+
+  .theme-section {
+    gap: 0.5rem;
+  }
+
+  .section-title {
+    font-size: 0.85rem;
+  }
+
+  .theme-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
+
+  .theme-item__info {
+    width: 100%;
+  }
+
+  .theme-item__actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .color-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .color-item__picker {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .color-swatch-trigger {
+    width: 48px;
+    height: 32px;
+  }
+
+  .import-export-section {
+    width: 100%;
+  }
+
+  .import-export-section .n-button {
+    width: 100%;
+  }
+
+  .preset-select {
+    width: 100%;
+  }
+
+  /* 更大的触摸目标 */
+  .theme-item__actions .n-button {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  /* 颜色分组更紧凑 */
+  .color-groups {
+    gap: 0.75rem;
+  }
+
+  .color-group__items {
+    gap: 0.35rem;
   }
 }
 </style>

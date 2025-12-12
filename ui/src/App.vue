@@ -952,23 +952,23 @@ nav a:first-of-type {
 }
 
 /* Override keyword highlight styles in custom theme mode */
-:root[data-custom-theme='true'] .keyword-highlight {
+:root[data-custom-theme='true'] .keyword-highlight:not(.keyword-highlight--underline) {
   background: var(--keyword-bg) !important;
   border-bottom-color: var(--keyword-border-color) !important;
   color: var(--keyword-text-color) !important;
 }
 
-:root[data-custom-theme='true'] .keyword-highlight:hover {
+:root[data-custom-theme='true'] .keyword-highlight:not(.keyword-highlight--underline):hover {
   background: var(--keyword-bg-hover) !important;
 }
 
-:root[data-custom-theme='true'] .keyword-highlight--underline {
+:root[data-custom-theme='true'] .keyword-highlight.keyword-highlight--underline {
   background: transparent !important;
   border-bottom-color: var(--keyword-border-color) !important;
   color: inherit !important;
 }
 
-:root[data-custom-theme='true'] .keyword-highlight--underline:hover {
+:root[data-custom-theme='true'] .keyword-highlight.keyword-highlight--underline:hover {
   background: var(--keyword-underline-bg-hover) !important;
 }
 
@@ -979,9 +979,25 @@ nav a:first-of-type {
   border-color: var(--sc-border-mute) !important;
 }
 
-:root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight {
+:root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight:not(.keyword-highlight--underline) {
   background: var(--keyword-bg) !important;
   border-bottom-color: var(--keyword-border-color) !important;
+}
+
+:root[data-custom-theme='true'] .keyword-tooltip__body .keyword-highlight.keyword-highlight--underline {
+  background: transparent !important;
+  border-bottom-color: var(--keyword-border-color) !important;
+}
+
+/* 术语气泡多段首行缩进样式 - 全局 */
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph {
+  text-indent: var(--keyword-tooltip-text-indent, 0);
+  margin: 0;
+  padding: 0;
+}
+
+.keyword-tooltip__body--indented .keyword-tooltip__paragraph + .keyword-tooltip__paragraph {
+  margin-top: 0.5em;
 }
 
 /* Active tabs with sc-sidebar-fill - more specific selectors */
