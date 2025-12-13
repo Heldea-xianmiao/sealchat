@@ -894,6 +894,41 @@ export const useChatStore = defineStore({
         [channelId]: identityId,
       };
       localStorage.setItem(`channelIdentity:${channelId}`, identityId || '');
+      // 反向自动切换：切换角色时检查是否需要切换场内外模式
+      this.autoSwitchIcOocOnRoleChange(channelId, identityId);
+    },
+
+    /**
+     * 切换角色时的反向自动切换场内外
+     * 如果角色存在唯一的场内外映射（仅映射到IC或仅映射到OOC），则自动切换模式
+     */
+    autoSwitchIcOocOnRoleChange(channelId: string, newRoleId: string) {
+      const display = useDisplayStore();
+      // 检查是否启用自动切换
+      if (!display.settings.autoSwitchRoleOnIcOocToggle) {
+        return;
+      }
+      if (!channelId || !newRoleId) {
+        return;
+      }
+
+      const config = this.getChannelIcOocRoleConfig(channelId);
+      const isIcRole = config.icRoleId === newRoleId;
+      const isOocRole = config.oocRoleId === newRoleId;
+
+      // 只有唯一映射时才自动切换
+      if (isIcRole && !isOocRole) {
+        // 角色仅映射到 IC，自动切换到 IC 模式
+        if (this.icMode !== 'ic') {
+          this.icMode = 'ic';
+        }
+      } else if (isOocRole && !isIcRole) {
+        // 角色仅映射到 OOC，自动切换到 OOC 模式
+        if (this.icMode !== 'ooc') {
+          this.icMode = 'ooc';
+        }
+      }
+      // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
     },
 
     upsertChannelIdentity(identity: ChannelIdentity) {
