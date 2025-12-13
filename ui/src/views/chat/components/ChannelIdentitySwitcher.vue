@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { computed, cloneVNode, ref, watch } from 'vue';
+import { computed, cloneVNode, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { useDisplayStore } from '@/stores/display';
@@ -80,6 +80,35 @@ const buildAttachmentUrl = (token?: string) => resolveAttachmentUrl(token);
 
 const displayName = computed(() => activeIdentity.value?.displayName || fallbackName.value);
 const displayColor = computed(() => activeIdentity.value?.color || '');
+
+// Mobile detection for responsive display
+const isMobile = ref(false);
+const MOBILE_BREAKPOINT = 768;
+const MAX_NAME_LENGTH_MOBILE = 4;
+
+const updateIsMobile = () => {
+  isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT;
+};
+
+// Displayed name: on mobile, if name exceeds 4 characters, show "切换" instead
+const displayedButtonLabel = computed(() => {
+  const name = displayName.value;
+  if (isMobile.value && name.length > MAX_NAME_LENGTH_MOBILE) {
+    return '切换';
+  }
+  return name;
+});
+
+// Setup resize listener for mobile detection
+
+onMounted(() => {
+  updateIsMobile();
+  window.addEventListener('resize', updateIsMobile);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateIsMobile);
+});
 const avatarSrc = computed(() => {
   return buildAttachmentUrl(activeIdentity.value?.avatarAttachmentId) || fallbackAvatar.value;
 });
@@ -226,7 +255,7 @@ const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && fav
         class="identity-switcher__label"
         :style="displayColor ? { color: displayColor } : undefined"
       >
-        {{ displayName }}
+        {{ displayedButtonLabel }}
       </span>
       <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
     </n-button>
