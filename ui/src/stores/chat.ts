@@ -864,6 +864,16 @@ export const useChatStore = defineStore({
 
       this.setChannelUnreadCount(id, 0);
 
+      // 设置网页标题为频道名字，并检查是否需要清除未读通知
+      import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
+        setChannelTitle(nextChannel?.name || '');
+        // 检查是否所有未读都已清零，如果是，清除标题通知
+        const totalUnread = Object.values(this.unreadCountMap).reduce((sum, count) => sum + (count || 0), 0);
+        if (totalUnread === 0) {
+          clearUnreadTitleNotification();
+        }
+      });
+
       chatEvent.emit('channel-switch-to', undefined);
       this.channelList(this.currentWorldId);
       return true;
@@ -2220,6 +2230,13 @@ export const useChatStore = defineStore({
       }
       this.isAppFocused = normalized;
       this.sendPresencePing(true);
+
+      // 当窗口获得焦点时，清除网页标题中的新消息提示
+      if (normalized) {
+        import('./utils').then(({ clearUnreadTitleNotification }) => {
+          clearUnreadTitleNotification();
+        });
+      }
     },
 
     updatePresence(userId: string, data: { lastPing: number; latencyMs: number; isFocused: boolean }) {

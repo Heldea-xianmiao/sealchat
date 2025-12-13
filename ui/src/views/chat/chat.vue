@@ -6270,6 +6270,17 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   } else {
     sound.play();
+    
+    // 如果窗口没有焦点，更新网页标题提示新消息
+    if (!chat.isAppFocused && chat.curChannel?.name) {
+      import('@/stores/utils').then(({ updateUnreadTitleNotification }) => {
+        // 累加标题中的未读计数
+        const currentTitle = document.title;
+        const match = currentTitle.match(/^有(\d+)条新消息/);
+        const currentCount = match ? parseInt(match[1], 10) : 0;
+        updateUnreadTitleNotification(currentCount + 1, chat.curChannel?.name || '新消息');
+      });
+    }
   }
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
