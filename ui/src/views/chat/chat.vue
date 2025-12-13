@@ -18,6 +18,7 @@ import ChatActionRibbon from './components/ChatActionRibbon.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
 import DisplaySettingsModal from './components/DisplaySettingsModal.vue'
+import IcOocRoleConfigPanel from './components/IcOocRoleConfigPanel.vue'
 import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
@@ -1104,6 +1105,7 @@ const handleSlashInput = (e: InputEvent) => {
 };
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
+const icOocRoleConfigPanelVisible = ref(false);
 const identitySubmitting = ref(false);
 const identityForm = reactive({
   displayName: '',
@@ -8212,6 +8214,16 @@ onBeforeUnmount(() => {
               </template>
               导入角色配置
             </n-tooltip>
+            <n-button
+              text
+              size="small"
+              @click="icOocRoleConfigPanelVisible = true"
+            >
+              <template #icon>
+                <n-icon :component="Settings" size="14" />
+              </template>
+              场内场外映射
+            </n-button>
           </n-space>
         </div>
       </template>
@@ -8353,6 +8365,7 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <input ref="identityImportInputRef" class="hidden" type="file" accept="application/json" @change="handleIdentityImportChange">
+  <IcOocRoleConfigPanel v-model:show="icOocRoleConfigPanelVisible" />
 
   <!-- 新增组件 -->
   <ArchiveDrawer
