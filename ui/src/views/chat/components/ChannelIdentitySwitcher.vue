@@ -6,8 +6,9 @@ import { useDisplayStore } from '@/stores/display';
 import AvatarVue from '@/components/avatar.vue';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import type { DropdownOption, DropdownRenderOption } from 'naive-ui';
-import { NDropdown, NButton, NIcon } from 'naive-ui';
-import { Plus, Star } from '@vicons/tabler';
+import { NDropdown, NButton, NIcon, NTooltip, NPopover } from 'naive-ui';
+import { Plus, Star, AlertTriangle } from '@vicons/tabler';
+import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue';
 
 const props = withDefaults(defineProps<{
   channelId?: string;
@@ -221,45 +222,130 @@ const handleSelect = async (key: string | number) => {
 };
 
 const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && favoriteFolderIds.value.length > 0);
+
+// IC/OOC mapping warning logic
+const icOocRoleConfigPanelVisible = ref(false);
+
+// Check if IC/OOC auto-switch is enabled but no mapping is configured
+const icOocConfig = computed(() => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return { icRoleId: null, oocRoleId: null };
+  return chat.getChannelIcOocRoleConfig(channelId);
+});
+
+const isAutoSwitchEnabled = computed(() => display.settings.autoSwitchRoleOnIcOocToggle);
+
+// Check if user only has one role (need to create second role for IC/OOC mapping)
+const hasOnlyOneRole = computed(() => identities.value.length === 1);
+const hasNoRoles = computed(() => identities.value.length === 0);
+
+const isMappingMissing = computed(() => {
+  if (!isAutoSwitchEnabled.value) return false;
+  // If only one role, can't configure IC/OOC mapping properly
+  if (hasOnlyOneRole.value || hasNoRoles.value) return true;
+  const config = icOocConfig.value;
+  // Show warning if either IC or OOC role is not configured
+  return !config.icRoleId || !config.oocRoleId;
+});
+
+// Warning message based on what's missing
+const warningMessage = computed(() => {
+  // If no roles, suggest creating roles
+  if (hasNoRoles.value) {
+    return '请先创建角色以使用场内/场外切换';
+  }
+  // If only one role, guide to create second role
+  if (hasOnlyOneRole.value) {
+    return '请创建第二个角色以配置场内/场外映射';
+  }
+  const config = icOocConfig.value;
+  if (!config.icRoleId && !config.oocRoleId) {
+    return '尚未配置场内/场外角色映射，点击立即设置';
+  }
+  if (!config.icRoleId) {
+    return '尚未配置场内（IC）角色，点击立即设置';
+  }
+  if (!config.oocRoleId) {
+    return '尚未配置场外（OOC）角色，点击立即设置';
+  }
+  return '';
+});
+
+const handleOpenConfig = () => {
+  // If only one role or no roles, emit create event to guide user to create role
+  if (hasNoRoles.value || hasOnlyOneRole.value) {
+    emit('create');
+    return;
+  }
+  icOocRoleConfigPanelVisible.value = true;
+};
+
+const isNightPalette = computed(() => display.palette === 'night');
 </script>
 
 <template>
-  <n-dropdown
-    trigger="click"
-    :options="options"
-    :show-arrow="false"
-    placement="top-start"
-    :disabled="!resolvedChannelId || disabled"
-    :render-option="renderOption"
-    :overlay-class="isNightPalette ? 'identity-dropdown--night' : undefined"
-    @select="handleSelect"
-  >
-    <n-button
-      tertiary
-      size="small"
-      class="identity-switcher"
+  <div class="identity-switcher-wrapper">
+    <!-- IC/OOC Mapping Warning Button -->
+    <n-tooltip v-if="isMappingMissing" trigger="hover" placement="top">
+      <template #trigger>
+        <n-button
+          quaternary
+          circle
+          size="tiny"
+          class="ic-ooc-warning-button"
+          @click="handleOpenConfig"
+        >
+          <template #icon>
+            <n-icon :component="AlertTriangle" size="16" />
+          </template>
+        </n-button>
+      </template>
+      <span class="warning-tooltip-content">{{ warningMessage }}</span>
+    </n-tooltip>
+
+    <n-dropdown
+      trigger="click"
+      :options="options"
+      :show-arrow="false"
+      placement="top-start"
       :disabled="!resolvedChannelId || disabled"
+      :render-option="renderOption"
+      :overlay-class="isNightPalette ? 'identity-dropdown--night' : undefined"
+      @select="handleSelect"
     >
-      <AvatarVue
-        :size="28"
-        :border="false"
-        :src="avatarSrc"
-        class="identity-switcher__avatar"
-      />
-      <span
-        v-if="displayColor"
-        class="identity-switcher__color"
-        :style="{ backgroundColor: displayColor }"
-      />
-      <span
-        class="identity-switcher__label"
-        :style="displayColor ? { color: displayColor } : undefined"
+      <n-button
+        tertiary
+        size="small"
+        class="identity-switcher"
+        :disabled="!resolvedChannelId || disabled"
       >
-        {{ displayedButtonLabel }}
-      </span>
-      <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
-    </n-button>
-  </n-dropdown>
+        <AvatarVue
+          :size="28"
+          :border="false"
+          :src="avatarSrc"
+          class="identity-switcher__avatar"
+        />
+        <span
+          v-if="displayColor"
+          class="identity-switcher__color"
+          :style="{ backgroundColor: displayColor }"
+        />
+        <span
+          class="identity-switcher__label"
+          :style="displayColor ? { color: displayColor } : undefined"
+        >
+          {{ displayedButtonLabel }}
+        </span>
+        <n-icon v-if="showFavoriteBadge" :component="Star" size="12" class="identity-switcher__favorite" />
+      </n-button>
+    </n-dropdown>
+
+    <!-- IC/OOC Role Config Panel -->
+    <IcOocRoleConfigPanel
+      v-model:show="icOocRoleConfigPanelVisible"
+      :channel-id="resolvedChannelId"
+    />
+  </div>
 </template>
 
 <style scoped>
@@ -375,5 +461,60 @@ const showFavoriteBadge = computed(() => filterMode.value === 'favorites' && fav
 :global(.identity-dropdown--night .n-dropdown-divider) {
   background-color: rgba(148, 163, 184, 0.35);
 }
+
+/* Wrapper for identity switcher and warning */
+.identity-switcher-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* IC/OOC Warning Button */
+.ic-ooc-warning-button {
+  color: #f59e0b;
+  animation: warning-glow 2s ease-in-out infinite;
+  transition: color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6));
+}
+
+.ic-ooc-warning-button:hover {
+  color: #d97706;
+  transform: scale(1.15);
+  animation: none;
+  filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.9));
+}
+
+@keyframes warning-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6));
+    opacity: 1;
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.9));
+    opacity: 0.85;
+  }
+}
+
+/* Warning tooltip content */
+.warning-tooltip-content {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 200px;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .identity-switcher-wrapper {
+    gap: 0.25rem;
+  }
+  
+  .ic-ooc-warning-button {
+    padding: 0.15rem;
+  }
+  
+  .warning-tooltip-content {
+    font-size: 0.75rem;
+    max-width: 160px;
+  }
+}
 </style>
-const isNightPalette = computed(() => display.palette === 'night');

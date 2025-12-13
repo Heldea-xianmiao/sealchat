@@ -1937,6 +1937,7 @@ const submitIdentityForm = async () => {
     isDefault: identityForm.isDefault,
     folderIds: identityForm.folderIds,
   };
+  const wasCreating = identityDialogMode.value === 'create';
   try {
     if (identityAvatarFile) {
       const uploadResult = await uploadImageAttachment(identityAvatarFile, { channelId: chat.curChannel.id });
@@ -1959,6 +1960,17 @@ const submitIdentityForm = async () => {
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true);
     identityDialogVisible.value = false;
+
+    // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
+    if (wasCreating && display.settings.autoSwitchRoleOnIcOocToggle) {
+      const identities = chat.channelIdentities[chat.curChannel.id] || [];
+      if (identities.length === 2) {
+        // Brief delay for better UX before opening config panel
+        setTimeout(() => {
+          icOocRoleConfigPanelVisible.value = true;
+        }, 300);
+      }
+    }
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '保存失败，请稍后重试';
     message.error(errMsg);
