@@ -15,19 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: latest
+          node-version: 20
 
       - name: Build UI
         run: |
           cd ui
-          yarn install
+          corepack enable
+          yarn install --frozen-lockfile
           yarn build-only
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -64,14 +65,14 @@ jobs:
             goarch: amd64
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: true
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       - name: Get UI resources
         uses: actions/download-artifact@v4
@@ -100,28 +101,55 @@ jobs:
             CC="zig cc -target x86_64-windows-gnu" go build -o "output/sealchat-server.exe" -trimpath -ldflags "-s -w" .
           fi
 
+      - name: Prepare package
+        run: |
+          set -euo pipefail
+          rm -rf package
+          mkdir -p package/bin
+
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            cp output/sealchat-server package/
+            if [ "${{ matrix.goarch }}" = "amd64" ]; then
+              WEBP_DIR="linux-x64"
+            elif [ "${{ matrix.goarch }}" = "arm64" ]; then
+              WEBP_DIR="linux-arm64"
+            else
+              echo "Unsupported arch: ${{ matrix.goarch }}"
+              exit 1
+            fi
+          elif [ "${{ matrix.goos }}" = "windows" ]; then
+            cp output/sealchat-server.exe package/
+            WEBP_DIR="win-x64"
+          else
+            echo "Unsupported OS: ${{ matrix.goos }}"
+            exit 1
+          fi
+
+          mkdir -p "package/bin/${WEBP_DIR}"
+          cp -a "bin/${WEBP_DIR}/." "package/bin/${WEBP_DIR}/"
+          cp bin/LICENSE package/LICENSE
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: sealchat_${{ github.sha }}_${{ matrix.name }}
-          path: ./output
+          path: ./package
 
       - name: Compress files
         run: |
           mkdir -p release
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           if [ "${{ matrix.goos }}" = "linux" ]; then
-            tar -czvf release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz -C output sealchat-server
-            chmod +x release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz
+            tar -czvf release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.tar.gz -C package .
           elif [ "${{ matrix.goos }}" = "windows" ]; then
-            cd output && zip -r ../release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.zip sealchat-server.exe
+            cd package && zip -r ../release/sealchat_$(date +%Y%m%d)_${SHORT_SHA}_${{ matrix.name }}.zip .
           fi
 
       - name: Set slug output
         id: slug
         run: |
-          echo "::set-output name=SHORT_SHA::$(echo ${{ github.sha }} | cut -c1-7)"
-          echo "::set-output name=DATE::$(date +%Y%m%d)"
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
       - name: Generate Release Notes
         id: release_notes
