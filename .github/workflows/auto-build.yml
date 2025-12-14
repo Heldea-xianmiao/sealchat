@@ -5,9 +5,14 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+  packages: write
+
 env:
   COMMIT_ID: "${{ github.sha }}"
   NO_BUILD_PROMPT: "no new commits, no need to build."
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/sealchat
 
 jobs:
   ui-build:
@@ -28,7 +33,7 @@ jobs:
         run: |
           cd ui
           corepack enable
-          yarn install --frozen-lockfile
+          yarn install
           yarn build-only
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -169,3 +174,41 @@ jobs:
             release/sealchat_*_*_${{ matrix.name }}.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-build:
+    name: Build & Push Docker Image (amd64)
+    runs-on: ubuntu-latest
+    needs: ui-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get UI resources
+        uses: actions/download-artifact@v4
+        with:
+          name: ui
+          path: ./ui/dist
+
+      - name: Set slug output
+        id: slug
+        run: |
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        run: |
+          docker build \
+            -t "${{ env.IMAGE_NAME }}:latest" \
+            -t "${{ env.IMAGE_NAME }}:sha-${{ github.sha }}" \
+            -t "${{ env.IMAGE_NAME }}:${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}" \
+            -f Dockerfile \
+            .
+
+      - name: Push image
+        run: |
+          docker push "${{ env.IMAGE_NAME }}:latest"
+          docker push "${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          docker push "${{ env.IMAGE_NAME }}:${{ steps.slug.outputs.DATE }}-${{ steps.slug.outputs.SHORT_SHA }}"
