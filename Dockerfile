@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+FROM node:20-bookworm-slim AS ui-builder
+WORKDIR /src/ui
+COPY ui/package.json ui/yarn.lock ./
+RUN corepack enable && yarn install --frozen-lockfile
+COPY ui/ ./
+RUN yarn build-only
+
+FROM golang:1.24-bookworm AS go-builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . ./
+COPY --from=ui-builder /src/ui/dist ./ui/dist
+
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+  go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w" .
+
+FROM alpine:3.20 AS webp-assets
+ARG TARGETARCH
+WORKDIR /src
+COPY bin/ ./bin/
+RUN set -eux; \
+  case "${TARGETARCH:-amd64}" in \
+    amd64) WEBP_DIR="linux-x64" ;; \
+    arm64) WEBP_DIR="linux-arm64" ;; \
+    *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+  esac; \
+  mkdir -p /out/bin/"${WEBP_DIR}"; \
+  cp -a ./bin/"${WEBP_DIR}"/. /out/bin/"${WEBP_DIR}"/; \
+  cp ./bin/LICENSE /out/LICENSE; \
+  chmod +x /out/bin/"${WEBP_DIR}"/cwebp /out/bin/"${WEBP_DIR}"/gif2webp
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates wget && update-ca-certificates
+WORKDIR /app
+
+COPY --from=go-builder /out/sealchat-server /app/sealchat-server
+COPY --from=webp-assets /out/bin /app/bin
+COPY --from=webp-assets /out/LICENSE /app/LICENSE
+
+EXPOSE 3212
+ENTRYPOINT ["/app/sealchat-server"]
+
