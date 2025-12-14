@@ -1,25 +1,32 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-bookworm-slim AS ui-builder
+FROM --platform=$BUILDPLATFORM node:20-bookworm-slim AS ui-builder
 WORKDIR /src/ui
 COPY ui/ ./
-RUN if [ -f dist/index.html ]; then echo "Using prebuilt ui/dist from build context"; else corepack enable && yarn install --network-timeout 600000 && yarn build-only; fi
+RUN --mount=type=cache,target=/root/.cache/yarn \
+  if [ -f dist/index.html ]; then echo "Using prebuilt ui/dist from build context"; else corepack enable && yarn install --network-timeout 600000 && yarn build-only; fi
 
-FROM golang:1.24-bookworm AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.24-bookworm AS go-builder
 WORKDIR /src
 
+ENV GOMODCACHE=/go/pkg/mod \
+  GOCACHE=/root/.cache/go-build
+
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+  --mount=type=cache,target=/root/.cache/go-build \
+  go mod download
 
 COPY . ./
 COPY --from=ui-builder /src/ui/dist ./ui/dist
 
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-  go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w" .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w" .
 
-FROM alpine:3.20 AS webp-assets
+FROM --platform=$BUILDPLATFORM alpine:3.20 AS webp-assets
 ARG TARGETARCH
 WORKDIR /src
 COPY bin/ ./bin/
