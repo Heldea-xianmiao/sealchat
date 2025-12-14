@@ -179,6 +179,9 @@ const formatBytes = (bytes: number) => {
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
       </n-form-item>
+      <n-form-item label="术语最大字数" feedback="单条术语内容的最大字符数（100-10000）">
+        <n-input-number v-model:value="model.keywordMaxLength" :min="100" :max="10000" />
+      </n-form-item>
 
       <!-- Image Migration Section -->
       <n-divider>图片迁移 (WebP)</n-divider>
