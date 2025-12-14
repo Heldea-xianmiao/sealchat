@@ -3,7 +3,7 @@
 FROM node:20-bookworm-slim AS ui-builder
 WORKDIR /src/ui
 COPY ui/package.json ui/yarn.lock ./
-RUN corepack enable && yarn install --frozen-lockfile
+RUN corepack enable && yarn install
 COPY ui/ ./
 RUN yarn build-only
 
@@ -46,4 +46,3 @@ COPY --from=webp-assets /out/LICENSE /app/LICENSE
 
 EXPOSE 3212
 ENTRYPOINT ["/app/sealchat-server"]
-

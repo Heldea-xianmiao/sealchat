@@ -28,7 +28,7 @@ jobs:
         run: |
           cd ui
           corepack enable
-          yarn install --frozen-lockfile
+          yarn install
           yarn build-only
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
