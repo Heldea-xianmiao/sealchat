@@ -12,8 +12,6 @@ sealchat-data
 build
 
 ui/node_modules
-ui/dist
 ui/dist-export-viewer
 
 *.exe
-
