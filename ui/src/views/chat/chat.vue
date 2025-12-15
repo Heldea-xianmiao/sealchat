@@ -6359,6 +6359,39 @@ chatEvent.on('message-created', (e?: Event) => {
         updateUnreadTitleNotification(currentCount + 1, chat.curChannel?.name || '新消息');
       });
     }
+    
+    // 前台推送通知（页面打开但切换了标签页）
+    if (!document.hasFocus()) {
+      import('@/stores/pushNotification').then(({ usePushNotificationStore }) => {
+        const pushStore = usePushNotificationStore();
+        if (pushStore.enabled) {
+          // 提取发送者名字
+          const senderName = incoming.identity?.displayName
+            || (incoming as any).sender_member_name
+            || incoming.member?.nick
+            || incoming.user?.nick
+            || '新消息';
+          
+          // 提取消息内容预览（移除 HTML 标签）
+          const rawContent = incoming.content || '';
+          const plainText = rawContent.replace(/<[^>]*>/g, '').trim();
+          const preview = plainText.length > 50 ? plainText.slice(0, 50) + '...' : plainText;
+          
+          // 获取发送者头像（优先角色头像，其次用户/成员头像）
+          const avatarUrl = resolveAttachmentUrl((incoming.identity as any)?.avatarAttachmentId)
+            || incoming.member?.avatar
+            || incoming.user?.avatar
+            || undefined;
+          
+          pushStore.showNotification(
+            chat.curChannel?.name || 'SealChat',
+            `${senderName}: ${preview || '发送了一条消息'}`,
+            chat.curChannel?.id || '',
+            avatarUrl
+          );
+        }
+      });
+    }
   }
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
