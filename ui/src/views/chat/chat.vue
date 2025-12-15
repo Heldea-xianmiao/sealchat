@@ -7951,6 +7951,12 @@ onBeforeUnmount(() => {
           </div>
         </transition>
 
+          <div v-if="whisperMode" class="whisper-pill-wrapper">
+            <div class="whisper-pill" @mousedown.prevent>
+              <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
+              <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
+            </div>
+          </div>
           <div class="chat-input-area relative flex-1">
             <div class="chat-input-actions input-floating-toolbar flex flex-1 items-center justify-between gap-2">
               <div class="chat-input-actions__group chat-input-actions__group--leading">
@@ -8324,10 +8330,6 @@ onBeforeUnmount(() => {
             </div>
             <div class="chat-input-editor-row">
               <div class="chat-input-editor-main">
-                <div v-if="whisperMode" class="whisper-pill" @mousedown.prevent>
-                  <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
-                  <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
-                </div>
                 <ChatInputSwitcher
                   ref="textInputRef"
                   v-model="textToSend"
@@ -10496,10 +10498,11 @@ onBeforeUnmount(() => {
   padding-top: 1.35rem;
 }
 
+.whisper-pill-wrapper {
+  padding: 0.35rem 1rem 0.25rem;
+}
+
 .whisper-pill {
-  position: absolute;
-  top: 0.35rem;
-  left: 1.1rem;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -10509,7 +10512,6 @@ onBeforeUnmount(() => {
   color: #5b21b6;
   font-size: 0.85rem;
   font-weight: 500;
-  z-index: 2;
 }
 
 .whisper-pill__close {
