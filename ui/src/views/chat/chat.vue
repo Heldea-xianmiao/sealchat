@@ -6699,13 +6699,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   if (!e?.presence || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
+  if (typeof (e as any)?.timestamp === 'number') {
+    chat.syncServerTime((e as any).timestamp);
+  }
   e.presence.forEach((item) => {
     const userId = item?.user?.id;
     if (!userId) {
       return;
     }
     chat.updatePresence(userId, {
-      lastPing: item?.lastSeen ?? Date.now(),
+      lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
       latencyMs: typeof item?.latency === 'number' ? item.latency : Number(item?.latency) || 0,
       isFocused: !!item?.focused,
     });
