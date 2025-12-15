@@ -69,8 +69,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/captcha/:id/reload", CaptchaReload)
 
 	v1.Get("/config", func(c *fiber.Ctx) error {
-		ret := *appConfig
-		ret.LogUpload.Token = ""
+		ret := sanitizeConfigForClient(appConfig)
 		u := getCurUser(c)
 		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
 			ret.ServeAt = ""
@@ -257,6 +256,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)
 	v1AuthAdmin.Post("/admin/image-migration/execute", ImageMigrationExecute)
+	v1AuthAdmin.Get("/admin/s3-migration/preview", S3MigrationPreview)
+	v1AuthAdmin.Post("/admin/s3-migration/execute", S3MigrationExecute)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
 		var newConfig utils.AppConfig
@@ -264,7 +265,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		if err != nil {
 			return err
 		}
-		appConfig = &newConfig
+		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
 		return nil
 	})

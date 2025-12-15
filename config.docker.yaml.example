@@ -89,6 +89,8 @@ storage:
     baseUrl: ""
   s3:
     enabled: false
+    attachmentsEnabled: true   # 附件/图片是否存入 S3
+    audioEnabled: true         # 音频是否存入 S3
     endpoint: https://cos.ap-region.myqcloud.com
     region: ap-region
     bucket: your-bucket-name

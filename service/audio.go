@@ -292,7 +292,7 @@ func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOpt
 }
 
 func (svc *audioService) shouldUseObjectStore() bool {
-	return svc.objectStore != nil && svc.objectStore.ActiveBackend() == storage.BackendS3
+	return svc.objectStore != nil && svc.objectStore.ActiveBackendForAudio() == storage.BackendS3
 }
 
 func (svc *audioService) persistLocalAsset(asset *model.AudioAsset, tempPath, mimeType string) (*model.AudioAsset, error) {
@@ -316,7 +316,7 @@ func (svc *audioService) persistWithObjectStore(asset *model.AudioAsset, tempPat
 	}
 	objectKey := storage.BuildAudioObjectKey(asset.ID, originalName)
 	duration, _ := svc.probeDurationFromFile(tempPath)
-	result, err := svc.objectStore.Upload(context.Background(), storage.UploadInput{
+	result, err := svc.objectStore.UploadToS3(context.Background(), storage.UploadInput{
 		ObjectKey:   objectKey,
 		LocalPath:   tempPath,
 		ContentType: mimeType,
