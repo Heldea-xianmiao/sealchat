@@ -2092,9 +2092,14 @@ const getMessageTone = (message: any): 'ic' | 'ooc' | 'archived' => {
   if (message?.isArchived || message?.is_archived) {
     return 'archived';
   }
-  // 如果正在编辑此消息，使用编辑状态的 icMode
+  // 如果正在编辑此消息（自己），使用编辑状态的 icMode
   if (chat.editing && chat.editing.messageId === message?.id) {
     return chat.editing.icMode === 'ooc' ? 'ooc' : 'ic';
+  }
+  // 如果他人正在编辑此消息，使用编辑预览中的 tone
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview && !editingPreview.isSelf) {
+    return editingPreview.tone === 'ooc' ? 'ooc' : 'ic';
   }
   if (message?.icMode === 'ooc' || message?.ic_mode === 'ooc') {
     return 'ooc';
@@ -4938,6 +4943,8 @@ watch(
       return;
     }
     emitEditingPreview();
+    // 增加 listRevision 强制触发消息行重新渲染，确保外边框 CSS 实时更新
+    listRevision.value += 1;
   },
 );
 
