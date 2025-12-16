@@ -159,7 +159,7 @@ func ChannelImagesList(c *fiber.Ctx) error {
 				ID:           msg.ID + "_" + attID,
 				MessageID:    msg.ID,
 				AttachmentID: attID,
-				ThumbURL:     "/api/v1/attachment/" + attID,
+				ThumbURL:     "/api/v1/attachment/" + attID + "/thumb?size=150",
 				SenderID:     senderID,
 				SenderName:   senderName,
 				SenderAvatar: senderAvatar,

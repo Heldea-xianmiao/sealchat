@@ -82,6 +82,7 @@ const setupGalleryViewer = async () => {
   galleryViewer = new Viewer(grid, {
     className: 'channel-gallery-viewer',
     filter: (image: HTMLImageElement) => image.classList.contains('gallery-thumb'),
+    url: 'data-original',  // 使用 data-original 属性加载原图
     navbar: hasMultiple,  // 多图时显示缩略图导航
     title: false,
     toolbar: {
@@ -182,8 +183,20 @@ const formatTime = (timestamp: number) => {
   return dayjs(timestamp).format('MM-DD HH:mm')
 }
 
+// Get full original image URL
 const getImageUrl = (attachmentId: string) => {
   return resolveAttachmentUrl(attachmentId) || `/api/v1/attachment/${attachmentId}`
+}
+
+// Get thumbnail URL with fixed size (200px for all modes to reduce storage)
+const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
+  const size = 200  // 统一使用 200px，减少缓存占用
+  if (item.thumbUrl) {
+    // Replace size parameter if exists, otherwise append
+    return item.thumbUrl.replace(/size=\d+/, `size=${size}`)
+  }
+  // Fallback to thumb endpoint
+  return `/api/v1/attachment/${item.attachmentId}/thumb?size=${size}`
 }
 </script>
 
@@ -283,7 +296,7 @@ const getImageUrl = (attachmentId: string) => {
             <div class="image-card__thumb" @click="handleImageClick(index)">
               <img
                 class="gallery-thumb"
-                :src="getImageUrl(item.attachmentId)"
+                :src="getThumbUrl(item)"
                 :data-original="getImageUrl(item.attachmentId)"
                 loading="lazy"
                 alt=""

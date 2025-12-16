@@ -78,6 +78,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	})
 
 	v1.Get("/attachment/:id", AttachmentGet)
+	v1.Get("/attachment/:id/thumb", AttachmentThumb)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
