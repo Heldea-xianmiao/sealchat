@@ -132,6 +132,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	diceMacros.Post("/import", ChannelDiceMacroImport)
 
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
+	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}

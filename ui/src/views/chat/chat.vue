@@ -25,6 +25,7 @@ import ExportDialog from './components/export/ExportDialog.vue'
 import ExportManagerModal from './components/export/ExportManagerModal.vue'
 import ChatImportDialog from './components/ChatImportDialog.vue'
 import ChatImportProgress from './components/ChatImportProgress.vue'
+import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
 import DiceTray from './components/DiceTray.vue'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
@@ -63,6 +64,7 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
+import { useChannelImagesStore } from '@/stores/channelImages';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
@@ -81,6 +83,7 @@ const utils = useUtilsStore();
 const display = useDisplayStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
+const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 iFormStore.bootstrap();
@@ -776,6 +779,7 @@ const filteredGalleryEmojis = computed(() => {
 });
 
 const galleryPanelVisible = computed(() => gallery.isPanelVisible);
+const channelImagesPanelVisible = computed(() => channelImages.panelVisible);
 
 const message = useMessage()
 const dialog = useDialog()
@@ -1047,6 +1051,22 @@ const openGalleryPanel = async () => {
     console.warn('打开画廊失败', error);
     message.error('打开画廊失败，请稍后重试');
   }
+};
+
+const openChannelImagesPanel = () => {
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.warning('请先选择一个频道');
+    return;
+  }
+  channelImages.openPanel(channelId);
+};
+
+const handleChannelImagesLocate = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
+  // 复用搜索跳转逻辑
+  await handleSearchJump(payload);
+  // 可选：关闭图片查看器
+  // channelImages.closePanel();
 };
 
 const handleEmojiManageClick = async () => {
@@ -7587,6 +7607,7 @@ onBeforeUnmount(() => {
         :gallery-active="galleryPanelVisible"
         :display-active="displaySettingsVisible"
         :favorite-active="display.favoriteBarEnabled"
+        :channel-images-active="channelImagesPanelVisible"
         :can-import="canManageWorldKeywords"
         :import-active="importDialogVisible"
         @update:filters="chat.setFilterState($event)"
@@ -7597,6 +7618,7 @@ onBeforeUnmount(() => {
         @open-gallery="openGalleryPanel"
         @open-display-settings="displaySettingsVisible = true"
         @open-favorites="channelFavoritesVisible = true"
+        @open-channel-images="openChannelImagesPanel"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -8382,6 +8404,7 @@ onBeforeUnmount(() => {
   <RightClickMenu />
   <AvatarClickMenu />
   <GalleryPanel @insert="handleGalleryInsert" />
+  <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
     preset="dialog"
