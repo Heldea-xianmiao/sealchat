@@ -92,6 +92,7 @@ const router = useRouter();
 const route = useRoute();
 const isEditing = computed(() => !!chat.editing);
 
+const isEmbedMode = computed(() => route.path === '/embed');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
 
 const openSplitView = () => {
@@ -108,6 +109,60 @@ const openSplitView = () => {
     },
   });
 };
+
+type ExternalPanelKey =
+  | 'search'
+  | 'archive'
+  | 'export'
+  | 'import'
+  | 'identity'
+  | 'gallery'
+  | 'display'
+  | 'favorites'
+  | 'channel-images';
+
+const openPanelForShell = (panel: ExternalPanelKey) => {
+  switch (panel) {
+    case 'search':
+      channelSearch.togglePanel();
+      return;
+    case 'archive':
+      archiveDrawerVisible.value = true;
+      return;
+    case 'export':
+      exportManagerVisible.value = true;
+      return;
+    case 'import':
+      importDialogVisible.value = true;
+      return;
+    case 'identity':
+      void openIdentityManager();
+      return;
+    case 'gallery':
+      void openGalleryPanel();
+      return;
+    case 'display':
+      displaySettingsVisible.value = true;
+      return;
+    case 'favorites':
+      channelFavoritesVisible.value = true;
+      return;
+    case 'channel-images':
+      openChannelImagesPanel();
+      return;
+    default:
+      return;
+  }
+};
+
+const setFiltersForShell = (filters: any) => {
+  chat.setFilterState(filters);
+};
+
+defineExpose({
+  openPanelForShell,
+  setFiltersForShell,
+});
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
   get: () => {
@@ -7618,7 +7673,7 @@ onBeforeUnmount(() => {
     <!-- 功能面板 -->
     <transition name="slide-down">
       <ChatActionRibbon
-        v-if="showActionRibbon"
+        v-if="showActionRibbon && !isEmbedMode"
         :filters="chat.filterState"
         :roles="ribbonRoleOptions"
         :archive-active="archiveDrawerVisible"

@@ -54,6 +54,14 @@ export const useUserStore = defineStore({
   },
 
   actions: {
+    shouldAutoInitChatAfterSessionCheck() {
+      if (typeof window === 'undefined') return true;
+      const hash = window.location.hash || '';
+      // 分屏壳页面不需要 Chat Store，避免额外建立 WS 连接（iframe 内 embed 会自行连接）
+      if (hash.startsWith('#/split')) return false;
+      return true;
+    },
+
     async changePassword(form: { password: string, passwordNew: string }) {
       const resp = await api.post('api/v1/user-password-change', {
         password: form.password, passwordNew: form.passwordNew
@@ -137,7 +145,9 @@ export const useUserStore = defineStore({
         const firstTime = !this.info?.id;
         await this.infoUpdate();
         if (firstTime) {
-          useChatStore().tryInit();
+          if (this.shouldAutoInitChatAfterSessionCheck()) {
+            useChatStore().tryInit();
+          }
         }
         this.lastCheckTime = Date.now();
         return 'ok';

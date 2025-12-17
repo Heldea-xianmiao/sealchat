@@ -1,60 +1,121 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { NButton, NRadioButton, NRadioGroup, NSelect } from 'naive-ui';
+import { NLayout, NLayoutContent, NLayoutHeader, NLayoutSider, NDrawer, NDrawerContent } from 'naive-ui';
+import { useWindowSize } from '@vueuse/core';
+import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
+import SplitHeader from '@/views/split/components/SplitHeader.vue';
+import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
+import { setChannelTitle } from '@/stores/utils';
+import { useChatStore } from '@/stores/chat';
 
-type LayoutMode = 'left-column' | 'per-pane';
+type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
-type ChannelOption = { label: string; value: string };
+type FilterState = {
+  icOnly: boolean;
+  showArchived: boolean;
+  roleIds: string[];
+};
 
-type EmbedReadyMessage = {
-  type: 'sealchat.embed.ready' | 'sealchat.embed.state';
-  paneId: string;
+type RoleOption = { id: string; label?: string; name?: string };
+
+type EmbedStateMessage = {
+  type: 'sealchat.embed.state' | 'sealchat.embed.ready';
+  paneId: PaneId;
   worldId?: string;
-  currentChannelId?: string;
-  channelOptions?: ChannelOption[];
+  worldName?: string;
+  worldOptions?: Array<{ value: string; label: string }>;
+  channelId?: string;
+  channelName?: string;
+  connectState?: ConnectState;
+  onlineMembersCount?: number;
+  currentChannelUnread?: number;
+  filterState?: FilterState;
+  roleOptions?: RoleOption[];
+  canImport?: boolean;
+  channelTree?: SplitChannelNode[];
+  searchPanelVisible?: boolean;
 };
 
 type EmbedFocusMessage = {
   type: 'sealchat.embed.focus';
-  paneId: string;
-  focused: boolean;
+  paneId: PaneId;
 };
 
-type EmbedMessage = EmbedReadyMessage | EmbedFocusMessage;
+type EmbedToggleSidebarMessage = {
+  type: 'sealchat.embed.requestToggleSidebar';
+  paneId: PaneId;
+};
 
-type PaneId = 'A' | 'B';
+type EmbedMessage = EmbedStateMessage | EmbedFocusMessage | EmbedToggleSidebarMessage;
 
 interface PaneState {
   id: PaneId;
   iframeKey: number;
   src: string;
   ready: boolean;
-  focused: boolean;
-  worldId?: string;
-  currentChannelId?: string;
-  channelOptions: ChannelOption[];
+  worldId: string;
+  worldName: string;
+  worldOptions: Array<{ value: string; label: string }>;
+  channelId: string;
+  channelName: string;
+  connectState: ConnectState;
+  onlineMembersCount: number;
+  currentChannelUnread: number;
+  filterState: FilterState;
+  roleOptions: RoleOption[];
+  canImport: boolean;
+  channelTree: SplitChannelNode[];
+  searchPanelVisible: boolean;
   notifyOwner: boolean;
 }
 
+type OperationTarget = 'follow' | PaneId;
+
 const router = useRouter();
 const route = useRoute();
+// 分屏壳页面自身不需要 WS：关闭主实例连接，避免占用连接数导致 iframe embed 连接失败
+useChatStore().disconnect('split-shell');
+const { width } = useWindowSize();
 
-const layoutMode = ref<LayoutMode>((route.query.layout as LayoutMode) || 'left-column');
-const initialWorldId = typeof route.query.worldId === 'string' && route.query.worldId.trim()
-  ? route.query.worldId.trim()
-  : undefined;
+const isMobileViewport = computed(() => width.value < 700);
+
+const activePaneId = ref<PaneId>('A');
+const operationTarget = ref<OperationTarget>('follow');
+const lockSameWorld = ref(false);
+const notifyOwnerPaneId = ref<PaneId | null>(null);
+
+const actionRibbonVisible = ref(false);
+
+const drawerVisible = ref(false);
+const sidebarCollapsed = ref(false);
+const computedCollapsed = computed(() => isMobileViewport.value || sidebarCollapsed.value);
+
+const defaultFilterState: FilterState = { icOnly: false, showArchived: false, roleIds: [] };
+
+const splitContainerRef = ref<HTMLElement | null>(null);
+const splitRatio = ref(0.5);
+const splitDragging = ref(false);
 
 const paneA = reactive<PaneState>({
   id: 'A',
   iframeKey: 0,
   src: '',
   ready: false,
-  focused: false,
-  worldId: initialWorldId,
-  currentChannelId: typeof route.query.a === 'string' ? route.query.a : undefined,
-  channelOptions: [],
-  notifyOwner: route.query.notify === 'A',
+  worldId: typeof route.query.worldId === 'string' ? route.query.worldId : '',
+  worldName: '',
+  worldOptions: [],
+  channelId: typeof route.query.a === 'string' ? route.query.a : '',
+  channelName: '',
+  connectState: 'connecting',
+  onlineMembersCount: 0,
+  currentChannelUnread: 0,
+  filterState: { ...defaultFilterState },
+  roleOptions: [],
+  canImport: false,
+  channelTree: [],
+  searchPanelVisible: false,
+  notifyOwner: false,
 });
 
 const paneB = reactive<PaneState>({
@@ -62,22 +123,51 @@ const paneB = reactive<PaneState>({
   iframeKey: 0,
   src: '',
   ready: false,
-  focused: false,
-  worldId: initialWorldId,
-  currentChannelId: typeof route.query.b === 'string' ? route.query.b : undefined,
-  channelOptions: [],
-  notifyOwner: route.query.notify === 'B',
+  worldId: typeof route.query.worldId === 'string' ? route.query.worldId : '',
+  worldName: '',
+  worldOptions: [],
+  channelId: typeof route.query.b === 'string' ? route.query.b : '',
+  channelName: '',
+  connectState: 'connecting',
+  onlineMembersCount: 0,
+  currentChannelUnread: 0,
+  filterState: { ...defaultFilterState },
+  roleOptions: [],
+  canImport: false,
+  channelTree: [],
+  searchPanelVisible: false,
+  notifyOwner: false,
 });
 
 const panes = computed(() => [paneA, paneB]);
+const activePane = computed(() => (activePaneId.value === 'A' ? paneA : paneB));
+const inactivePane = computed(() => (activePaneId.value === 'A' ? paneB : paneA));
+const effectiveTargetPaneId = computed<PaneId>(() => (operationTarget.value === 'follow' ? activePaneId.value : operationTarget.value));
+const operationPane = computed(() => (effectiveTargetPaneId.value === 'A' ? paneA : paneB));
+
+const activeChannelTitle = computed(() => {
+  const raw = activePane.value.channelName || '';
+  const name = raw.trim();
+  return name ? `# ${name}` : '海豹尬聊 SealChat';
+});
+
+watch(
+  () => [activePaneId.value, activePane.value.channelName] as const,
+  () => {
+    setChannelTitle(activePane.value.channelName || '');
+  },
+  { immediate: true },
+);
 
 const buildEmbedSrc = (pane: PaneState) => {
   const params = new URLSearchParams();
   params.set('paneId', pane.id);
-  if (pane.currentChannelId) params.set('channelId', pane.currentChannelId);
   if (pane.worldId) params.set('worldId', pane.worldId);
-  if (pane.notifyOwner) params.set('notifyOwner', '1');
-  const base = import.meta.env.BASE_URL || '/';
+  if (pane.channelId) params.set('channelId', pane.channelId);
+  if (notifyOwnerPaneId.value === pane.id) params.set('notifyOwner', '1');
+  // 不能直接用 import.meta.env.BASE_URL（vite base='./' 时会变成 ./#/embed，导致 iframe 请求落到 /app/ 而非 /app/index.html）
+  // 这里用当前页面的 pathname+search，确保与 split 同一份 HTML（支持 /index.html#/split、/subdir/#/split 等部署形态）
+  const base = typeof window === 'undefined' ? '/' : `${window.location.pathname}${window.location.search}`;
   return `${base}#/embed?${params.toString()}`;
 };
 
@@ -91,94 +181,207 @@ const persistRouteQuery = () => {
   router.replace({
     name: 'split',
     query: {
-      layout: layoutMode.value,
-      worldId: paneA.worldId || paneB.worldId || '',
-      a: paneA.currentChannelId || '',
-      b: paneB.currentChannelId || '',
-      notify: paneA.notifyOwner ? 'A' : paneB.notifyOwner ? 'B' : '',
+      worldId: activePane.value.worldId || '',
+      a: paneA.channelId || '',
+      b: paneB.channelId || '',
     },
   });
 };
 
-const postToPane = (pane: PaneState, payload: any) => {
-  const iframe = document.getElementById(`sc-split-iframe-${pane.id}`) as HTMLIFrameElement | null;
+const getPaneIframe = (paneId: PaneId) => document.getElementById(`sc-split-iframe-${paneId}`) as HTMLIFrameElement | null;
+
+const postToPane = (paneId: PaneId, payload: any) => {
+  const iframe = getPaneIframe(paneId);
   const targetWindow = iframe?.contentWindow;
   if (!targetWindow) return false;
   targetWindow.postMessage(payload, window.location.origin);
   return true;
 };
 
-const setPaneChannel = async (pane: PaneState, channelId: string | null | undefined) => {
-  const nextChannelId = typeof channelId === 'string' ? channelId : '';
-  if (!nextChannelId) return;
-  pane.currentChannelId = nextChannelId;
-  persistRouteQuery();
-  if (pane.ready) {
-    const ok = postToPane(pane, { type: 'sealchat.embed.setChannel', paneId: pane.id, channelId: nextChannelId });
-    if (!ok) {
-      refreshPaneSrc(pane);
-    }
-    return;
-  }
-  refreshPaneSrc(pane);
-};
-
-const setNotifyOwner = (owner: PaneId | null) => {
-  const nextA = owner === 'A';
-  const nextB = owner === 'B';
-  const changedA = paneA.notifyOwner !== nextA;
-  const changedB = paneB.notifyOwner !== nextB;
-  paneA.notifyOwner = nextA;
-  paneB.notifyOwner = nextB;
-  persistRouteQuery();
-  if (changedA) refreshPaneSrc(paneA);
-  if (changedB) refreshPaneSrc(paneB);
-};
-
-const handleNotifyOwnerChange = (value: string) => {
-  if (value === 'A' || value === 'B') {
-    setNotifyOwner(value);
-    return;
-  }
-  setNotifyOwner(null);
+const ensureWorldAlignment = async (sourcePaneId: PaneId) => {
+  if (!lockSameWorld.value) return;
+  const source = sourcePaneId === 'A' ? paneA : paneB;
+  const target = sourcePaneId === 'A' ? paneB : paneA;
+  const worldId = source.worldId;
+  if (!worldId || target.worldId === worldId) return;
+  postToPane(target.id, { type: 'sealchat.embed.setWorld', paneId: target.id, worldId });
 };
 
 const handleEmbedMessage = (event: MessageEvent) => {
   if (event.origin !== window.location.origin) return;
   const data = event.data as EmbedMessage | undefined;
   if (!data || typeof data !== 'object') return;
-  if (!('type' in data) || typeof (data as any).type !== 'string') return;
+  const type = (data as any).type;
+  if (typeof type !== 'string') return;
 
-  if (data.type === 'sealchat.embed.focus') {
-    const target = data.paneId === 'A' ? paneA : data.paneId === 'B' ? paneB : null;
-    if (!target) return;
-    target.focused = !!data.focused;
+  if (type === 'sealchat.embed.focus') {
+    const paneId = (data as EmbedFocusMessage).paneId;
+    if (paneId === 'A' || paneId === 'B') {
+      activePaneId.value = paneId;
+    }
     return;
   }
 
-  if (data.type === 'sealchat.embed.ready' || data.type === 'sealchat.embed.state') {
-    const target = data.paneId === 'A' ? paneA : data.paneId === 'B' ? paneB : null;
+  if (type === 'sealchat.embed.requestToggleSidebar') {
+    if (isMobileViewport.value) {
+      drawerVisible.value = !drawerVisible.value;
+    } else {
+      sidebarCollapsed.value = !sidebarCollapsed.value;
+    }
+    return;
+  }
+
+  if (type === 'sealchat.embed.state' || type === 'sealchat.embed.ready') {
+    const msg = data as EmbedStateMessage;
+    const target = msg.paneId === 'A' ? paneA : msg.paneId === 'B' ? paneB : null;
     if (!target) return;
     target.ready = true;
-    if (typeof data.worldId === 'string') target.worldId = data.worldId;
-    if (typeof data.currentChannelId === 'string') target.currentChannelId = data.currentChannelId;
-    if (Array.isArray(data.channelOptions)) target.channelOptions = data.channelOptions;
+    if (typeof msg.worldId === 'string') target.worldId = msg.worldId;
+    if (typeof msg.worldName === 'string') target.worldName = msg.worldName;
+    if (Array.isArray(msg.worldOptions)) target.worldOptions = msg.worldOptions;
+    if (typeof msg.channelId === 'string') target.channelId = msg.channelId;
+    if (typeof msg.channelName === 'string') target.channelName = msg.channelName;
+    if (typeof msg.connectState === 'string') target.connectState = msg.connectState;
+    if (typeof msg.onlineMembersCount === 'number') target.onlineMembersCount = msg.onlineMembersCount;
+    if (typeof msg.currentChannelUnread === 'number') target.currentChannelUnread = msg.currentChannelUnread;
+    if (msg.filterState) target.filterState = { ...msg.filterState };
+    if (Array.isArray(msg.roleOptions)) target.roleOptions = msg.roleOptions;
+    if (typeof msg.canImport === 'boolean') target.canImport = msg.canImport;
+    if (Array.isArray(msg.channelTree)) target.channelTree = msg.channelTree;
+    if (typeof msg.searchPanelVisible === 'boolean') target.searchPanelVisible = msg.searchPanelVisible;
+
     persistRouteQuery();
+    ensureWorldAlignment(target.id);
   }
+};
+
+const initialize = () => {
+  refreshPaneSrc(paneA);
+  refreshPaneSrc(paneB);
+};
+
+const setActivePane = (paneId: PaneId) => {
+  activePaneId.value = paneId;
+};
+
+const setWorldForTargetPane = (worldId: string) => {
+  const normalized = typeof worldId === 'string' ? worldId.trim() : '';
+  if (!normalized) return;
+  const targetPaneId = effectiveTargetPaneId.value;
+  postToPane(targetPaneId, { type: 'sealchat.embed.setWorld', paneId: targetPaneId, worldId: normalized });
+  setActivePane(targetPaneId);
+  if (lockSameWorld.value) {
+    const other: PaneId = targetPaneId === 'A' ? 'B' : 'A';
+    postToPane(other, { type: 'sealchat.embed.setWorld', paneId: other, worldId: normalized });
+  }
+};
+
+const setNotifyOwner = (paneId: PaneId | null) => {
+  notifyOwnerPaneId.value = paneId;
+  postToPane('A', { type: 'sealchat.embed.setNotifyOwner', paneId: 'A', enabled: paneId === 'A' });
+  postToPane('B', { type: 'sealchat.embed.setNotifyOwner', paneId: 'B', enabled: paneId === 'B' });
+};
+
+const toggleLockSameWorld = (enabled: boolean) => {
+  lockSameWorld.value = enabled;
+  if (enabled) {
+    ensureWorldAlignment(activePaneId.value);
+  }
+};
+
+const openChannelInTargetPane = (channelId: string) => {
+  if (!channelId) return;
+  const worldId = operationPane.value.worldId;
+  if (!worldId) return;
+  const targetPaneId = effectiveTargetPaneId.value;
+  postToPane(targetPaneId, { type: 'sealchat.embed.setWorld', paneId: targetPaneId, worldId, channelId });
+  setActivePane(targetPaneId);
+
+  if (lockSameWorld.value) {
+    const other: PaneId = targetPaneId === 'A' ? 'B' : 'A';
+    postToPane(other, { type: 'sealchat.embed.setWorld', paneId: other, worldId });
+  }
+};
+
+const swapPanes = () => {
+  const a = paneA.channelId;
+  const aw = paneA.worldId;
+  const b = paneB.channelId;
+  const bw = paneB.worldId;
+  postToPane('A', { type: 'sealchat.embed.setWorld', paneId: 'A', worldId: bw, channelId: b });
+  postToPane('B', { type: 'sealchat.embed.setWorld', paneId: 'B', worldId: aw, channelId: a });
+};
+
+const toggleSearch = () => {
+  postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel: 'search' });
+};
+
+const toggleActionRibbon = () => {
+  actionRibbonVisible.value = !actionRibbonVisible.value;
+};
+
+const setFilters = (filters: FilterState) => {
+  postToPane(activePaneId.value, { type: 'sealchat.embed.setFilterState', paneId: activePaneId.value, filterState: filters });
+};
+
+const clearFilters = () => {
+  setFilters({ ...defaultFilterState });
+};
+
+const openPanel = (panel: string) => {
+  postToPane(activePaneId.value, { type: 'sealchat.embed.openPanel', paneId: activePaneId.value, panel });
 };
 
 const exitSplit = async () => {
   await router.push({ name: 'home' });
 };
 
-const initialize = () => {
-  paneA.src = buildEmbedSrc(paneA);
-  paneB.src = buildEmbedSrc(paneB);
+const clampSplitRatio = (ratio: number) => Math.min(0.85, Math.max(0.15, ratio));
+
+const updateSplitRatioFromClientX = (clientX: number) => {
+  const el = splitContainerRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  if (!rect.width) return;
+  const ratio = (clientX - rect.left) / rect.width;
+  splitRatio.value = clampSplitRatio(ratio);
 };
 
-watch(layoutMode, () => {
-  persistRouteQuery();
-});
+const handleSplitDividerPointerDown = (event: PointerEvent) => {
+  if (event.button !== 0) return;
+  splitDragging.value = true;
+  try {
+    (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId);
+  } catch {
+    // ignore
+  }
+  updateSplitRatioFromClientX(event.clientX);
+};
+
+const handleSplitDividerPointerMove = (event: PointerEvent) => {
+  if (!splitDragging.value) return;
+  updateSplitRatioFromClientX(event.clientX);
+};
+
+const handleSplitDividerPointerUp = (event: PointerEvent) => {
+  if (!splitDragging.value) return;
+  splitDragging.value = false;
+  try {
+    (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    // ignore
+  }
+};
+
+const handleSplitDividerPointerCancel = (event: PointerEvent) => {
+  if (!splitDragging.value) return;
+  splitDragging.value = false;
+  try {
+    (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    // ignore
+  }
+};
 
 onMounted(() => {
   initialize();
@@ -189,231 +392,194 @@ onBeforeUnmount(() => {
   window.removeEventListener('message', handleEmbedMessage);
 });
 
-const layoutContainerClass = computed(() => {
-  return layoutMode.value === 'left-column' ? 'split-grid split-grid--left' : 'split-grid split-grid--per-pane';
-});
+const collapsedWidth = computed(() => 0);
 </script>
 
 <template>
-  <main class="h-screen w-screen sc-split-root">
-    <div class="sc-split-topbar">
-      <div class="sc-split-topbar__left">
-        <n-button type="primary" secondary @click="exitSplit">返回聊天</n-button>
-        <div class="sc-split-topbar__title">分屏</div>
-      </div>
+  <main class="h-screen sc-app-shell">
+    <n-layout-header class="sc-layout-header">
+      <SplitHeader
+        :sidebar-collapsed="computedCollapsed"
+        :channel-title="activeChannelTitle"
+        :connect-state="activePane.connectState"
+        :online-members-count="activePane.onlineMembersCount"
+        :search-active="activePane.searchPanelVisible"
+        :action-ribbon-active="actionRibbonVisible"
+        @toggle-sidebar="isMobileViewport ? (drawerVisible = !drawerVisible) : (sidebarCollapsed = !sidebarCollapsed)"
+        @toggle-search="toggleSearch"
+        @toggle-action-ribbon="toggleActionRibbon"
+      />
+    </n-layout-header>
 
-      <div class="sc-split-topbar__right">
-        <n-radio-group v-model:value="layoutMode" size="small">
-          <n-radio-button value="left-column">频道栏 | A | B</n-radio-button>
-          <n-radio-button value="per-pane">A(频道栏-聊天) | B(频道栏-聊天)</n-radio-button>
-        </n-radio-group>
+    <n-layout class="sc-layout-root" has-sider position="absolute" style="margin-top: 3.5rem;">
+  <n-layout-sider
+        class="sc-layout-sider"
+        collapse-mode="width"
+        :collapsed="computedCollapsed"
+        :collapsed-width="collapsedWidth"
+        :native-scrollbar="false"
+      >
+        <SplitChannelSidebar
+          :active-pane-id="activePaneId"
+          :panes="[
+            { id: 'A', channelName: paneA.channelName, unread: paneA.currentChannelUnread, worldName: paneA.worldName },
+            { id: 'B', channelName: paneB.channelName, unread: paneB.currentChannelUnread, worldName: paneB.worldName },
+          ]"
+          :world-id="operationPane.worldId"
+          :world-options="operationPane.worldOptions"
+          :lock-same-world="lockSameWorld"
+          :notify-owner-pane-id="notifyOwnerPaneId"
+          :operation-target="operationTarget"
+          :world-name="operationPane.worldName"
+          :channel-tree="operationPane.channelTree"
+          @set-active-pane="setActivePane"
+          @set-operation-target="operationTarget = $event"
+          @set-world="setWorldForTargetPane"
+          @toggle-lock-same-world="toggleLockSameWorld"
+          @set-notify-owner="setNotifyOwner"
+          @open-channel="openChannelInTargetPane"
+          @swap-panes="swapPanes"
+          @exit-split="exitSplit"
+        />
+      </n-layout-sider>
 
-        <div class="sc-split-notify">
-          <span class="sc-split-notify__label">通知窗格</span>
-          <n-radio-group
-            :value="paneA.notifyOwner ? 'A' : paneB.notifyOwner ? 'B' : ''"
-            size="small"
-            @update:value="handleNotifyOwnerChange"
+      <n-layout class="sc-layout-content">
+        <div class="sc-split-content">
+          <div v-if="actionRibbonVisible" class="px-4 pt-4">
+            <ChatActionRibbon
+              :filters="activePane.filterState"
+              :roles="activePane.roleOptions"
+              :archive-active="false"
+              :export-active="false"
+              :identity-active="false"
+              :gallery-active="false"
+              :display-active="false"
+              :favorite-active="false"
+              :channel-images-active="false"
+              :can-import="activePane.canImport"
+              :import-active="false"
+              :split-enabled="false"
+              :split-active="false"
+              @update:filters="setFilters"
+              @clear-filters="clearFilters"
+              @open-archive="openPanel('archive')"
+              @open-export="openPanel('export')"
+              @open-import="openPanel('import')"
+              @open-identity-manager="openPanel('identity')"
+              @open-gallery="openPanel('gallery')"
+              @open-display-settings="openPanel('display')"
+              @open-favorites="openPanel('favorites')"
+              @open-channel-images="openPanel('channel-images')"
+            />
+          </div>
+
+          <div
+            ref="splitContainerRef"
+            class="sc-split-panes"
+            :class="{ 'is-dragging': splitDragging }"
+            :style="{
+              '--sc-split-ratio': String(splitRatio),
+            }"
           >
-            <n-radio-button value="">无</n-radio-button>
-            <n-radio-button value="A">A</n-radio-button>
-            <n-radio-button value="B">B</n-radio-button>
-          </n-radio-group>
-        </div>
-      </div>
-    </div>
+            <div class="sc-split-pane" :style="{ width: `${splitRatio * 100}%` }">
+              <iframe :id="`sc-split-iframe-A`" :key="paneA.iframeKey" class="sc-split-iframe" :src="paneA.src" />
+            </div>
 
-    <div class="sc-split-body" :class="layoutContainerClass">
-      <div v-if="layoutMode === 'left-column'" class="sc-split-channelbar">
-        <div class="sc-split-channelbar__section">
-          <div class="sc-split-channelbar__label">窗格 A 频道</div>
-          <n-select
-            size="small"
-            :value="paneA.currentChannelId"
-            :options="paneA.channelOptions"
-            placeholder="加载频道列表中…"
-            clearable
-            @update:value="setPaneChannel(paneA, $event)"
-          />
-        </div>
-        <div class="sc-split-channelbar__section">
-          <div class="sc-split-channelbar__label">窗格 B 频道</div>
-          <n-select
-            size="small"
-            :value="paneB.currentChannelId"
-            :options="paneB.channelOptions"
-            placeholder="加载频道列表中…"
-            clearable
-            @update:value="setPaneChannel(paneB, $event)"
-          />
-        </div>
-        <div class="sc-split-channelbar__hint">
-          频道列表来自对应窗格（iframe）加载完成后的上报。
-        </div>
-      </div>
+            <div
+              class="sc-split-divider"
+              role="separator"
+              aria-label="调整分屏大小"
+              tabindex="0"
+              @pointerdown="handleSplitDividerPointerDown"
+              @pointermove="handleSplitDividerPointerMove"
+              @pointerup="handleSplitDividerPointerUp"
+              @pointercancel="handleSplitDividerPointerCancel"
+            />
 
-      <div class="sc-split-pane">
-        <div v-if="layoutMode === 'per-pane'" class="sc-split-pane__bar">
-          <div class="sc-split-pane__label">窗格 A</div>
-          <n-select
-            size="small"
-            :value="paneA.currentChannelId"
-            :options="paneA.channelOptions"
-            placeholder="选择频道…"
-            clearable
-            @update:value="setPaneChannel(paneA, $event)"
-          />
+            <div class="sc-split-pane" :style="{ width: `${(1 - splitRatio) * 100}%` }">
+              <iframe :id="`sc-split-iframe-B`" :key="paneB.iframeKey" class="sc-split-iframe" :src="paneB.src" />
+            </div>
+          </div>
         </div>
-        <iframe
-          :id="`sc-split-iframe-${paneA.id}`"
-          :key="paneA.iframeKey"
-          class="sc-split-iframe"
-          :src="paneA.src"
-        />
-      </div>
 
-      <div class="sc-split-pane">
-        <div v-if="layoutMode === 'per-pane'" class="sc-split-pane__bar">
-          <div class="sc-split-pane__label">窗格 B</div>
-          <n-select
-            size="small"
-            :value="paneB.currentChannelId"
-            :options="paneB.channelOptions"
-            placeholder="选择频道…"
-            clearable
-            @update:value="setPaneChannel(paneB, $event)"
-          />
-        </div>
-        <iframe
-          :id="`sc-split-iframe-${paneB.id}`"
-          :key="paneB.iframeKey"
-          class="sc-split-iframe"
-          :src="paneB.src"
-        />
-      </div>
-    </div>
+        <n-drawer v-model:show="drawerVisible" :width="'80%'" placement="left">
+          <n-drawer-content closable body-content-style="padding: 0">
+            <template #header>频道</template>
+            <SplitChannelSidebar
+              :active-pane-id="activePaneId"
+              :panes="[
+                { id: 'A', channelName: paneA.channelName, unread: paneA.currentChannelUnread, worldName: paneA.worldName },
+                { id: 'B', channelName: paneB.channelName, unread: paneB.currentChannelUnread, worldName: paneB.worldName },
+              ]"
+              :world-id="operationPane.worldId"
+              :world-options="operationPane.worldOptions"
+              :lock-same-world="lockSameWorld"
+              :notify-owner-pane-id="notifyOwnerPaneId"
+              :operation-target="operationTarget"
+              :world-name="operationPane.worldName"
+              :channel-tree="operationPane.channelTree"
+              @set-active-pane="setActivePane"
+              @set-operation-target="operationTarget = $event"
+              @set-world="setWorldForTargetPane"
+              @toggle-lock-same-world="toggleLockSameWorld"
+              @set-notify-owner="setNotifyOwner"
+              @open-channel="(id) => { openChannelInTargetPane(id); drawerVisible = false; }"
+              @swap-panes="swapPanes"
+              @exit-split="exitSplit"
+            />
+          </n-drawer-content>
+        </n-drawer>
+      </n-layout>
+    </n-layout>
   </main>
 </template>
 
 <style scoped>
-.sc-split-root {
+.sc-split-content {
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--sc-bg-surface);
 }
 
-.sc-split-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--sc-bg-elevated);
-  border-bottom: 1px solid var(--sc-border-strong);
-}
-
-.sc-split-topbar__left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.sc-split-topbar__title {
-  font-weight: 600;
-  color: var(--sc-text-primary);
-}
-
-.sc-split-topbar__right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.sc-split-notify {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sc-split-notify__label {
-  font-size: 12px;
-  color: var(--sc-text-secondary);
-}
-
-.sc-split-body {
+.sc-split-panes {
   flex: 1;
   min-height: 0;
-}
-
-.split-grid {
-  height: 100%;
-  display: grid;
-  gap: 0;
-}
-
-.split-grid--left {
-  grid-template-columns: 280px 1fr 1fr;
-}
-
-.split-grid--per-pane {
-  grid-template-columns: 1fr 1fr;
-}
-
-.sc-split-channelbar {
-  padding: 12px;
-  border-right: 1px solid var(--sc-border-strong);
-  background: var(--sc-bg-surface);
-  overflow: auto;
-}
-
-.sc-split-channelbar__section + .sc-split-channelbar__section {
-  margin-top: 12px;
-}
-
-.sc-split-channelbar__label {
-  font-size: 12px;
-  color: var(--sc-text-secondary);
-  margin-bottom: 6px;
-}
-
-.sc-split-channelbar__hint {
-  margin-top: 14px;
-  font-size: 12px;
-  color: var(--sc-text-secondary);
+  display: flex;
+  align-items: stretch;
 }
 
 .sc-split-pane {
   min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--sc-border-strong);
+  flex: 0 0 auto;
 }
 
-.split-grid--left .sc-split-pane:last-child {
-  border-right: 0;
+.sc-split-divider {
+  width: 8px;
+  flex: 0 0 8px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  user-select: none;
+  touch-action: none;
 }
 
-.split-grid--per-pane .sc-split-pane:last-child {
-  border-right: 0;
+.sc-split-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--sc-border-strong);
 }
 
-.sc-split-pane__bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--sc-border-strong);
-  background: var(--sc-bg-elevated);
-}
-
-.sc-split-pane__label {
-  font-size: 12px;
-  color: var(--sc-text-secondary);
-  white-space: nowrap;
+.sc-split-divider:hover::before,
+.sc-split-panes.is-dragging .sc-split-divider::before {
+  width: 2px;
+  background: rgba(14, 165, 233, 0.65);
 }
 
 .sc-split-iframe {
@@ -422,5 +588,9 @@ const layoutContainerClass = computed(() => {
   height: 100%;
   min-height: 0;
   background: var(--sc-bg-surface);
+}
+
+.sc-split-panes.is-dragging .sc-split-iframe {
+  pointer-events: none;
 }
 </style>

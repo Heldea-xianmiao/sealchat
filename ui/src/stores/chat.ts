@@ -368,6 +368,21 @@ export const useChatStore = defineStore({
   },
 
   actions: {
+    disconnect(reason?: string) {
+      // 用于分屏壳页面等场景：明确关闭当前 WS，避免占用连接数
+      clearWsReconnectTimer(this);
+      this.stopPingLoop();
+      clearPendingLatencyProbes();
+      try {
+        this.subject?.complete();
+        this.subject?.unsubscribe();
+      } catch (e) {
+        console.warn('[WS] disconnect cleanup failed', reason, e);
+      }
+      this.subject = null;
+      this.connectState = 'disconnected';
+    },
+
     async connect() {
       // 已连接或正在连接时，避免重复 connect 触发“自断线”
       if (this.subject && (this.connectState === 'connected' || this.connectState === 'connecting' || this.connectState === 'reconnecting')) {
