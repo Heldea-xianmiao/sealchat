@@ -81,6 +81,8 @@ func apiMessageDelete(ctx *ChatContext, data *struct {
 			User:    ctx.User.ToProtocolType(),
 		})
 
+		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-deleted", item.ID)
+
 		return &struct {
 			Success bool `json:"success"`
 		}{Success: true}, nil
@@ -168,6 +170,8 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 		ctx.BroadcastEventInChannel(channelID, ev)
 		ctx.BroadcastEventInChannelForBot(channelID, ev)
 	}
+
+	_ = model.WebhookEventLogAppendForMessage(channelID, "message-removed", msg.ID)
 
 	return &struct {
 		Success bool `json:"success"`
@@ -857,6 +861,8 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
 		}
 
+		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+
 		// 当频道启用了机器人骰点时，不再触发内置小海豹以避免覆盖自定义机器人回复
 		if appConfig.BuiltInSealBotEnable && whisperUser == nil && channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
 			botReq := &struct {
@@ -1370,6 +1376,8 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
 	}
 
+	_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-updated", msg.ID)
+
 	return &struct {
 		Message *protocol.Message `json:"message"`
 	}{Message: messageData}, nil
@@ -1850,6 +1858,8 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			Channel: channelData,
 			User:    userData,
 		})
+
+		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
 	}
 }
 

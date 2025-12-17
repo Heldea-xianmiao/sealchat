@@ -74,6 +74,7 @@ import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
 import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
+import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -303,6 +304,36 @@ watch(
   { immediate: true },
 );
 const spectatorInputDisabled = computed(() => !channelSendAllowed.value);
+const webhookDrawerVisible = ref(false);
+const webhookManageAllowed = ref(false);
+let webhookPermissionSeq = 0;
+
+watch(
+  () => chat.curChannel?.id,
+  async (channelId) => {
+    const seq = ++webhookPermissionSeq;
+    const currentChannel = chat.curChannel as SChannel | undefined;
+    if (!channelId || !currentChannel) {
+      webhookManageAllowed.value = false;
+      return;
+    }
+    if (isPrivateChatChannel(currentChannel)) {
+      webhookManageAllowed.value = false;
+      return;
+    }
+    try {
+      const allowed = await chat.hasChannelPermission(channelId, 'func_channel_manage_info', user.info.id);
+      if (seq === webhookPermissionSeq) {
+        webhookManageAllowed.value = !!allowed;
+      }
+    } catch (error) {
+      if (seq === webhookPermissionSeq) {
+        webhookManageAllowed.value = false;
+      }
+    }
+  },
+  { immediate: true },
+);
 const toggleDiceTray = () => {
   if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
@@ -7852,6 +7883,8 @@ onBeforeUnmount(() => {
         :import-active="importDialogVisible"
         :split-enabled="splitEntryEnabled"
         :split-active="false"
+        :webhook-enabled="webhookManageAllowed"
+        :webhook-active="webhookDrawerVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -7862,9 +7895,17 @@ onBeforeUnmount(() => {
         @open-favorites="channelFavoritesVisible = true"
         @open-channel-images="openChannelImagesPanel"
         @open-split="openSplitView"
+        @open-webhook="webhookDrawerVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
+
+    <n-drawer v-model:show="webhookDrawerVisible" placement="right" :width="520">
+      <n-drawer-content closable>
+        <template #header>Webhook 授权</template>
+        <WebhookIntegrationManager :channel-id="chat.curChannel?.id || ''" />
+      </n-drawer-content>
+    </n-drawer>
 
     <div
       v-if="selectionBar.visible"

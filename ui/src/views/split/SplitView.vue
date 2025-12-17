@@ -345,6 +345,7 @@ const toggleActionRibbon = () => {
   actionRibbonVisible.value = !actionRibbonVisible.value;
 };
 
+
 const setFilters = (filters: FilterState) => {
   postToPane(activePaneId.value, { type: 'sealchat.embed.setFilterState', paneId: activePaneId.value, filterState: filters });
 };
@@ -560,6 +561,7 @@ const collapsedWidth = computed(() => 0);
             />
           </n-drawer-content>
         </n-drawer>
+
       </n-layout>
     </n-layout>
 
