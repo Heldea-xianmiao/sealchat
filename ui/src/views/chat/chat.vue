@@ -1,5 +1,6 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
+import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
 import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
@@ -47,6 +48,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
+import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
@@ -7500,6 +7502,169 @@ const avatarLongpress = (data: any) => {
   }
 }
 
+// Multi-select handlers
+const getMultiSelectedMessages = () => {
+  if (!chat.multiSelect?.selectedIds.size) return [];
+  const selected = Array.from(chat.multiSelect.selectedIds);
+  return rows.value.filter(row => selected.includes(row.id));
+};
+
+const handleMultiSelectCopy = async () => {
+  const messages = getMultiSelectedMessages();
+  if (!messages.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  const text = messages.map(msg => {
+    const time = msg.createdAt ? dayjs(msg.createdAt).format('YYYY-MM-DD HH:mm:ss') : '';
+    const name = (msg as any).sender_member_name || (msg as any).identity?.displayName || msg.member?.nick || msg.user?.name || '未知';
+    const content = typeof msg.content === 'string' ? msg.content.replace(/<[^>]*>/g, '') : '';
+    return `[${time}] ${name}: ${content}`;
+  }).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    message.success(`已复制 ${messages.length} 条消息`);
+    chat.exitMultiSelectMode();
+  } catch (e) {
+    message.error('复制失败');
+  }
+};
+
+const handleMultiSelectArchive = async () => {
+  const ids = Array.from(chat.multiSelect?.selectedIds || []);
+  if (!ids.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  try {
+    await chat.archiveMessages(ids);
+    message.success(`已归档 ${ids.length} 条消息`);
+    chat.exitMultiSelectMode();
+  } catch (e) {
+    message.error('归档失败');
+  }
+};
+
+const handleMultiSelectDelete = async () => {
+  const ids = Array.from(chat.multiSelect?.selectedIds || []);
+  if (!ids.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  dialog.warning({
+    title: '批量删除',
+    content: `确定要删除选中的 ${ids.length} 条消息吗？此操作不可撤销。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        for (const id of ids) {
+          await chat.messageDelete(id);
+        }
+        message.success(`已删除 ${ids.length} 条消息`);
+        chat.exitMultiSelectMode();
+      } catch (e) {
+        message.error('删除失败');
+      }
+    },
+  });
+};
+
+const handleMultiSelectCopyImage = async () => {
+  const messages = getMultiSelectedMessages();
+  if (!messages.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  try {
+    const html2canvas = (await import('html2canvas')).default;
+    
+    // Find message elements in DOM
+    const messageEls: HTMLElement[] = [];
+    for (const msg of messages) {
+      const el = document.getElementById(msg.id);
+      if (el) messageEls.push(el);
+    }
+    if (!messageEls.length) {
+      message.error('未找到消息元素');
+      return;
+    }
+
+    // Get background color
+    const rootStyles = getComputedStyle(document.documentElement);
+    const bgColor = rootStyles.getPropertyValue('--sc-bg-base')?.trim() 
+      || rootStyles.getPropertyValue('--chat-bg')?.trim()
+      || getComputedStyle(document.body).backgroundColor
+      || '#ffffff';
+
+    // Render each message element in-place with onclone callback
+    const canvases: HTMLCanvasElement[] = [];
+    for (const el of messageEls) {
+      const canvas = await html2canvas(el, {
+        backgroundColor: bgColor,
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        onclone: (clonedDoc, clonedEl) => {
+          // Remove selection classes
+          clonedEl.classList.remove('chat-item--multiselect', 'chat-item--selected');
+          // Remove checkbox element
+          const checkbox = clonedEl.querySelector('.chat-item__select-checkbox');
+          if (checkbox) checkbox.remove();
+        },
+      });
+      canvases.push(canvas);
+    }
+
+    // Calculate combined canvas size
+    const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
+    const maxWidth = Math.max(...canvases.map(c => c.width));
+    const padding = 16 * 2; // scale factor
+
+    // Create combined canvas
+    const combinedCanvas = document.createElement('canvas');
+    combinedCanvas.width = maxWidth + padding * 2;
+    combinedCanvas.height = totalHeight + padding * 2;
+    const ctx = combinedCanvas.getContext('2d')!;
+    
+    // Fill background
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, combinedCanvas.width, combinedCanvas.height);
+
+    // Draw each message canvas
+    let y = padding;
+    for (const canvas of canvases) {
+      ctx.drawImage(canvas, padding, y);
+      y += canvas.height;
+    }
+
+    // Copy to clipboard
+    combinedCanvas.toBlob(async (blob) => {
+      if (blob) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+          ]);
+          message.success('已复制为图片');
+          chat.exitMultiSelectMode();
+        } catch (e) {
+          message.error('复制图片失败');
+        }
+      }
+    }, 'image/png');
+  } catch (e) {
+    console.error(e);
+    message.error('生成图片失败');
+  }
+};
+
+const handleMultiSelectAll = () => {
+  const allIds = rows.value.map(row => row.id);
+  chat.selectMessagesByIds(allIds);
+  message.info(`已选中 ${allIds.length} 条消息`);
+};
+
 const selectedEmojiIds = ref<string[]>([]);
 const emojiRemarkModalVisible = ref(false);
 const emojiRemarkInput = ref('');
@@ -8481,6 +8646,13 @@ onBeforeUnmount(() => {
 
   <RightClickMenu />
   <AvatarClickMenu />
+  <MultiSelectFloatingBar
+    @copy="handleMultiSelectCopy"
+    @archive="handleMultiSelectArchive"
+    @delete="handleMultiSelectDelete"
+    @copy-image="handleMultiSelectCopyImage"
+    @select-all="handleMultiSelectAll"
+  />
   <GalleryPanel @insert="handleGalleryInsert" />
   <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal

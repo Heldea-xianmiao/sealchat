@@ -105,6 +105,13 @@ interface ChatState {
   channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
+  // 多选模式状态
+  multiSelect: {
+    active: boolean;
+    selectedIds: Set<string>;
+    rangeAnchorId: string | null;
+    rangeModeEnabled: boolean; // 范围选择模式：首条是起点，第二条是终点
+  } | null;
 }
 
 const apiMap = new Map<string, any>();
@@ -298,6 +305,7 @@ export const useChatStore = defineStore({
     })(),
     channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
+    multiSelect: null,
   }),
 
   getters: {
@@ -2477,6 +2485,93 @@ export const useChatStore = defineStore({
         ...this.filterState,
         ...filters,
       };
+    },
+
+    // 多选模式相关方法
+    enterMultiSelectMode(anchorMessageId?: string) {
+      this.multiSelect = {
+        active: true,
+        selectedIds: new Set(anchorMessageId ? [anchorMessageId] : []),
+        rangeAnchorId: anchorMessageId ?? null,
+        rangeModeEnabled: false,
+      };
+    },
+
+    exitMultiSelectMode() {
+      this.multiSelect = null;
+    },
+
+    toggleMessageSelection(messageId: string) {
+      if (!this.multiSelect) {
+        return;
+      }
+      if (this.multiSelect.selectedIds.has(messageId)) {
+        this.multiSelect.selectedIds.delete(messageId);
+      } else {
+        this.multiSelect.selectedIds.add(messageId);
+      }
+      // 更新锚点为最后操作的消息
+      this.multiSelect.rangeAnchorId = messageId;
+    },
+
+    setRangeAnchor(messageId: string) {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.rangeAnchorId = messageId;
+    },
+
+    selectMessagesByIds(messageIds: string[]) {
+      if (!this.multiSelect) {
+        return;
+      }
+      messageIds.forEach(id => this.multiSelect!.selectedIds.add(id));
+    },
+
+    clearMultiSelection() {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.selectedIds.clear();
+      this.multiSelect.rangeAnchorId = null;
+    },
+
+    isMessageSelected(messageId: string): boolean {
+      return this.multiSelect?.selectedIds.has(messageId) ?? false;
+    },
+
+    toggleRangeMode() {
+      if (!this.multiSelect) return;
+      this.multiSelect.rangeModeEnabled = !this.multiSelect.rangeModeEnabled;
+      // 开启范围模式时清空锚点，等待用户选择起点
+      if (this.multiSelect.rangeModeEnabled) {
+        this.multiSelect.rangeAnchorId = null;
+      }
+    },
+
+    // 范围选择处理：点击消息时调用
+    handleRangeClick(messageId: string, allMessageIds: string[]) {
+      if (!this.multiSelect?.rangeModeEnabled) return false;
+
+      if (!this.multiSelect.rangeAnchorId) {
+        // 设置起点
+        this.multiSelect.rangeAnchorId = messageId;
+        this.multiSelect.selectedIds.add(messageId);
+        return true;
+      } else {
+        // 选择起点到当前点之间的所有消息
+        const anchorIdx = allMessageIds.indexOf(this.multiSelect.rangeAnchorId);
+        const targetIdx = allMessageIds.indexOf(messageId);
+        if (anchorIdx >= 0 && targetIdx >= 0) {
+          const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          for (let i = start; i <= end; i++) {
+            this.multiSelect.selectedIds.add(allMessageIds[i]);
+          }
+        }
+        // 更新锚点为当前点，支持继续范围选择
+        this.multiSelect.rangeAnchorId = messageId;
+        return true;
+      }
     },
 
     async archiveMessages(messageIds: string[]) {
