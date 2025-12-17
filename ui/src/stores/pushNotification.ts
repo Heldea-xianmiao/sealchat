@@ -5,6 +5,27 @@ import { urlBase } from '@/stores/_config';
 
 const STORAGE_KEY = 'sc-push-notification-enabled';
 
+const isEmbedMode = (): boolean => {
+    if (typeof window === 'undefined') return true;
+    const hash = window.location.hash || '';
+    return hash.startsWith('#/embed');
+};
+
+const resolveEmbedNotifyOwnerFromHash = (): boolean => {
+    if (typeof window === 'undefined') return true;
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#/embed')) return true;
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) return false;
+    try {
+        const params = new URLSearchParams(hash.slice(queryIndex + 1));
+        const raw = params.get('notifyOwner');
+        return raw === '1' || raw === 'true';
+    } catch {
+        return false;
+    }
+};
+
 /**
  * 推送通知 Store
  * 
@@ -23,9 +44,18 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
         return typeof window !== 'undefined' && 'Notification' in window;
     });
 
+    // embed 模式下由 shell 指定是否允许通知（默认继承 URL 参数；未设置则全禁）
+    const embedNotifyOwnerOverride = ref<boolean | null>(null);
+
+    const embedNotifyOwnerEnabled = computed(() => {
+        if (!isEmbedMode()) return true;
+        if (embedNotifyOwnerOverride.value !== null) return embedNotifyOwnerOverride.value;
+        return resolveEmbedNotifyOwnerFromHash();
+    });
+
     // 是否可以发送通知
     const canNotify = computed(() => {
-        return supported.value && enabled.value && permission.value === 'granted';
+        return supported.value && enabled.value && permission.value === 'granted' && embedNotifyOwnerEnabled.value;
     });
 
     /**
@@ -94,6 +124,14 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
     };
 
     /**
+     * embed 模式：由分屏壳页面动态设置当前窗格是否允许通知
+     * - 非 embed 模式下该值不会生效
+     */
+    const setEmbedNotifyOwner = (enabled: boolean) => {
+        embedNotifyOwnerOverride.value = !!enabled;
+    };
+
+    /**
      * 显示通知
      * @param title 通知标题（通常是频道名）
      * @param body 通知内容（用户名: 消息内容）
@@ -101,10 +139,18 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
      * @param icon 可选，通知图标 URL（默认使用默认头像）
      */
     const showNotification = (title: string, body: string, channelId: string, icon?: string): void => {
+        const hasTopFocus = () => {
+            try {
+                return window.top ? window.top.document.hasFocus() : document.hasFocus();
+            } catch {
+                return document.hasFocus();
+            }
+        };
+
         console.log('[PushNotification] showNotification called:', {
             title, body, channelId, icon,
             canNotify: canNotify.value,
-            hasFocus: document.hasFocus(),
+            hasFocus: hasTopFocus(),
             permission: permission.value
         });
 
@@ -114,7 +160,7 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
         }
 
         // 如果页面有焦点，不显示通知
-        if (document.hasFocus()) {
+        if (hasTopFocus()) {
             console.log('[PushNotification] Page has focus, skipping notification');
             return;
         }
@@ -178,6 +224,7 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
         canNotify,
         requestPermission,
         toggle,
+        setEmbedNotifyOwner,
         showNotification,
     };
 });

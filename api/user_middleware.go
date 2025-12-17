@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -15,6 +16,10 @@ func getToken(c *fiber.Ctx) string {
 	tokens := c.GetReqHeaders()["Authorization"]
 	if len(tokens) > 0 {
 		token = tokens[0]
+	}
+	token = strings.TrimSpace(token)
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		token = strings.TrimSpace(token[len("bearer "):])
 	}
 
 	cookieToken := c.Cookies("Authorization")

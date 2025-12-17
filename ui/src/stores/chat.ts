@@ -105,10 +105,55 @@ interface ChatState {
   channelIcOocRoleConfig: Record<string, { icRoleId: string | null; oocRoleId: string | null }>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
+  // 多选模式状态
+  multiSelect: {
+    active: boolean;
+    selectedIds: Set<string>;
+    rangeAnchorId: string | null;
+    rangeModeEnabled: boolean; // 范围选择模式：首条是起点，第二条是终点
+  } | null;
 }
 
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
+
+const resolveEmbedPaneId = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash || '';
+  if (!hash.startsWith('#/embed')) return null;
+  const queryIndex = hash.indexOf('?');
+  if (queryIndex === -1) return null;
+  try {
+    const params = new URLSearchParams(hash.slice(queryIndex + 1));
+    const paneId = params.get('paneId');
+    return paneId && paneId.trim() ? paneId.trim() : null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveScopedStorageKey = (baseKey: string) => {
+  const paneId = resolveEmbedPaneId();
+  if (!paneId) return baseKey;
+  if (baseKey !== 'currentWorldId' && baseKey !== 'lastChannel') return baseKey;
+  return `sc:embed:${paneId}:${baseKey}`;
+};
+
+const readScopedLocalStorage = (baseKey: string) => {
+  try {
+    return localStorage.getItem(resolveScopedStorageKey(baseKey));
+  } catch {
+    return null;
+  }
+};
+
+const writeScopedLocalStorage = (baseKey: string, value: string) => {
+  try {
+    localStorage.setItem(resolveScopedStorageKey(baseKey), value);
+  } catch {
+    // ignore
+  }
+};
 
 type myEventName =
   | EventName
@@ -172,7 +217,7 @@ export const useChatStore = defineStore({
     channelTreePrivate: [] as any,
     channelTreePrivateReady: false,
     curChannel: null,
-    currentWorldId: localStorage.getItem('currentWorldId') || '',
+    currentWorldId: readScopedLocalStorage('currentWorldId') || '',
     joinedWorldIds: [],
     worldListCache: null,
     worldLobbyMode: 'mine',
@@ -260,11 +305,12 @@ export const useChatStore = defineStore({
     })(),
     channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
+    multiSelect: null,
   }),
 
   getters: {
     _lastChannel: (state) => {
-      return localStorage.getItem('lastChannel') || '';
+      return readScopedLocalStorage('lastChannel') || '';
     },
     unreadCountPrivate: (state) => {
       return Object.entries(state.unreadCountMap).reduce((sum, [key, count]) => {
@@ -330,6 +376,21 @@ export const useChatStore = defineStore({
   },
 
   actions: {
+    disconnect(reason?: string) {
+      // 用于分屏壳页面等场景：明确关闭当前 WS，避免占用连接数
+      clearWsReconnectTimer(this);
+      this.stopPingLoop();
+      clearPendingLatencyProbes();
+      try {
+        this.subject?.complete();
+        this.subject?.unsubscribe();
+      } catch (e) {
+        console.warn('[WS] disconnect cleanup failed', reason, e);
+      }
+      this.subject = null;
+      this.connectState = 'disconnected';
+    },
+
     async connect() {
       // 已连接或正在连接时，避免重复 connect 触发“自断线”
       if (this.subject && (this.connectState === 'connected' || this.connectState === 'connecting' || this.connectState === 'reconnecting')) {
@@ -585,12 +646,12 @@ export const useChatStore = defineStore({
     setCurrentWorld(worldId: string) {
       if (!worldId || this.currentWorldId === worldId) return;
       this.currentWorldId = worldId;
-      localStorage.setItem('currentWorldId', worldId);
+      writeScopedLocalStorage('currentWorldId', worldId);
     },
 
     async initWorlds() {
       if (this.joinedWorldIds.length) {
-        const stored = localStorage.getItem('currentWorldId');
+        const stored = readScopedLocalStorage('currentWorldId');
         if (stored) {
           this.currentWorldId = stored;
         }
@@ -605,12 +666,12 @@ export const useChatStore = defineStore({
             this.worldMap[item.world.id] = item.world;
           }
         });
-        const stored = localStorage.getItem('currentWorldId');
+        const stored = readScopedLocalStorage('currentWorldId');
         if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;
         } else if (this.joinedWorldIds.length) {
           this.currentWorldId = this.joinedWorldIds[0];
-          localStorage.setItem('currentWorldId', this.currentWorldId);
+          writeScopedLocalStorage('currentWorldId', this.currentWorldId);
         }
       } catch (err) {
         console.warn('initWorlds failed', err);
@@ -728,7 +789,7 @@ export const useChatStore = defineStore({
       this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
       if (this.currentWorldId === worldId) {
         this.currentWorldId = this.joinedWorldIds[0] || '';
-        localStorage.setItem('currentWorldId', this.currentWorldId);
+        writeScopedLocalStorage('currentWorldId', this.currentWorldId);
       }
       delete this.channelTreeByWorld[worldId];
     },
@@ -945,7 +1006,7 @@ export const useChatStore = defineStore({
       await this.loadChannelIdentities(id);
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);
-      localStorage.setItem('lastChannel', id);
+      writeScopedLocalStorage('lastChannel', id);
 
       const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
       this.curChannelUsers = resp2.data.data;
@@ -2424,6 +2485,93 @@ export const useChatStore = defineStore({
         ...this.filterState,
         ...filters,
       };
+    },
+
+    // 多选模式相关方法
+    enterMultiSelectMode(anchorMessageId?: string) {
+      this.multiSelect = {
+        active: true,
+        selectedIds: new Set(anchorMessageId ? [anchorMessageId] : []),
+        rangeAnchorId: anchorMessageId ?? null,
+        rangeModeEnabled: false,
+      };
+    },
+
+    exitMultiSelectMode() {
+      this.multiSelect = null;
+    },
+
+    toggleMessageSelection(messageId: string) {
+      if (!this.multiSelect) {
+        return;
+      }
+      if (this.multiSelect.selectedIds.has(messageId)) {
+        this.multiSelect.selectedIds.delete(messageId);
+      } else {
+        this.multiSelect.selectedIds.add(messageId);
+      }
+      // 更新锚点为最后操作的消息
+      this.multiSelect.rangeAnchorId = messageId;
+    },
+
+    setRangeAnchor(messageId: string) {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.rangeAnchorId = messageId;
+    },
+
+    selectMessagesByIds(messageIds: string[]) {
+      if (!this.multiSelect) {
+        return;
+      }
+      messageIds.forEach(id => this.multiSelect!.selectedIds.add(id));
+    },
+
+    clearMultiSelection() {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.selectedIds.clear();
+      this.multiSelect.rangeAnchorId = null;
+    },
+
+    isMessageSelected(messageId: string): boolean {
+      return this.multiSelect?.selectedIds.has(messageId) ?? false;
+    },
+
+    toggleRangeMode() {
+      if (!this.multiSelect) return;
+      this.multiSelect.rangeModeEnabled = !this.multiSelect.rangeModeEnabled;
+      // 开启范围模式时清空锚点，等待用户选择起点
+      if (this.multiSelect.rangeModeEnabled) {
+        this.multiSelect.rangeAnchorId = null;
+      }
+    },
+
+    // 范围选择处理：点击消息时调用
+    handleRangeClick(messageId: string, allMessageIds: string[]) {
+      if (!this.multiSelect?.rangeModeEnabled) return false;
+
+      if (!this.multiSelect.rangeAnchorId) {
+        // 设置起点
+        this.multiSelect.rangeAnchorId = messageId;
+        this.multiSelect.selectedIds.add(messageId);
+        return true;
+      } else {
+        // 选择起点到当前点之间的所有消息
+        const anchorIdx = allMessageIds.indexOf(this.multiSelect.rangeAnchorId);
+        const targetIdx = allMessageIds.indexOf(messageId);
+        if (anchorIdx >= 0 && targetIdx >= 0) {
+          const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          for (let i = start; i <= end; i++) {
+            this.multiSelect.selectedIds.add(allMessageIds[i]);
+          }
+        }
+        // 更新锚点为当前点，支持继续范围选择
+        this.multiSelect.rangeAnchorId = messageId;
+        return true;
+      }
     },
 
     async archiveMessages(messageIds: string[]) {

@@ -135,6 +135,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 
+	// Channel webhook integrations (admin-only in channel)
+	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")
+	webhookIntegrations.Get("/", WebhookIntegrationList)
+	webhookIntegrations.Post("/", WebhookIntegrationCreate)
+	webhookIntegrations.Post("/:id/rotate", WebhookIntegrationRotate)
+	webhookIntegrations.Post("/:id/revoke", WebhookIntegrationRevoke)
+
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}
 		commandTips.Range(func(key string, value map[string]string) bool {
@@ -271,6 +278,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		utils.WriteConfig(appConfig)
 		return nil
 	})
+
+	// External webhook API (channelId + token auth)
+	webhookAPI := v1.Group("/webhook")
+	webhookAPI.Use(WebhookAuthMiddleware)
+	webhookAPI.Get("/channels/:channelId/changes", WebhookChanges)
+	webhookAPI.Post("/channels/:channelId/messages", WebhookMessages)
 
 	// Default /test
 	app.Use(config.WebUrl, filesystem.New(filesystem.Config{

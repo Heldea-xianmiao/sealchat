@@ -397,6 +397,14 @@ const clickWhisper = () => {
   chat.messageMenu.show = false;
 };
 
+const clickMultiSelect = () => {
+  const targetId = menuMessage.value.raw?.id;
+  if (targetId) {
+    chat.enterMultiSelectMode(targetId);
+  }
+  chat.messageMenu.show = false;
+};
+
 </script>
 
 <template>
@@ -410,6 +418,7 @@ const clickWhisper = () => {
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />
     <context-menu-item v-if="showUnarchiveAction" label="取消归档" @click="clickUnarchive" />
     <context-menu-item label="编辑消息" @click="clickEdit" v-if="isSelfMessage" />
+    <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
   </context-menu>

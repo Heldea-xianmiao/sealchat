@@ -305,6 +305,18 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  isMultiSelectMode: {
+    type: Boolean,
+    default: false,
+  },
+  isSelected: {
+    type: Boolean,
+    default: false,
+  },
+  allMessageIds: {
+    type: Array as () => string[],
+    default: () => [],
+  },
 })
 
 const timestampTicker = ref(Date.now());
@@ -379,6 +391,16 @@ const contentClassList = computed(() => {
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
 const canEdit = computed(() => props.item?.user?.id === user.info.id);
 
+// Multi-select computed properties (merged from props and store)
+const effectiveMultiSelectMode = computed(() => props.isMultiSelectMode || chat.multiSelect?.active || false);
+const effectiveIsSelected = computed(() => {
+  if (props.isMultiSelectMode) return props.isSelected;
+  if (chat.multiSelect?.active && props.item?.id) {
+    return chat.multiSelect.selectedIds.has(props.item.id);
+  }
+  return false;
+});
+
 const hoverTimestampVisible = ref(false);
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 let timestampInterval: ReturnType<typeof setInterval> | null = null;
@@ -420,6 +442,12 @@ const handleTimestampHoverEnd = () => {
 };
 
 const handleMobileTimestampTap = (e: MouseEvent) => {
+  // In multi-select mode, clicking anywhere on the message toggles selection
+  if (effectiveMultiSelectMode.value) {
+    handleMessageClick(e);
+    return;
+  }
+  
   if (!isMobileUa || shouldForceTimestampVisible.value) {
     return;
   }
@@ -663,7 +691,32 @@ const handleEditCancel = (e: MouseEvent) => {
   emit('edit-cancel', props.item);
 }
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel']);
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click']);
+
+const handleSelectToggle = (e: MouseEvent) => {
+  e.stopPropagation();
+  handleMessageClick(e);
+};
+
+// Handle click on message block in multi-select mode
+const handleMessageClick = (e: MouseEvent) => {
+  if (!effectiveMultiSelectMode.value || !props.item?.id) return;
+  
+  // If in range mode, use range selection
+  if (chat.multiSelect?.rangeModeEnabled) {
+    // Use allMessageIds prop if available, otherwise emit for parent handling
+    if (props.allMessageIds.length > 0) {
+      chat.handleRangeClick(props.item.id, props.allMessageIds);
+    } else {
+      emit('range-click', props.item.id);
+    }
+    return;
+  }
+  
+  // Otherwise toggle selection
+  chat.toggleMessageSelection(props.item.id);
+  emit('toggle-select', props.item?.id);
+};
 
 const handleAvatarLongpress = () => {
   if (isMobileUa) {
@@ -816,12 +869,22 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
       `chat-item--layout-${props.layout}`,
       { 'chat-item--self': props.isSelf },
       { 'chat-item--merged': props.isMerged },
-      { 'chat-item--body-only': props.bodyOnly }
+      { 'chat-item--body-only': props.bodyOnly },
+      { 'chat-item--multiselect': effectiveMultiSelectMode },
+      { 'chat-item--selected': effectiveIsSelected }
     ]"
     @mouseenter="handleTimestampHoverStart"
     @mouseleave="handleTimestampHoverEnd"
     @click="handleMobileTimestampTap"
   >
+    <!-- Multi-select checkbox -->
+    <div
+      v-if="effectiveMultiSelectMode"
+      class="chat-item__select-checkbox"
+      @click.stop="handleSelectToggle"
+    >
+      <n-checkbox :checked="effectiveIsSelected" />
+    </div>
     <div
       v-if="props.showAvatar"
       class="chat-item__avatar"
@@ -970,6 +1033,31 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
   min-height: 0;
   margin-top: 0;
   overflow: hidden;
+}
+
+/* Multi-select styles */
+.chat-item__select-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  flex-shrink: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.chat-item--multiselect {
+  cursor: pointer;
+}
+
+.chat-item--selected {
+  background-color: rgba(59, 130, 246, 0.1);
+  border-radius: 8px;
+  transition: background-color 0.15s ease;
+}
+
+:root[data-display-palette='night'] .chat-item--selected {
+  background-color: rgba(59, 130, 246, 0.15);
 }
 
 .chat-item > .right {
