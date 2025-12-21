@@ -137,12 +137,58 @@
           v-if="isEditing"
           class="sticky-note__editor"
         >
-          <textarea
+          <!-- 富文本模式 -->
+          <StickyNoteEditor
+            v-if="richMode"
+            ref="editorRef"
             v-model="localContent"
-            class="sticky-note__textarea"
-            placeholder="在此输入内容..."
-            @input="debouncedSaveContent"
-          ></textarea>
+            :channel-id="note?.channelId"
+            @update:model-value="debouncedSaveContent"
+          />
+          <!-- 简单模式 -->
+          <div v-else class="sticky-note__simple-editor">
+            <div class="sticky-note__simple-toolbar">
+              <button
+                class="sticky-note__toolbar-btn"
+                :class="{ 'is-active': richMode }"
+                @click="richMode = true"
+                title="切换到富文本模式"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
+                </svg>
+              </button>
+              <button
+                class="sticky-note__toolbar-btn"
+                @click="triggerFileSelect"
+                title="插入图片"
+                :disabled="isUploading"
+              >
+                <n-spin v-if="isUploading" size="tiny" />
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                </svg>
+              </button>
+            </div>
+            <textarea
+              v-model="localContent"
+              class="sticky-note__textarea"
+              placeholder="在此输入内容..."
+              @input="debouncedSaveContent"
+              @paste="handlePasteImage"
+              @drop.prevent="handleDropImage"
+              @dragover.prevent
+            ></textarea>
+          </div>
+          <!-- 隐藏文件选择器 -->
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept="image/*"
+            multiple
+            style="display: none"
+            @change="handleFileSelect"
+          />
         </div>
         <div
           v-else
@@ -187,6 +233,10 @@ import { useMessage } from 'naive-ui'
 import { useStickyNoteStore, type StickyNote, type StickyNoteUserState } from '@/stores/stickyNote'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import StickyNoteEditor from './StickyNoteEditor.vue'
+import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
+import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
+import { urlBase } from '@/stores/_config'
 
 const props = defineProps<{
   noteId: string
@@ -199,12 +249,16 @@ const message = useMessage()
 
 const noteEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement | null>(null)
+const editorRef = ref<InstanceType<typeof StickyNoteEditor> | null>(null)
 
 // 本地编辑状态
 const localTitle = ref('')
 const localContent = ref('')
 const pushPopoverVisible = ref(false)
 const pushTargets = ref<string[]>([])
+const richMode = ref(false) // 富文本模式，默认关闭
+const isUploading = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -305,7 +359,15 @@ function loadPushTargets() {
 
 const sanitizedContent = computed(() => {
   const content = note.value?.content || ''
-  // 简单的HTML转义，实际项目应使用DOMPurify
+  // 检测是否为 TipTap JSON 格式
+  if (isTipTapJson(content)) {
+    try {
+      return tiptapJsonToHtml(content, { imageClass: 'sticky-note__image' })
+    } catch {
+      // 渲染失败时回退到纯文本
+    }
+  }
+  // 兼容旧纯文本内容
   return content
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -404,6 +466,79 @@ function saveContentNow() {
 function copyContent() {
   const text = note.value?.contentText || note.value?.content || ''
   navigator.clipboard.writeText(text)
+}
+
+// 图片上传处理
+const triggerFileSelect = () => {
+  fileInputRef.value?.click()
+}
+
+const handleFileSelect = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || []).filter(file =>
+    file.type.startsWith('image/')
+  )
+  if (files.length > 0) {
+    await uploadImages(files)
+  }
+  input.value = ''
+}
+
+const handlePasteImage = async (event: ClipboardEvent) => {
+  const items = event.clipboardData?.items
+  if (!items) return
+
+  const files: File[] = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+  }
+
+  if (files.length > 0) {
+    event.preventDefault()
+    await uploadImages(files)
+  }
+}
+
+const handleDropImage = async (event: DragEvent) => {
+  const files = Array.from(event.dataTransfer?.files || []).filter(file =>
+    file.type.startsWith('image/')
+  )
+  if (files.length > 0) {
+    await uploadImages(files)
+  }
+}
+
+const uploadImages = async (files: File[]) => {
+  if (isUploading.value) return
+  isUploading.value = true
+
+  try {
+    for (const file of files) {
+      const result = await uploadImageAttachment(file, {
+        channelId: note.value?.channelId,
+      })
+
+      if (result.attachmentId) {
+        let imageUrl = result.attachmentId
+        if (imageUrl.startsWith('id:')) {
+          const attachmentId = imageUrl.slice(3)
+          imageUrl = `${urlBase}/api/v1/attachment/${attachmentId}`
+        }
+        // 在简单模式下插入图片 markdown 或 HTML
+        const imageMarkdown = `\n![${file.name}](${imageUrl})\n`
+        localContent.value += imageMarkdown
+        debouncedSaveContent()
+      }
+    }
+  } catch (error: any) {
+    message.error(error.message || '图片上传失败')
+  } finally {
+    isUploading.value = false
+  }
 }
 
 async function pushToTargets() {
@@ -796,5 +931,161 @@ onUnmounted(() => {
 .sticky-note__push-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* 富文本内容样式 */
+.sticky-note__content :deep(img),
+.sticky-note__image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin: 4px 0;
+  display: block;
+}
+
+.sticky-note__content :deep(p) {
+  margin: 0 0 0.5em;
+}
+
+.sticky-note__content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.sticky-note__content :deep(ul),
+.sticky-note__content :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.sticky-note__content :deep(ul) {
+  list-style-type: disc;
+}
+
+.sticky-note__content :deep(ol) {
+  list-style-type: decimal;
+}
+
+.sticky-note__content :deep(li) {
+  margin: 0.25em 0;
+}
+
+.sticky-note__content :deep(a) {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.sticky-note__content :deep(strong) {
+  font-weight: 600;
+}
+
+.sticky-note__content :deep(mark) {
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.sticky-note__content :deep(code) {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+/* 简单编辑器样式 */
+.sticky-note__simple-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sticky-note__simple-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.sticky-note__toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.6);
+  transition: all 0.15s;
+}
+
+.sticky-note__toolbar-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.sticky-note__toolbar-btn.is-active {
+  background: rgba(0, 0, 0, 0.15);
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.sticky-note__toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sticky-note__textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+/* 最小化滚动条 */
+.sticky-note__body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.sticky-note__body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sticky-note__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sticky-note__body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2px;
+}
+
+.sticky-note__body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.sticky-note__textarea {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.sticky-note__textarea::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sticky-note__textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sticky-note__textarea::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 2px;
 }
 </style>

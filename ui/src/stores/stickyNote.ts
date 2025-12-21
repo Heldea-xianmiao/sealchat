@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useChatStore } from './chat'
 import { useUserStore } from './user'
 import { api } from './_config'
+import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
 
 // 便签类型定义
 export interface StickyNote {
@@ -343,6 +344,11 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
     // 更新便签内容
     async function updateNote(noteId: string, updates: Partial<StickyNote>) {
+        // 如果 content 是 TipTap JSON，自动生成纯文本版本用于搜索
+        if (updates.content && isTipTapJson(updates.content)) {
+            updates.contentText = tiptapJsonToPlainText(updates.content)
+        }
+
         const existing = notes.value[noteId]
         if (existing) {
             notes.value[noteId] = {
