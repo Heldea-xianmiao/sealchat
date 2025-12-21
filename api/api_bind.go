@@ -25,7 +25,7 @@ var appFs afero.Fs
 func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
-		AllowMethods:     "GET, POST, PUT, DELETE",
+		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId",
 		ExposeHeaders:    "Content-Length",
 		MaxAge:           3600,
@@ -79,6 +79,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)
+
+	// External webhook API (channelId + token auth) - 必须在 v1Auth 之前定义
+	v1.Get("/webhook/channels/:channelId/changes", WebhookAuthMiddleware, WebhookChanges)
+	v1.Post("/webhook/channels/:channelId/messages", WebhookAuthMiddleware, WebhookMessages)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
@@ -278,12 +282,6 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		utils.WriteConfig(appConfig)
 		return nil
 	})
-
-	// External webhook API (channelId + token auth)
-	webhookAPI := v1.Group("/webhook")
-	webhookAPI.Use(WebhookAuthMiddleware)
-	webhookAPI.Get("/channels/:channelId/changes", WebhookChanges)
-	webhookAPI.Post("/channels/:channelId/messages", WebhookMessages)
 
 	// Default /test
 	app.Use(config.WebUrl, filesystem.New(filesystem.Config{

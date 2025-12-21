@@ -78,12 +78,6 @@ func WebhookAuthMiddleware(c *fiber.Ctx) error {
 			"message": msg,
 		})
 	}
-	if !user.IsBot {
-		return c.Status(http.StatusForbidden).JSON(fiber.Map{
-			"error":   "forbidden",
-			"message": "token user is not bot",
-		})
-	}
 
 	integration, err := model.ChannelWebhookIntegrationGetByChannelAndBot(channelID, user.ID)
 	if err != nil || integration == nil {
