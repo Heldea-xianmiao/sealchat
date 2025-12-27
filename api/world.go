@@ -186,6 +186,28 @@ func WorldDetail(c *fiber.Ctx) error {
 	})
 }
 
+func WorldPublicDetail(c *fiber.Ctx) error {
+	worldID := c.Params("worldId")
+	world, err := service.GetWorldByID(worldID)
+	if err != nil {
+		if errors.Is(err, service.ErrWorldNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "获取世界失败"})
+	}
+	if world.Visibility != model.WorldVisibilityPublic {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "世界未开放公开访问"})
+	}
+	var memberCount int64
+	_ = model.GetDB().Model(&model.WorldMemberModel{}).Where("world_id = ?", worldID).Count(&memberCount).Error
+	return c.JSON(fiber.Map{
+		"world":       world,
+		"isMember":    false,
+		"memberRole":  "",
+		"memberCount": memberCount,
+	})
+}
+
 func WorldUpdateHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {

@@ -51,6 +51,38 @@ func WorldKeywordListHandler(c *fiber.Ctx) error {
 	})
 }
 
+func WorldKeywordPublicListHandler(c *fiber.Ctx) error {
+	worldID := c.Params("worldId")
+	page := parseQueryIntDefault(c, "page", 1)
+	pageSize := parseQueryIntDefault(c, "pageSize", 50)
+	query := strings.TrimSpace(c.Query("q"))
+	category := strings.TrimSpace(c.Query("category"))
+	items, total, err := service.WorldKeywordListPublic(worldID, service.WorldKeywordListOptions{
+		Page:     page,
+		PageSize: pageSize,
+		Query:    query,
+		Category: category,
+	})
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		switch err {
+		case service.ErrWorldPermission:
+			status = fiber.StatusForbidden
+		case service.ErrWorldNotFound:
+			status = fiber.StatusNotFound
+		default:
+			status = fiber.StatusBadRequest
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"items":    items,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
+}
+
 func WorldKeywordCreateHandler(c *fiber.Ctx) error {
 	user := getCurUser(c)
 	if user == nil {
@@ -254,6 +286,24 @@ func WorldKeywordCategoriesHandler(c *fiber.Ctx) error {
 		status := fiber.StatusInternalServerError
 		if err == service.ErrWorldPermission {
 			status = fiber.StatusForbidden
+		}
+		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
+	}
+	return c.JSON(fiber.Map{"categories": categories})
+}
+
+func WorldKeywordPublicCategoriesHandler(c *fiber.Ctx) error {
+	worldID := c.Params("worldId")
+	categories, err := service.WorldKeywordListCategoriesPublic(worldID)
+	if err != nil {
+		status := fiber.StatusInternalServerError
+		switch err {
+		case service.ErrWorldPermission:
+			status = fiber.StatusForbidden
+		case service.ErrWorldNotFound:
+			status = fiber.StatusNotFound
+		default:
+			status = fiber.StatusBadRequest
 		}
 		return c.Status(status).JSON(fiber.Map{"message": err.Error()})
 	}

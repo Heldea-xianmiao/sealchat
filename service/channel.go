@@ -161,6 +161,78 @@ func ChannelListByWorld(worldID string) ([]*model.ChannelModel, error) {
 	return items, err
 }
 
+func ChannelListPublicByWorld(worldID string) ([]*model.ChannelModel, error) {
+	channels, err := ChannelListByWorld(worldID)
+	if err != nil {
+		return nil, err
+	}
+	if len(channels) == 0 {
+		return channels, nil
+	}
+	channelMap := map[string]*model.ChannelModel{}
+	for _, ch := range channels {
+		if ch != nil && strings.TrimSpace(ch.ID) != "" {
+			channelMap[ch.ID] = ch
+		}
+	}
+	visible := make([]*model.ChannelModel, 0, len(channels))
+	for _, ch := range channels {
+		if ch == nil || strings.TrimSpace(ch.ID) == "" {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(ch.PermType)) != "public" {
+			continue
+		}
+		if ch.RootId != "" {
+			root := channelMap[ch.RootId]
+			if root == nil || strings.ToLower(strings.TrimSpace(root.PermType)) != "public" {
+				continue
+			}
+		}
+		visible = append(visible, ch)
+	}
+	return visible, nil
+}
+
+func CanGuestAccessChannel(channelID string) (*model.ChannelModel, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, errors.New("频道ID不能为空")
+	}
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel == nil || strings.TrimSpace(channel.ID) == "" {
+		return nil, errors.New("频道不存在")
+	}
+	if channel.IsPrivate || strings.ToLower(strings.TrimSpace(channel.PermType)) != "public" {
+		return nil, errors.New("频道不可公开访问")
+	}
+	if channel.RootId != "" {
+		root, err := model.ChannelGet(channel.RootId)
+		if err != nil {
+			return nil, err
+		}
+		if root == nil || strings.TrimSpace(root.ID) == "" {
+			return nil, errors.New("频道不可公开访问")
+		}
+		if strings.ToLower(strings.TrimSpace(root.PermType)) != "public" {
+			return nil, errors.New("频道不可公开访问")
+		}
+	}
+	if channel.WorldID != "" {
+		world, err := GetWorldByID(channel.WorldID)
+		if err != nil {
+			return nil, err
+		}
+		if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
+			return nil, errors.New("世界未开放公开访问")
+		}
+	}
+	return channel, nil
+}
+
 func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentId string) *model.ChannelModel {
 	if strings.TrimSpace(worldID) == "" {
 		if w, err := GetOrCreateDefaultWorld(); err == nil && w != nil {

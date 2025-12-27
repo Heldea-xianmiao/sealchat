@@ -1,9 +1,11 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { chatEvent, useChatStore } from './chat'
+import { useUserStore } from './user'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import {
   fetchWorldKeywords,
+  fetchWorldKeywordsPublic,
   createWorldKeyword,
   updateWorldKeyword,
   deleteWorldKeyword,
@@ -11,6 +13,7 @@ import {
   importWorldKeywords,
   exportWorldKeywords,
   fetchWorldKeywordCategories,
+  fetchWorldKeywordCategoriesPublic,
 } from '@/models/worldGlossary'
 import { escapeRegExp } from '@/utils/tools'
 import { useUtilsStore } from './utils'
@@ -211,17 +214,22 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   async function ensureKeywords(worldId: string, opts?: { force?: boolean; query?: string }) {
     if (!worldId) return
+    const chat = useChatStore()
+    const user = useUserStore()
+    if (!chat.isObserver && !user.token) return
     const page = pages.value[worldId]
     if (!opts?.force && page && Date.now() - page.fetchedAt < 60 * 1000) {
       return
     }
     loadingMap.value = { ...loadingMap.value, [worldId]: true }
     try {
-      const data = await fetchWorldKeywords(worldId, {
-        page: 1,
-        pageSize: 5000,
-        includeDisabled: true,
-      })
+      const data = chat.isObserver
+        ? await fetchWorldKeywordsPublic(worldId, { page: 1, pageSize: 5000 })
+        : await fetchWorldKeywords(worldId, {
+          page: 1,
+          pageSize: 5000,
+          includeDisabled: true,
+        })
       updateKeywordCache(worldId, data.items, data)
       versionMap.value = { ...versionMap.value, [worldId]: Date.now() }
     } finally {
@@ -302,6 +310,10 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
   }
 
   async function fetchCategories(worldId: string) {
+    const chat = useChatStore()
+    if (chat.isObserver) {
+      return fetchWorldKeywordCategoriesPublic(worldId)
+    }
     return fetchWorldKeywordCategories(worldId)
   }
 

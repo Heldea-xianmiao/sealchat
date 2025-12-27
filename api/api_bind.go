@@ -76,6 +76,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		return c.Status(http.StatusOK).JSON(ret)
 	})
+	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
+	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
+	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)
@@ -148,6 +151,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	webhookIntegrations.Post("/", WebhookIntegrationCreate)
 	webhookIntegrations.Post("/:id/rotate", WebhookIntegrationRotate)
 	webhookIntegrations.Post("/:id/revoke", WebhookIntegrationRevoke)
+
+	// Email notification settings
+	v1Auth.Get("/channels/:channelId/email-notification", EmailNotificationSettingsGet)
+	v1Auth.Post("/channels/:channelId/email-notification", EmailNotificationSettingsUpsert)
+	v1Auth.Delete("/channels/:channelId/email-notification", EmailNotificationSettingsDelete)
+	v1Auth.Post("/email-notification/test", EmailNotificationTestSend)
 
 	v1Auth.Get("/commands", func(c *fiber.Ctx) error {
 		m := map[string](map[string]string){}
@@ -274,6 +283,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/image-migration/execute", ImageMigrationExecute)
 	v1AuthAdmin.Get("/admin/s3-migration/preview", S3MigrationPreview)
 	v1AuthAdmin.Post("/admin/s3-migration/execute", S3MigrationExecute)
+
+	// Email notification admin test
+	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
 		var newConfig utils.AppConfig

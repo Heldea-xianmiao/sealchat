@@ -1,11 +1,11 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle } from '@vicons/tabler';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, UserCircle, Palette } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 // import AdminSettings from './admin-settings.vue'
@@ -37,6 +37,7 @@ const adminShow = ref(false)
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
+const route = useRoute();
 const channelSearch = useChannelSearchStore();
 const audioStudio = useAudioStudioStore();
 const iFormStore = useIFormStore();
@@ -49,6 +50,7 @@ const channelTitle = computed(() => {
 });
 
 const currentWorldName = computed(() => chat.currentWorld?.name || '未选择世界');
+const isObserver = computed(() => chat.isObserver);
 
 const openWorldLobby = () => {
   router.push({ name: 'world-lobby' });
@@ -60,6 +62,14 @@ const openWorldDetail = () => {
     return;
   }
   router.push({ name: 'world-detail', params: { worldId: chat.currentWorldId } });
+};
+
+const goLogin = () => {
+  router.push({ name: 'user-signin', query: { redirect: route.fullPath } });
+};
+
+const openDisplaySettings = () => {
+  chatEvent.emit('open-display-settings');
 };
 
 const iFormButtonActive = computed(() => iFormStore.drawerVisible || iFormStore.hasInlinePanels || iFormStore.hasFloatingWindows);
@@ -405,7 +415,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
       </span>
     </div>
 
-    <div class="sc-actions flex items-center">
+    <div v-if="!isObserver" class="sc-actions flex items-center">
       <n-tooltip placement="bottom" trigger="hover">
         <template #trigger>
           <button type="button" class="sc-icon-button sc-connection-icon" :class="connectionStatus.classes"
@@ -496,6 +506,22 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
           <span>{{ userDisplayName }}</span>
         </n-tooltip>
       </n-dropdown>
+    </div>
+    <div v-else class="sc-actions flex items-center">
+      <n-tooltip placement="bottom" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="sc-icon-button"
+            aria-label="显示设置"
+            @click="openDisplaySettings"
+          >
+            <n-icon :component="Palette" size="16" />
+          </button>
+        </template>
+        <span>显示设置</span>
+      </n-tooltip>
+      <n-button size="small" type="primary" @click="goLogin">登录</n-button>
     </div>
   </div>
 

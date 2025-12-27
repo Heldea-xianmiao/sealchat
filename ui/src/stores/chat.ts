@@ -27,6 +27,9 @@ interface ChatState {
   channelTreePrivateReady: boolean,
   curChannel: Channel | null,
   currentWorldId: string,
+  observerMode: boolean,
+  observerWorldId: string,
+  observerChannelId: string,
   joinedWorldIds: string[],
   worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
   worldLobbyMode: 'mine' | 'explore',
@@ -166,7 +169,8 @@ type myEventName =
   | 'channel-identity-updated'
   | 'channel-member-settings-open'
   | 'bot-list-updated'
-  | 'global-overlay-toggle';
+  | 'global-overlay-toggle'
+  | 'open-display-settings';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -218,6 +222,9 @@ export const useChatStore = defineStore({
     channelTreePrivateReady: false,
     curChannel: null,
     currentWorldId: readScopedLocalStorage('currentWorldId') || '',
+    observerMode: false,
+    observerWorldId: '',
+    observerChannelId: '',
     joinedWorldIds: [],
     worldListCache: null,
     worldLobbyMode: 'mine',
@@ -312,6 +319,9 @@ export const useChatStore = defineStore({
     _lastChannel: (state) => {
       return readScopedLocalStorage('lastChannel') || '';
     },
+    isObserver: (state) => {
+      return state.observerMode;
+    },
     unreadCountPrivate: (state) => {
       return Object.entries(state.unreadCountMap).reduce((sum, [key, count]) => {
         return key.includes(':') ? sum + count : sum;
@@ -376,6 +386,70 @@ export const useChatStore = defineStore({
   },
 
   actions: {
+    enableObserverMode(worldId: string, channelId?: string) {
+      const normalizedWorldId = typeof worldId === 'string' ? worldId.trim() : '';
+      const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : '';
+      const wasObserver = this.observerMode;
+      this.observerMode = true;
+      this.observerWorldId = normalizedWorldId;
+      this.observerChannelId = normalizedChannelId;
+      if (normalizedWorldId) {
+        this.setCurrentWorld(normalizedWorldId);
+        if (!this.joinedWorldIds.includes(normalizedWorldId)) {
+          this.joinedWorldIds = [normalizedWorldId];
+        }
+      }
+      if (!wasObserver && this.subject) {
+        this.disconnect('observer-enable');
+        this.connect();
+      }
+    },
+
+    disableObserverMode() {
+      if (!this.observerMode) {
+        return;
+      }
+      this.observerMode = false;
+      this.observerWorldId = '';
+      this.observerChannelId = '';
+      this.joinedWorldIds = [];
+      if (this.subject) {
+        this.disconnect('observer-disable');
+        this.connect();
+      }
+    },
+
+    async initObserverSession() {
+      const worldId = this.observerWorldId ? this.observerWorldId.trim() : '';
+      if (!worldId) {
+        return false;
+      }
+      try {
+        const detail = await this.worldDetail(worldId);
+        if (!detail) {
+          return false;
+        }
+        this.setCurrentWorld(worldId);
+        if (!this.joinedWorldIds.includes(worldId)) {
+          this.joinedWorldIds = [worldId];
+        }
+        await this.channelList(worldId, true);
+        let targetChannel = this.observerChannelId ? this.observerChannelId.trim() : '';
+        if (!targetChannel) {
+          const world = this.worldMap[worldId];
+          targetChannel = world?.defaultChannelId || this.channelTreeByWorld[worldId]?.[0]?.id || this.channelTree[0]?.id || '';
+        }
+        if (targetChannel) {
+          this.observerChannelId = targetChannel;
+          await this.channelSwitchTo(targetChannel);
+        }
+        return true;
+      } catch (err) {
+        console.warn('[observer] init failed', err);
+        return false;
+      }
+    },
+
     disconnect(reason?: string) {
       // 用于分屏壳页面等场景：明确关闭当前 WS，避免占用连接数
       clearWsReconnectTimer(this);
@@ -447,6 +521,7 @@ export const useChatStore = defineStore({
       subject.next({
         op: 3, body: {
           token: user.token,
+          observer: this.observerMode,
         }
       });
 
@@ -570,6 +645,15 @@ export const useChatStore = defineStore({
       this.startPingLoop();
       this.sendPresencePing(true);
 
+      if (this.observerMode) {
+        await this.initObserverSession();
+        if (_connectResolve) {
+          _connectResolve();
+          _connectResolve = null;
+        }
+        return;
+      }
+
       await this.ensureWorldReady();
       if (this.curChannel?.id) {
         await this.channelSwitchTo(this.curChannel?.id);
@@ -650,6 +734,12 @@ export const useChatStore = defineStore({
     },
 
     async initWorlds() {
+      if (this.observerMode) {
+        if (!this.currentWorldId && this.observerWorldId) {
+          this.setCurrentWorld(this.observerWorldId);
+        }
+        return;
+      }
       if (this.joinedWorldIds.length) {
         const stored = readScopedLocalStorage('currentWorldId');
         if (stored) {
@@ -679,6 +769,12 @@ export const useChatStore = defineStore({
     },
 
     async ensureWorldReady() {
+      if (this.observerMode) {
+        if (this.observerWorldId && this.currentWorldId !== this.observerWorldId) {
+          this.setCurrentWorld(this.observerWorldId);
+        }
+        return !!this.currentWorldId;
+      }
       await this.initWorlds();
       if (!this.currentWorldId && this.joinedWorldIds.length) {
         this.setCurrentWorld(this.joinedWorldIds[0]);
@@ -799,12 +895,21 @@ export const useChatStore = defineStore({
       if (this.worldDetailMap[worldId]) {
         return this.worldDetailMap[worldId];
       }
-      const resp = await api.get(`/api/v1/worlds/${worldId}`);
-      this.worldDetailMap[worldId] = resp.data;
-      if (resp.data.world) {
-        this.worldMap[worldId] = resp.data.world;
+      const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
+      try {
+        const resp = await api.get(endpoint);
+        this.worldDetailMap[worldId] = resp.data;
+        if (resp.data.world) {
+          this.worldMap[worldId] = resp.data.world;
+        }
+        return resp.data;
+      } catch (error) {
+        if (this.observerMode) {
+          console.warn('[observer] world detail failed', error);
+          return null;
+        }
+        throw error;
       }
-      return resp.data;
     },
 
     async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean }) {
@@ -901,6 +1006,11 @@ export const useChatStore = defineStore({
       if (!worldId) {
         return;
       }
+      if (this.observerMode) {
+        this.enableObserverMode(worldId, this.observerChannelId);
+        await this.initObserverSession();
+        return;
+      }
       if (!this.joinedWorldIds.includes(worldId)) {
         await this.joinWorld(worldId);
       } else {
@@ -962,6 +1072,10 @@ export const useChatStore = defineStore({
 
       // 如果本地找不到（可能是归档频道），尝试从 API 获取
       if (!nextChannel) {
+        if (this.observerMode) {
+          console.warn('[observer] channel not found in public list');
+          return;
+        }
         try {
           const channelResp = await this.channelInfoGet(id);
           // 确保返回的频道有有效的 id
@@ -994,6 +1108,26 @@ export const useChatStore = defineStore({
 
       let oldChannel = this.curChannel;
       this.curChannel = nextChannel;
+      if (this.observerMode) {
+        try {
+          const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+          if (!resp.data?.member) {
+            this.curChannel = oldChannel;
+            return false;
+          }
+          this.curMember = resp.data.member;
+          this.curChannelUsers = [];
+          this.whisperTarget = null;
+          writeScopedLocalStorage('lastChannel', id);
+          this.setChannelUnreadCount(id, 0);
+          chatEvent.emit('channel-switch-to', undefined);
+          return true;
+        } catch (error) {
+          console.warn('[observer] channel.enter failed', error);
+          this.curChannel = oldChannel;
+          return false;
+        }
+      }
       const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
       // console.log('switch', resp, this.curChannel);
 
@@ -1572,11 +1706,14 @@ export const useChatStore = defineStore({
     },
 
     async channelList(worldId?: string, force = false) {
-      const targetWorld = worldId || this.currentWorldId;
-      if (!targetWorld) {
+      let targetWorld = worldId || this.currentWorldId;
+      if (!targetWorld && this.observerMode && this.observerWorldId) {
+        targetWorld = this.observerWorldId;
+      }
+      if (!targetWorld && !this.observerMode) {
         await this.initWorlds();
       }
-      const finalWorld = targetWorld || this.currentWorldId;
+      const finalWorld = targetWorld || this.currentWorldId || (this.observerMode ? this.observerWorldId : '');
       if (!finalWorld) {
         return [];
       }
@@ -1611,8 +1748,10 @@ export const useChatStore = defineStore({
         }
       }
 
-      const countMap = await this.channelUnreadCount();
-      this.unreadCountMap = countMap;
+      if (!this.observerMode) {
+        const countMap = await this.channelUnreadCount();
+        this.unreadCountMap = countMap;
+      }
       // console.log('countMap', countMap);
 
       return tree;
@@ -1708,6 +1847,9 @@ export const useChatStore = defineStore({
     },
 
     async channelMembersCountRefresh() {
+      if (this.observerMode) {
+        return;
+      }
       if (this.channelTree) {
         const m: any = {}
         const lst = this.channelTree.map(i => {
@@ -1724,6 +1866,9 @@ export const useChatStore = defineStore({
     },
 
     async channelRefreshSetup() {
+      if (this.observerMode) {
+        return;
+      }
       setInterval(async () => {
         await this.channelMembersCountRefresh();
         if (this.curChannel?.id) {
@@ -2041,6 +2186,11 @@ export const useChatStore = defineStore({
     // friend
 
     async ChannelPrivateList() {
+      if (this.observerMode) {
+        this.channelTreePrivate = [];
+        this.channelTreePrivateReady = true;
+        return this.channelTreePrivate;
+      }
       try {
         const resp = await this.sendAPI<{ data: { data: SChannel[] } }>('channel.private.list', {});
         this.channelTreePrivate = resp?.data.data || [];
@@ -2081,6 +2231,9 @@ export const useChatStore = defineStore({
 
     // 获取未读信息
     async channelUnreadCount() {
+      if (this.observerMode) {
+        return {};
+      }
       const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', {});
       return resp?.data;
     },

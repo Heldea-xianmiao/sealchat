@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,8 @@ type ConnInfo struct {
 	LatencyMs        int64
 	ChannelId        string
 	WorldId          string
+	IsGuest          bool
+	IsObserver       bool
 	TypingEnabled    bool
 	TypingState      protocol.TypingState
 	TypingContent    string
@@ -83,6 +86,14 @@ func websocketWorks(app *fiber.App) {
 	channelUsersMapGlobal = channelUsersMap
 	userId2ConnInfoGlobal = userId2ConnInfo
 
+	guestAllowedAPIs := map[string]struct{}{
+		"channel.list":              {},
+		"channel.enter":             {},
+		"channel.members_count":     {},
+		"channel.member.list.online": {},
+		"message.list":              {},
+	}
+
 	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
 		if body != nil {
 			// 有身份信息
@@ -98,9 +109,51 @@ func websocketWorks(app *fiber.App) {
 			if !ok {
 				return nil, nil
 			}
+			token = strings.TrimSpace(token)
+			observer := false
+			if observerRaw, exists := m["observer"]; exists {
+				if observerValue, ok := observerRaw.(bool); ok {
+					observer = observerValue
+				}
+			}
 
 			var user *model.UserModel
 			var err error
+
+			if token == "" {
+				guestID := fmt.Sprintf("guest-%s", utils.NewIDWithLength(12))
+				user = &model.UserModel{
+					Username: "guest",
+					Nickname: "Guest",
+				}
+				user.ID = guestID
+				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
+				curConnInfo = &ConnInfo{
+					Conn:          c,
+					LastPingTime:  time.Now().UnixMilli(),
+					LastAliveTime: time.Now().UnixMilli(),
+					User:          user,
+					IsGuest:       true,
+					IsObserver:    observer,
+					TypingState:   protocol.TypingStateSilent,
+					TypingIcMode:  "ic",
+					Focused:       true,
+				}
+				m.Store(c, curConnInfo)
+				curUser = user
+				if collector := metrics.Get(); collector != nil {
+					collector.RecordConnectionOpened(user.ID)
+					collector.RecordUserHeartbeat(user.ID)
+				}
+				_ = c.WriteJSON(protocol.GatewayPayloadStructure{
+					Op: protocol.OpReady,
+					Body: map[string]any{
+						"user":  curUser,
+						"guest": true,
+					},
+				})
+				return
+			}
 
 			if len(token) == 32 {
 				user, err = model.BotVerifyAccessToken(token)
@@ -159,6 +212,7 @@ func websocketWorks(app *fiber.App) {
 					LastPingTime:  time.Now().UnixMilli(),
 					LastAliveTime: time.Now().UnixMilli(),
 					User:          user,
+					IsObserver:    observer,
 					TypingState:   protocol.TypingStateSilent,
 					TypingIcMode:  "ic",
 					Focused:       true,
@@ -430,6 +484,18 @@ func websocketWorks(app *fiber.App) {
 				}
 
 				if err == nil {
+					if ctx.IsReadOnly() {
+						if _, ok := guestAllowedAPIs[apiMsg.Api]; !ok {
+							_ = c.WriteJSON(&struct {
+								Echo string `json:"echo"`
+								Err  string `json:"err"`
+							}{Echo: ctx.Echo, Err: "guest_readonly"})
+							solved = true
+						}
+					}
+					if solved {
+						continue
+					}
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
 					// Sticky Note APIs

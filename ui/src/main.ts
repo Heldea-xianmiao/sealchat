@@ -31,23 +31,71 @@ import 'dayjs/locale/ja'
 dayjs.locale(document.documentElement.lang);
 dayjs.extend(relativeTime)
 
+import { api } from './stores/_config'
 import { useUserStore } from './stores/user'
+import { useChatStore } from './stores/chat'
 
 router.beforeEach(async (to, from, next) => {
-  if (to.name === 'user-signin' || to.name === 'user-signup') {
+  if (to.name === 'user-signin' || to.name === 'user-signup' || to.name === 'world-private-hint') {
     return next();
   }
 
+  const worldId = typeof to.params.worldId === 'string' ? to.params.worldId.trim() : '';
+  const channelId = typeof to.params.channelId === 'string' ? to.params.channelId.trim() : '';
+
   const user = useUserStore();
+  const chat = useChatStore();
   const result = await user.checkUserSession();
   if (result === 'ok' || result === 'network-error') {
     if (result === 'network-error') {
       console.warn('网络不稳定，跳过登录状态刷新');
     }
+    if (to.name === 'world-channel' && worldId) {
+      try {
+        const resp = await api.get(`/api/v1/worlds/${worldId}`);
+        if (resp?.data?.isMember) {
+          chat.disableObserverMode();
+        } else {
+          chat.enableObserverMode(worldId, channelId);
+        }
+        return next();
+      } catch (error: any) {
+        const status = error?.response?.status;
+        if (status === 403 || status === 404) {
+          return next({
+            name: 'world-private-hint',
+            params: { worldId },
+            query: { redirect: to.fullPath },
+          });
+        }
+        try {
+          await api.get(`/api/v1/public/worlds/${worldId}`);
+          chat.enableObserverMode(worldId, channelId);
+          return next();
+        } catch {
+          return next();
+        }
+      }
+    }
+    chat.disableObserverMode();
     return next();
   }
 
-  next({ name: 'user-signin' })
+  if (to.name === 'world-channel' && worldId) {
+    try {
+      await api.get(`/api/v1/public/worlds/${worldId}`);
+      chat.enableObserverMode(worldId, channelId);
+      return next();
+    } catch {
+      return next({
+        name: 'world-private-hint',
+        params: { worldId },
+        query: { redirect: to.fullPath },
+      });
+    }
+  }
+
+  next({ name: 'user-signin', query: { redirect: to.fullPath } })
   // window.location.href = '//' + window.location.hostname + ":4455/login";
   return;
 })

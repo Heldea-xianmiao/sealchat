@@ -77,6 +77,7 @@ import AvatarEditor from '@/components/AvatarEditor.vue'
 import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
+import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -313,6 +314,7 @@ watch(
 const spectatorInputDisabled = computed(() => !channelSendAllowed.value);
 const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
+const emailNotificationDrawerVisible = ref(false);
 let webhookPermissionSeq = 0;
 
 watch(
@@ -707,6 +709,10 @@ const handleActionRibbonStateRequest = () => {
   syncActionRibbonState();
 };
 
+const handleOpenDisplaySettings = () => {
+  displaySettingsVisible.value = true;
+};
+
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
   displaySettingsVisible.value = false;
@@ -730,6 +736,7 @@ const handleAvatarPromptSkip = () => {
 
 // Check if avatar prompt should be shown on mount (session-based)
 const checkAvatarPromptOnMount = () => {
+  if (chat.isObserver) return;
   if (avatarPromptDismissedThisSession.value) return;
   if (!user.hasDefaultAvatar) return;
   // Show prompt after a brief delay for better UX
@@ -750,6 +757,7 @@ watch(
 
 chatEvent.on('action-ribbon-toggle', handleActionRibbonToggleRequest);
 chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
+chatEvent.on('open-display-settings', handleOpenDisplaySettings);
 
 const emojiLoading = ref(false)
 const uploadImages = computedAsync(async () => {
@@ -6527,7 +6535,9 @@ let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
   await utils.configGet();
-  await utils.commandsRefresh();
+  if (!chat.isObserver) {
+    await utils.commandsRefresh();
+  }
 
   chat.channelRefreshSetup()
 
@@ -6535,7 +6545,9 @@ onMounted(async () => {
   scheduleHistoryAutoRestore();
 
   // 检查并启动新用户引导
-  onboarding.checkAndStartOnboarding();
+  if (!chat.isObserver) {
+    onboarding.checkAndStartOnboarding();
+  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -7862,6 +7874,7 @@ onBeforeUnmount(() => {
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
+  chatEvent.off('open-display-settings', handleOpenDisplaySettings);
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
@@ -7894,6 +7907,8 @@ onBeforeUnmount(() => {
         :sticky-note-active="stickyNoteStore.uiVisible"
         :webhook-enabled="webhookManageAllowed"
         :webhook-active="webhookDrawerVisible"
+        :email-notification-enabled="true"
+        :email-notification-active="emailNotificationDrawerVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -7906,6 +7921,7 @@ onBeforeUnmount(() => {
         @open-split="openSplitView"
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
+        @open-email-notification="emailNotificationDrawerVisible = true"
         @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -7914,6 +7930,13 @@ onBeforeUnmount(() => {
       <n-drawer-content closable>
         <template #header>Webhook 授权</template>
         <WebhookIntegrationManager :channel-id="chat.curChannel?.id || ''" />
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer v-model:show="emailNotificationDrawerVisible" placement="right" :width="480">
+      <n-drawer-content closable>
+        <template #header>邮件提醒</template>
+        <EmailNotificationManager :channel-id="chat.curChannel?.id || ''" />
       </n-drawer-content>
     </n-drawer>
 
@@ -9045,10 +9068,11 @@ onBeforeUnmount(() => {
   <WorldKeywordManager />
 
   <!-- 新用户引导系统 -->
-  <OnboardingRoot />
+  <OnboardingRoot v-if="!chat.isObserver" />
 
   <!-- 头像设置引导 -->
   <AvatarSetupPrompt
+    v-if="!chat.isObserver"
     v-model:show="avatarPromptVisible"
     @setup="handleAvatarPromptSetup"
     @skip="handleAvatarPromptSkip"
