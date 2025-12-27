@@ -39,6 +39,13 @@ const handleDeepLink = async () => {
   const channelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
   if (!worldId) return;
   try {
+    if (chat.isObserver) {
+      chat.enableObserverMode(worldId, channelId);
+      if (chat.connectState === 'connected') {
+        await chat.initObserverSession();
+      }
+      return;
+    }
     await chat.ensureWorldReady();
     const currentWorldId = chat.currentWorldId ? String(chat.currentWorldId).trim() : '';
     const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id).trim() : '';

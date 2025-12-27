@@ -20,6 +20,18 @@ type ChatContext struct {
 	UserId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]
 }
 
+func (ctx *ChatContext) IsGuest() bool {
+	return ctx != nil && ctx.ConnInfo != nil && ctx.ConnInfo.IsGuest
+}
+
+func (ctx *ChatContext) IsObserver() bool {
+	return ctx != nil && ctx.ConnInfo != nil && ctx.ConnInfo.IsObserver
+}
+
+func (ctx *ChatContext) IsReadOnly() bool {
+	return ctx.IsGuest() || ctx.IsObserver()
+}
+
 func (ctx *ChatContext) BroadcastToUserJSON(userId string, data any) {
 	value, _ := ctx.UserId2ConnInfo.Load(userId)
 	if value == nil {

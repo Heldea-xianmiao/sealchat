@@ -44,6 +44,12 @@ export async function fetchWorldKeywords(worldId: string, params?: { page?: numb
   return data
 }
 
+export async function fetchWorldKeywordsPublic(worldId: string, params?: { page?: number; pageSize?: number; q?: string; category?: string }) {
+  if (!worldId) throw new Error('worldId is required')
+  const { data } = await api.get<WorldKeywordListResponse>(`/api/v1/public/worlds/${worldId}/keywords`, { params })
+  return data
+}
+
 export async function createWorldKeyword(worldId: string, payload: WorldKeywordPayload) {
   const { data } = await api.post<{ item: WorldKeywordItem }>(`/api/v1/worlds/${worldId}/keywords`, payload)
   return data.item
@@ -76,5 +82,10 @@ export async function exportWorldKeywords(worldId: string, category?: string) {
 
 export async function fetchWorldKeywordCategories(worldId: string): Promise<string[]> {
   const { data } = await api.get<{ categories: string[] }>(`/api/v1/worlds/${worldId}/keywords/categories`)
+  return data.categories
+}
+
+export async function fetchWorldKeywordCategoriesPublic(worldId: string): Promise<string[]> {
+  const { data } = await api.get<{ categories: string[] }>(`/api/v1/public/worlds/${worldId}/keywords/categories`)
   return data.categories
 }

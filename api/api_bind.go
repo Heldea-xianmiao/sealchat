@@ -76,6 +76,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		return c.Status(http.StatusOK).JSON(ret)
 	})
+	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
+	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
+	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
 
 	v1.Get("/attachment/:id", AttachmentGet)
 	v1.Get("/attachment/:id/thumb", AttachmentThumb)

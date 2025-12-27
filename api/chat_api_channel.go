@@ -80,6 +80,36 @@ func apiChannelList(ctx *ChatContext, data *struct {
 	WorldID string `json:"world_id"`
 }) (any, error) {
 	worldID := strings.TrimSpace(data.WorldID)
+	if ctx.IsReadOnly() {
+		if worldID == "" {
+			return nil, fmt.Errorf("未找到世界")
+		}
+		world, err := service.GetWorldByID(worldID)
+		if err != nil {
+			return nil, err
+		}
+		if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
+			return nil, fmt.Errorf("世界未开放公开访问")
+		}
+		items, err := service.ChannelListPublicByWorld(worldID)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if x, exists := ctx.ChannelUsersMap.Load(item.ID); exists {
+				if !item.IsPrivate {
+					item.MembersCount = x.Len()
+				}
+			}
+		}
+		return &struct {
+			Data    []*model.ChannelModel `json:"data"`
+			WorldID string                `json:"world_id"`
+		}{
+			Data:    items,
+			WorldID: worldID,
+		}, nil
+	}
 	if worldID == "" {
 		if w, err := service.GetOrCreateDefaultWorld(); err == nil && w != nil {
 			worldID = w.ID
@@ -143,6 +173,33 @@ func apiChannelEnter(ctx *ChatContext, data *struct {
 	channelWorldID := ""
 
 	// 权限检查
+	if ctx.IsReadOnly() {
+		channel, err := service.CanGuestAccessChannel(channelId)
+		if err != nil {
+			return nil, err
+		}
+		if channel != nil {
+			channelWorldID = channel.WorldID
+		}
+		if ctx.ConnInfo.ChannelId != "" {
+			ctx.ConnInfo.ChannelId = ""
+			ctx.ConnInfo.WorldId = ""
+		}
+		ctx.ConnInfo.ChannelId = channelId
+		ctx.ConnInfo.WorldId = channelWorldID
+		ctx.ConnInfo.Focused = true
+		member := &model.MemberModel{
+			UserID:    ctx.User.ID,
+			ChannelID: channelId,
+			Nickname:  ctx.User.Nickname,
+		}
+		memberPT := member.ToProtocolType()
+		return &struct {
+			Member *protocol.GuildMember `json:"member"`
+		}{
+			Member: memberPT,
+		}, nil
+	}
 	if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
 		if ch, err := model.ChannelGet(channelId); err == nil && ch != nil {

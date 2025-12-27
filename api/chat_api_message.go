@@ -960,7 +960,14 @@ func apiMessageList(ctx *ChatContext, data *struct {
 
 	// 权限检查
 	channelId := data.ChannelID
-	if len(channelId) < 30 { // 注意，这不是一个好的区分方式
+	if ctx.IsReadOnly() {
+		if len(channelId) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelId); err != nil {
+			return nil, err
+		}
+	} else if len(channelId) < 30 { // 注意，这不是一个好的区分方式
 		// 群内
 		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
 			return nil, nil
@@ -1011,8 +1018,12 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	var cursorTime time.Time
 	var cursorID string
 	var hasCursor bool
-	channel, _ := model.ChannelGet(data.ChannelID)
-	canReorderAll := canReorderAllMessages(ctx.User.ID, channel)
+	var channel *model.ChannelModel
+	canReorderAll := false
+	if !ctx.IsReadOnly() {
+		channel, _ = model.ChannelGet(data.ChannelID)
+		canReorderAll = canReorderAllMessages(ctx.User.ID, channel)
+	}
 	if data.Next != "" {
 		if strings.Contains(data.Next, "|") {
 			parts := strings.SplitN(data.Next, "|", 3)
@@ -1072,7 +1083,9 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		i.Quote = x[0]
 	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
-	_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
+	if !ctx.IsReadOnly() {
+		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
+	}
 
 	q.Count(&count)
 	var next string

@@ -5,6 +5,7 @@ import UserSignupVue from '@/views/user/sign-up-view.vue'
 import UserPasswordResetView from '@/views/user/password-reset-view.vue'
 import WorldLobby from '@/views/world/WorldLobby.vue'
 import WorldDetail from '@/views/world/WorldDetail.vue'
+import WorldPrivateHint from '@/views/world/WorldPrivateHint.vue'
 import InviteConsume from '@/views/invite/InviteConsume.vue'
 import StatusDashboard from '@/views/status/StatusDashboard.vue'
 
@@ -59,6 +60,11 @@ const router = createRouter({
       path: '/worlds/:worldId',
       name: 'world-detail',
       component: WorldDetail,
+    },
+    {
+      path: '/worlds/:worldId/private',
+      name: 'world-private-hint',
+      component: WorldPrivateHint,
     },
     {
       path: '/invite/:slug',

@@ -709,6 +709,10 @@ const handleActionRibbonStateRequest = () => {
   syncActionRibbonState();
 };
 
+const handleOpenDisplaySettings = () => {
+  displaySettingsVisible.value = true;
+};
+
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
   displaySettingsVisible.value = false;
@@ -732,6 +736,7 @@ const handleAvatarPromptSkip = () => {
 
 // Check if avatar prompt should be shown on mount (session-based)
 const checkAvatarPromptOnMount = () => {
+  if (chat.isObserver) return;
   if (avatarPromptDismissedThisSession.value) return;
   if (!user.hasDefaultAvatar) return;
   // Show prompt after a brief delay for better UX
@@ -752,6 +757,7 @@ watch(
 
 chatEvent.on('action-ribbon-toggle', handleActionRibbonToggleRequest);
 chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
+chatEvent.on('open-display-settings', handleOpenDisplaySettings);
 
 const emojiLoading = ref(false)
 const uploadImages = computedAsync(async () => {
@@ -6529,7 +6535,9 @@ let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
   await utils.configGet();
-  await utils.commandsRefresh();
+  if (!chat.isObserver) {
+    await utils.commandsRefresh();
+  }
 
   chat.channelRefreshSetup()
 
@@ -6537,7 +6545,9 @@ onMounted(async () => {
   scheduleHistoryAutoRestore();
 
   // 检查并启动新用户引导
-  onboarding.checkAndStartOnboarding();
+  if (!chat.isObserver) {
+    onboarding.checkAndStartOnboarding();
+  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -7864,6 +7874,7 @@ onBeforeUnmount(() => {
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
   chatEvent.off('action-ribbon-state-request', handleActionRibbonStateRequest);
+  chatEvent.off('open-display-settings', handleOpenDisplaySettings);
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
@@ -9057,10 +9068,11 @@ onBeforeUnmount(() => {
   <WorldKeywordManager />
 
   <!-- 新用户引导系统 -->
-  <OnboardingRoot />
+  <OnboardingRoot v-if="!chat.isObserver" />
 
   <!-- 头像设置引导 -->
   <AvatarSetupPrompt
+    v-if="!chat.isObserver"
     v-model:show="avatarPromptVisible"
     @setup="handleAvatarPromptSetup"
     @skip="handleAvatarPromptSkip"

@@ -147,6 +147,52 @@ func WorldKeywordList(worldID, userID string, opts WorldKeywordListOptions) ([]*
 	return items, total, nil
 }
 
+// WorldKeywordListPublic 查询公开世界词条（仅展示启用项）。
+func WorldKeywordListPublic(worldID string, opts WorldKeywordListOptions) ([]*model.WorldKeywordModel, int64, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return nil, 0, ErrWorldNotFound
+	}
+	world, err := GetWorldByID(worldID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
+		return nil, 0, ErrWorldPermission
+	}
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+	if opts.PageSize <= 0 {
+		opts.PageSize = 50
+	}
+	if opts.PageSize > 5000 {
+		opts.PageSize = 5000
+	}
+	db := model.GetDB()
+	query := db.Model(&model.WorldKeywordModel{}).
+		Where("world_id = ? AND is_enabled = ?", worldID, true)
+	if trimmed := strings.TrimSpace(opts.Query); trimmed != "" {
+		like := "%" + trimmed + "%"
+		query = query.Where("keyword LIKE ? OR description LIKE ?", like, like)
+	}
+	if cat := strings.TrimSpace(opts.Category); cat != "" {
+		query = query.Where("category = ?", cat)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if total == 0 {
+		return []*model.WorldKeywordModel{}, 0, nil
+	}
+	var items []*model.WorldKeywordModel
+	if err := query.Order("updated_at DESC").Offset((opts.Page - 1) * opts.PageSize).Limit(opts.PageSize).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
 // WorldKeywordCreate 新增词条。
 func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*model.WorldKeywordModel, error) {
 	if err := ensureWorldKeywordPermission(worldID, actorID, true); err != nil {
@@ -310,6 +356,31 @@ func WorldKeywordListCategories(worldID, userID string) ([]string, error) {
 	var categories []string
 	err := model.GetDB().Model(&model.WorldKeywordModel{}).
 		Where("world_id = ? AND category != ''", worldID).
+		Distinct("category").
+		Order("category ASC").
+		Pluck("category", &categories).Error
+	if err != nil {
+		return nil, err
+	}
+	return categories, nil
+}
+
+// WorldKeywordListCategoriesPublic 获取公开世界启用词条的分类列表。
+func WorldKeywordListCategoriesPublic(worldID string) ([]string, error) {
+	worldID = strings.TrimSpace(worldID)
+	if worldID == "" {
+		return nil, ErrWorldNotFound
+	}
+	world, err := GetWorldByID(worldID)
+	if err != nil {
+		return nil, err
+	}
+	if world == nil || strings.ToLower(strings.TrimSpace(world.Visibility)) != model.WorldVisibilityPublic {
+		return nil, ErrWorldPermission
+	}
+	var categories []string
+	err = model.GetDB().Model(&model.WorldKeywordModel{}).
+		Where("world_id = ? AND category != '' AND is_enabled = ?", worldID, true).
 		Distinct("category").
 		Order("category ASC").
 		Pluck("category", &categories).Error
