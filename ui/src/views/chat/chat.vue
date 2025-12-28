@@ -1642,6 +1642,51 @@ const buildIdentityNameMap = (list: ChannelIdentity[]) => {
   return map;
 };
 
+const maybePromptIdentitySync = async () => {
+  const channelId = chat.curChannel?.id;
+  const currentChannel = chat.curChannel as SChannel | undefined;
+  if (!channelId || !currentChannel) {
+    return;
+  }
+  if (identitySyncDialogVisible.value) {
+    return;
+  }
+  if (chat.isObserver || isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
+    return;
+  }
+  try {
+    await chat.loadChannelIdentities(channelId, true);
+  } catch (error) {
+    console.warn('加载频道角色失败', error);
+    return;
+  }
+  const identities = chat.channelIdentities[channelId] || [];
+  // 这里是场内外角色未完整配置的简易判断逻辑
+  // const config = chat.getChannelIcOocRoleConfig(channelId);
+  // const hasAnyMapping = !!(config.icRoleId || config.oocRoleId); 
+  if (identities.length > 1) {
+    return;
+  }
+
+  const confirmed = await new Promise<boolean>((resolve) => {
+    dialog.warning({
+      title: '同步其他频道角色？',
+      content: '当前频道角色较少且场内/场外未完整配置，是否从本世界其他频道同步？',
+      positiveText: '同步',
+      negativeText: '暂不',
+      onPositiveClick: () => resolve(true),
+      onNegativeClick: () => resolve(false),
+      onClose: () => resolve(false),
+    });
+  });
+  if (!confirmed) {
+    return;
+  }
+  await openIdentityManager();
+  await nextTick();
+  await openIdentitySyncDialog();
+};
+
 const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v2';
 
 interface IdentityAvatarPayload {
@@ -7135,11 +7180,15 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
     scheduleHistoryAutoRestore();
-    fetchLatestMessages();
+    const fetchTask = fetchLatestMessages();
+    fetchTask.finally(() => {
+      void maybePromptIdentitySync();
+    });
   })
 
   await fetchLatestMessages();
   firstLoad = true;
+  await maybePromptIdentitySync();
 })
 
 onBeforeUnmount(() => {
