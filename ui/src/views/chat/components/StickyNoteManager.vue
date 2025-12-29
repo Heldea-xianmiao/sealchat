@@ -45,7 +45,7 @@
             @click.stop="toggleRailPinned"
             @mousedown.stop
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M9 18l6-6-6-6v12z"/>
             </svg>
           </button>
@@ -246,16 +246,19 @@ onUnmounted(() => {
 
 .sticky-note-rail__handle {
   position: absolute;
-  right: -6px;
+  right: -8px;
   top: 18px;
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 8px 0 0 8px;
+  border-radius: 10px 0 0 10px;
   background: var(--sc-primary-color, #3b82f6);
   color: var(--sc-primary-contrast, #fff);
   cursor: pointer;
   box-shadow: 0 4px 10px rgba(var(--sc-primary-rgb, 59, 130, 246), 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sticky-note-rail__body {
