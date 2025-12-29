@@ -9942,7 +9942,19 @@ onBeforeUnmount(() => {
   transform: translateY(3rem);
 }
 
-/* Fill the slot gap with IC background color (synced with day/night/custom themes) */
+/* Fill the slot gap with tone-matched background color */
+.message-row--tone-ic {
+  --message-drop-gap-bg: var(--chat-ic-bg);
+}
+
+.message-row--tone-ooc {
+  --message-drop-gap-bg: var(--chat-ooc-bg);
+}
+
+.message-row--tone-archived {
+  --message-drop-gap-bg: rgba(148, 163, 184, 0.2);
+}
+
 .message-row--drop-before:not(.message-row--drag-source)::before,
 .message-row--drop-after:not(.message-row--drag-source)::after {
   content: '';
@@ -9950,7 +9962,7 @@ onBeforeUnmount(() => {
   left: 0;
   right: 0;
   height: 3rem;
-  background-color: var(--chat-ic-bg);
+  background-color: var(--message-drop-gap-bg, var(--chat-ic-bg));
   z-index: -1;
 }
 
