@@ -1244,7 +1244,7 @@ onUnmounted(() => {
 }
 
 .keyword-editor-modal :deep(.n-card) {
-  width: 520px;
+  width: 600px;
   max-width: 92vw;
   height: 100%;
   max-height: 100%;
@@ -1495,6 +1495,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 767px) {
+  .keyword-editor-form {
+    gap: 0.5rem;
+  }
+
   .keyword-manager__toolbar {
     flex-direction: column;
     align-items: flex-start;
@@ -1515,17 +1519,29 @@ onUnmounted(() => {
   }
 
   .keyword-editor__toggles {
-    flex-direction: column;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .keyword-toggle {
+    min-width: 0;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .keyword-toggle__label {
+    font-size: 12px;
   }
 
   .keyword-editor__row--compact :deep(.n-form-item) {
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.2rem;
   }
 
   .keyword-editor-modal :deep(.n-modal) {
-    height: calc(100vh - 16px);
-    max-height: calc(100vh - 16px);
+    height: calc(100dvh - 12px);
+    max-height: calc(100dvh - 12px);
   }
 
   .keyword-editor-modal :deep(.n-card) {
@@ -1533,12 +1549,16 @@ onUnmounted(() => {
     max-width: 96vw;
   }
 
+  .keyword-editor-modal :deep(.n-card__content) {
+    padding: 12px;
+  }
+
   .keyword-editor__description :deep(.desc-editor__input) {
     min-height: 0;
   }
 
   .keyword-editor__description {
-    --desc-editor-height: 260px;
+    --desc-editor-height: 220px;
   }
 }
 
@@ -1606,17 +1626,23 @@ onUnmounted(() => {
 
 @media (max-width: 767px) {
   .keyword-editor__action-row {
-    flex-direction: column;
+    flex-direction: row;
+    justify-content: flex-end;
     gap: 0.5rem;
   }
   
   .keyboard-hint {
-    order: 2;
+    display: none;
   }
   
   .keyword-editor-form :deep(.n-card__action) {
-    padding-top: 10px !important;
-    padding-bottom: 10px !important;
+    padding: 8px 12px !important;
+  }
+
+  .keyword-editor__action-row :deep(.n-button) {
+    height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 }
 </style>
