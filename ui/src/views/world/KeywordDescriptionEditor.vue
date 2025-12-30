@@ -411,6 +411,10 @@ defineExpose({
   border-radius: 6px;
   background: var(--sc-bg-input, #fff);
   transition: border-color 0.15s ease;
+  flex: 1;
+  min-height: 0;
+  height: var(--desc-editor-height, 100%);
+  max-height: var(--desc-editor-height, 100%);
 }
 
 .desc-editor:focus-within {
@@ -419,7 +423,8 @@ defineExpose({
 
 .desc-editor__input {
   min-height: 100px;
-  max-height: 280px;
+  flex: 1;
+  max-height: 100%;
   overflow-y: auto;
   padding: 8px 10px;
   font-size: 14px;

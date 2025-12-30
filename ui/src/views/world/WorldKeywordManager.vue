@@ -993,7 +993,12 @@ onUnmounted(() => {
     </n-drawer-content>
   </n-drawer>
 
-  <n-modal v-model:show="editorVisible" preset="card" :title="isEditing ? '编辑术语' : '新增术语'" style="width: 520px">
+  <n-modal
+    v-model:show="editorVisible"
+    preset="card"
+    :title="isEditing ? '编辑术语' : '新增术语'"
+    class="keyword-editor-modal"
+  >
     <n-form label-placement="top" class="keyword-editor-form" size="small">
       <div class="keyword-editor__row keyword-editor__row--compact">
         <n-form-item label="关键词" required class="keyword-editor__field keyword-editor__field--keyword" :show-feedback="false">
@@ -1223,6 +1228,35 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.keyword-editor-modal :deep(.n-modal) {
+  height: calc(100vh - 48px);
+  max-height: calc(100vh - 48px);
+}
+
+.keyword-editor-modal :deep(.n-modal-body-wrapper) {
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+}
+
+.keyword-editor-modal :deep(.n-card) {
+  width: 520px;
+  max-width: 92vw;
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.keyword-editor-modal :deep(.n-card__content) {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .keyword-editor__row {
@@ -1264,6 +1298,32 @@ onUnmounted(() => {
 .keyword-editor__description :deep(.n-input) {
   font-size: 14px;
   line-height: 1.5;
+}
+
+.keyword-editor__description {
+  flex: 0 0 auto;
+  display: flex;
+  min-height: 0;
+  --desc-editor-height: 360px;
+}
+
+.keyword-editor__description :deep(.n-form-item) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.keyword-editor__description :deep(.n-form-item-blank) {
+  flex: 1;
+  min-height: 0;
+  height: var(--desc-editor-height);
+  max-height: var(--desc-editor-height);
+}
+
+.keyword-editor__description :deep(.desc-editor) {
+  height: 100%;
+  max-height: 100%;
 }
 
 .keyword-description-label {
@@ -1461,6 +1521,24 @@ onUnmounted(() => {
 
   .keyword-editor__row--compact :deep(.n-form-item) {
     margin-bottom: 0.35rem;
+  }
+
+  .keyword-editor-modal :deep(.n-modal) {
+    height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .keyword-editor-modal :deep(.n-card) {
+    width: 96vw;
+    max-width: 96vw;
+  }
+
+  .keyword-editor__description :deep(.desc-editor__input) {
+    min-height: 0;
+  }
+
+  .keyword-editor__description {
+    --desc-editor-height: 260px;
   }
 }
 
