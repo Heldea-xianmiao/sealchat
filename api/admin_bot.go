@@ -173,6 +173,21 @@ func BotTokenDelete(c *fiber.Ctx) error {
 	if err := tx.Where("user_id = ?", token.ID).Delete(&model.MemberModel{}).Error; err != nil {
 		return rollback(err)
 	}
+
+	// 删除与该 Bot 相关的私聊频道和好友关系
+	var friendChannelIDs []string
+	tx.Model(&model.FriendModel{}).
+		Where("user_id1 = ? OR user_id2 = ?", token.ID, token.ID).
+		Pluck("id", &friendChannelIDs)
+	if len(friendChannelIDs) > 0 {
+		if err := tx.Where("id IN ?", friendChannelIDs).Delete(&model.ChannelModel{}).Error; err != nil {
+			return rollback(err)
+		}
+	}
+	if err := tx.Where("user_id1 = ? OR user_id2 = ?", token.ID, token.ID).Delete(&model.FriendModel{}).Error; err != nil {
+		return rollback(err)
+	}
+
 	if err := tx.Where("id = ?", token.ID).Delete(&model.UserModel{}).Error; err != nil {
 		return rollback(err)
 	}
