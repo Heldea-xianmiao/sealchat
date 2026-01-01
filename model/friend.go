@@ -233,6 +233,9 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 		return ""
 	})
 
+	var validChannels []*ChannelModel
+	var orphanedChannelIDs []string
+
 	for index := range channels {
 		ch := channels[index]
 		if ch == nil {
@@ -243,11 +246,12 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 			continue
 		}
 		targetUser := userMap[friend.getAnotherUserId(userID)]
-		friend.UserInfo = targetUser
-		ch.FriendInfo = friend
 		if targetUser == nil {
+			orphanedChannelIDs = append(orphanedChannelIDs, ch.ID)
 			continue
 		}
+		friend.UserInfo = targetUser
+		ch.FriendInfo = friend
 		displayName := strings.TrimSpace(targetUser.Nickname)
 		if displayName == "" {
 			displayName = strings.TrimSpace(targetUser.Username)
@@ -258,9 +262,18 @@ func FriendChannelList(userID string) ([]*ChannelModel, error) {
 		if displayName != "" {
 			ch.Name = fmt.Sprintf("@%s", displayName)
 		}
+		validChannels = append(validChannels, ch)
 	}
 
-	return channels, err
+	// 异步清理脏数据
+	if len(orphanedChannelIDs) > 0 {
+		go func(ids []string) {
+			db.Where("id IN ?", ids).Delete(&ChannelModel{})
+			db.Where("id IN ?", ids).Delete(&FriendModel{})
+		}(orphanedChannelIDs)
+	}
+
+	return validChannels, err
 }
 
 // FriendChannelIDList 获取用户可见的私聊频道ID列表
