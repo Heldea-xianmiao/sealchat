@@ -207,7 +207,11 @@ export const useGalleryStore = defineStore('gallery', {
       }
       delete this.items[collectionId];
       if (this.activeCollectionId === collectionId) {
-        this.activeCollectionId = cache?.items?.[0]?.id ?? null;
+        const newActiveId = cache?.items?.[0]?.id ?? null;
+        this.activeCollectionId = newActiveId;
+        if (newActiveId) {
+          void this.loadItems(newActiveId);
+        }
       }
       if (this.emojiCollectionId === collectionId) {
         this.emojiCollectionId = null;

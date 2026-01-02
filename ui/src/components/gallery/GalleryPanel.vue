@@ -327,13 +327,10 @@ const items = computed(() => {
 const loading = computed(() => {
   // Show loading during initialization
   if (gallery.isInitializing) return true;
-  // Show loading if panel is visible but no active collection yet
-  if (visible.value && !gallery.activeCollectionId) return true;
+  // No active collection means nothing to load (empty state, not loading)
+  if (!gallery.activeCollectionId) return false;
   // Show loading if active collection is loading
-  if (gallery.activeCollectionId && gallery.isCollectionLoading(gallery.activeCollectionId)) return true;
-  // Show loading if panel just opened and items haven't been loaded yet
-  if (visible.value && gallery.activeCollectionId && !gallery.items[gallery.activeCollectionId]) return true;
-  return false;
+  return gallery.isCollectionLoading(gallery.activeCollectionId);
 });
 const isEmojiLinked = computed(() => gallery.emojiCollectionId === gallery.activeCollectionId);
 
