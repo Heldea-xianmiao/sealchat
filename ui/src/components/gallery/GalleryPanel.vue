@@ -271,16 +271,16 @@ const contentRef = ref<HTMLElement | null>(null);
 
 const visible = computed(() => gallery.isPanelVisible);
 
-// Auto-refresh 1 second after panel opens to fix data fetch latency
+// Auto-refresh 1 second after panel opens or collection switches to fix data fetch latency
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-watch(visible, (isVisible) => {
+watch([visible, () => gallery.activeCollectionId], ([isVisible, activeCollectionId]) => {
   if (autoRefreshTimer) {
     clearTimeout(autoRefreshTimer);
     autoRefreshTimer = null;
   }
-  if (isVisible && gallery.activeCollectionId) {
+  if (isVisible && activeCollectionId) {
     autoRefreshTimer = setTimeout(() => {
-      gallery.loadItems(gallery.activeCollectionId!);
+      gallery.loadItems(activeCollectionId);
     }, 1000);
   }
 });
@@ -327,13 +327,10 @@ const items = computed(() => {
 const loading = computed(() => {
   // Show loading during initialization
   if (gallery.isInitializing) return true;
-  // Show loading if panel is visible but no active collection yet
-  if (visible.value && !gallery.activeCollectionId) return true;
+  // No active collection means nothing to load (empty state, not loading)
+  if (!gallery.activeCollectionId) return false;
   // Show loading if active collection is loading
-  if (gallery.activeCollectionId && gallery.isCollectionLoading(gallery.activeCollectionId)) return true;
-  // Show loading if panel just opened and items haven't been loaded yet
-  if (visible.value && gallery.activeCollectionId && !gallery.items[gallery.activeCollectionId]) return true;
-  return false;
+  return gallery.isCollectionLoading(gallery.activeCollectionId);
 });
 const isEmojiLinked = computed(() => gallery.emojiCollectionId === gallery.activeCollectionId);
 

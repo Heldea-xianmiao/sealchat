@@ -49,6 +49,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { NButton, NImage, NCheckbox } from 'naive-ui';
 import type { GalleryItem } from '@/types';
 import { fetchAttachmentMetaById, normalizeAttachmentId, resolveAttachmentUrl, type AttachmentMeta } from '@/composables/useAttachmentResolver';
+import { urlBase } from '@/stores/_config';
 
 const props = defineProps<{
   items: GalleryItem[];
@@ -75,6 +76,14 @@ const sizeClass = computed(() => `gallery-grid--${props.thumbnailSize ?? 'medium
 const dragOverIndex = ref<number | null>(null);
 let lastClickIndex = -1;
 let draggingIndex = -1;
+
+// Thumbnail size mapping: UI size -> server-side thumbnail size (smaller for faster loading)
+const THUMB_SIZE_MAP: Record<string, number> = {
+  small: 80,
+  medium: 120,
+  large: 160,
+  xlarge: 200
+};
 
 const attachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
 const pendingMetaFetch = new Set<string>();
@@ -110,10 +119,17 @@ function resolveGalleryItemSrc(item: GalleryItem) {
   if (meta === undefined && !pendingMetaFetch.has(normalized)) {
     void ensureAttachmentMeta(normalized);
   }
+  // Animated images (GIF/animated WebP) should use original to preserve animation
   if (meta?.isAnimated) {
     return resolveAttachmentUrl(normalized);
   }
-  return item.thumbUrl || resolveAttachmentUrl(normalized);
+  // Prefer gallery-saved thumbUrl if available (needs urlBase for dev environment)
+  if (item.thumbUrl) {
+    return `${urlBase}${item.thumbUrl}`;
+  }
+  // Fallback to server-side thumbnail API
+  const size = THUMB_SIZE_MAP[props.thumbnailSize ?? 'medium'] ?? 120;
+  return `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${size}`;
 }
 
 watch(

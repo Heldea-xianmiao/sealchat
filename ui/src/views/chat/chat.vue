@@ -768,7 +768,7 @@ const uploadImages = computedAsync(async () => {
   return [];
 }, [], emojiLoading);
 
-const EMOJI_THUMB_SIZE = 150;
+const EMOJI_THUMB_SIZE = 80;
 const emojiAttachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
 const pendingEmojiMetaFetch = new Set<string>();
 
@@ -786,7 +786,7 @@ const ensureEmojiAttachmentMeta = async (attachmentId: string) => {
   }
 };
 
-const resolveEmojiAttachmentUrl = (attachmentId: string, thumbUrl?: string) => {
+const resolveEmojiAttachmentUrl = (attachmentId: string) => {
   const normalized = normalizeAttachmentId(attachmentId);
   if (!normalized) {
     return '';
@@ -795,10 +795,12 @@ const resolveEmojiAttachmentUrl = (attachmentId: string, thumbUrl?: string) => {
   if (meta === undefined && !pendingEmojiMetaFetch.has(normalized)) {
     void ensureEmojiAttachmentMeta(normalized);
   }
+  // Animated images should use original to preserve animation
   if (meta?.isAnimated) {
     return resolveAttachmentUrl(normalized);
   }
-  return thumbUrl || `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
+  // Use server-side thumbnail API for faster loading
+  return `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
 };
 
 const getEmojiItemSrc = (item: UserEmojiModel) => {
@@ -3078,7 +3080,7 @@ const isMergeCandidate = (message?: Message | null) => {
 const roleFilterActive = computed(() => Array.isArray(chat.filterState.roleIds) && chat.filterState.roleIds.length > 0);
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
-  const { icOnly, showArchived, roleIds } = chat.filterState;
+  const { icFilter, showArchived, roleIds } = chat.filterState;
   const filterRoleIds = Array.isArray(roleIds) ? roleIds : [];
   const allowMergeNeighbors = display.settings.mergeNeighbors && !roleFilterActive.value;
 
@@ -3092,7 +3094,10 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
     }
 
     const icValue = String(message?.icMode ?? message?.ic_mode ?? 'ic').toLowerCase();
-    if (icOnly && icValue !== 'ic') {
+    if (icFilter === 'ic' && icValue !== 'ic') {
+      return false;
+    }
+    if (icFilter === 'ooc' && icValue !== 'ooc') {
       return false;
     }
 
@@ -8131,7 +8136,13 @@ const insertGalleryInline = (attachmentId: string) => {
   ensureInputFocus();
 };
 
-const getGalleryItemThumb = (item: GalleryItem) => resolveEmojiAttachmentUrl(item.attachmentId, item.thumbUrl);
+const getGalleryItemThumb = (item: GalleryItem) => {
+  // Prefer gallery-saved thumbUrl if available (needs urlBase for dev environment)
+  if (item.thumbUrl) {
+    return `${urlBase}${item.thumbUrl}`;
+  }
+  return resolveEmojiAttachmentUrl(item.attachmentId);
+};
 
 const handleGalleryEmojiClick = (item: GalleryItem) => {
   recordEmojiUsage(item.id);
@@ -8236,7 +8247,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
-        @clear-filters="chat.setFilterState({ icOnly: false, showArchived: false, roleIds: [] })"
+        @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>
 

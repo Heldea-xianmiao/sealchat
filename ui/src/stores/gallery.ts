@@ -131,11 +131,12 @@ export const useGalleryStore = defineStore('gallery', {
         if (this.activeCollectionId) {
           await this.loadItems(this.activeCollectionId);
         }
-        if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
-          await this.loadItems(this.emojiCollectionId);
-        }
       } finally {
         this.initializing = false;
+      }
+      if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
+        // Load emoji collection in the background so panel init isn't blocked.
+        void this.loadItems(this.emojiCollectionId).catch(() => {});
       }
     },
 
@@ -207,7 +208,11 @@ export const useGalleryStore = defineStore('gallery', {
       }
       delete this.items[collectionId];
       if (this.activeCollectionId === collectionId) {
-        this.activeCollectionId = cache?.items?.[0]?.id ?? null;
+        const newActiveId = cache?.items?.[0]?.id ?? null;
+        this.activeCollectionId = newActiveId;
+        if (newActiveId) {
+          void this.loadItems(newActiveId);
+        }
       }
       if (this.emojiCollectionId === collectionId) {
         this.emojiCollectionId = null;
