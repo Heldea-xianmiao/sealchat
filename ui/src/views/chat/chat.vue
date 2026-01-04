@@ -7877,6 +7877,8 @@ const avatarLongpress = (data: any) => {
 }
 
 // Multi-select handlers
+const allMessageIds = computed(() => rows.value.map(row => row.id));
+
 const getMultiSelectedMessages = () => {
   if (!chat.multiSelect?.selectedIds.size) return [];
   const selected = Array.from(chat.multiSelect.selectedIds);
@@ -7925,6 +7927,11 @@ const handleMultiSelectDelete = async () => {
     message.warning('请先选择消息');
     return;
   }
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.error('当前频道不可用');
+    return;
+  }
   dialog.warning({
     title: '批量删除',
     content: `确定要删除选中的 ${ids.length} 条消息吗？此操作不可撤销。`,
@@ -7933,7 +7940,7 @@ const handleMultiSelectDelete = async () => {
     onPositiveClick: async () => {
       try {
         for (const id of ids) {
-          await chat.messageDelete(id);
+          await chat.messageRemove(channelId, id);
         }
         message.success(`已删除 ${ids.length} 条消息`);
         chat.exitMultiSelectMode();
@@ -8349,6 +8356,7 @@ onBeforeUnmount(() => {
                     :identity-color="getMessageIdentityColor(entry.message)"
                     :content="entry.message.content"
                     :item="entry.message"
+                    :all-message-ids="allMessageIds"
                     :editing-preview="editingPreviewMap[entry.message.id]"
                     :tone="getMessageTone(entry.message)"
                     :show-avatar="false"
@@ -8382,6 +8390,7 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="false"
@@ -8412,6 +8421,7 @@ onBeforeUnmount(() => {
                 :identity-color="getMessageIdentityColor(entry.message)"
                 :content="entry.message.content"
                 :item="entry.message"
+                :all-message-ids="allMessageIds"
                 :editing-preview="editingPreviewMap[entry.message.id]"
                 :tone="getMessageTone(entry.message)"
                 :show-avatar="display.showAvatar"
