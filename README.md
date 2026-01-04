@@ -1,4 +1,17 @@
 # SealChat
+<div align="center">
+
+[![Total Downloads](https://img.shields.io/github/downloads/kagangtuya-star/sealchat/total?style=flat-square&color=brightgreen&label=Total%20Downloads)](https://github.com/kagangtuya-star/sealchat/releases)
+[![Latest Release Downloads](https://img.shields.io/github/downloads/kagangtuya-star/sealchat/latest/total?style=flat-square&color=2ea44f&label=Latest%20Release)](https://github.com/kagangtuya-star/sealchat/releases/latest)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/kagangtuya-star/sealchat?style=flat-square&color=orange&label=Version)](https://github.com/kagangtuya-star/sealchat/releases)
+[![License](https://img.shields.io/github/license/kagangtuya-star/sealchat?style=flat-square&color=blue)](https://github.com/kagangtuya-star/sealchat/blob/main/LICENSE)
+[![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+[![Vue.js 3](https://img.shields.io/badge/-Vue.js%203-4FC08D?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![Vite](https://img.shields.io/badge/-Vite-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+<br/>
+[![GitHub Stars](https://img.shields.io/github/stars/kagangtuya-star/sealchat?style=social)](https://github.com/kagangtuya-star/sealchat/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/kagangtuya-star/sealchat?style=social)](https://github.com/kagangtuya-star/sealchat/network/members)
+</div>
 
 SealChat 是一款自托管的轻量即时通讯与角色协作平台，服务端使用 Go 1.22 开发，前端基于 Vue 3 + Vite。通过“世界 → 频道 → 消息”的结构以及细粒度权限控制，它既能满足跑团/同人/社区的沉浸式聊天场景，也能覆盖小型团队的内部沟通需求。
 ![PixPin_2025-12-07_00-01-43](https://github.com/user-attachments/assets/2530ed53-9e95-43eb-b3ef-ed6ed659f1e0)
