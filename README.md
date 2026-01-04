@@ -1,6 +1,9 @@
 # SealChat
 <div align="center">
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-点击%E7%AB%8B%E5%8D%B3%E4%BD%93%E9%AA%8C-blueviolet?style=flat-square&logo=google-chrome&logoColor=white)](https://kagangtuya-sc.sealdice.com/)
+[![QQ Group](https://img.shields.io/badge/QQ%E7%BE%A4-%E7%82%B9%E5%87%BB%E5%8A%A0%E5%85%A5-12B7F5?style=flat-square&logo=tencentqq&logoColor=white)](https://qm.qq.com/q/wL4lD8saIM)
+<br/>
 [![Total Downloads](https://img.shields.io/github/downloads/kagangtuya-star/sealchat/total?style=flat-square&color=brightgreen&label=Total%20Downloads)](https://github.com/kagangtuya-star/sealchat/releases)
 [![Latest Release Downloads](https://img.shields.io/github/downloads/kagangtuya-star/sealchat/latest/total?style=flat-square&color=2ea44f&label=Latest%20Release)](https://github.com/kagangtuya-star/sealchat/releases/latest)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/kagangtuya-star/sealchat?style=flat-square&color=orange&label=Version)](https://github.com/kagangtuya-star/sealchat/releases)
