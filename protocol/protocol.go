@@ -291,28 +291,38 @@ const (
 	EventStickyNotePushed  EventName = "sticky-note-pushed"
 )
 
+// MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
+type MessageContext struct {
+	ICMode          string `json:"icMode,omitempty"`          // 原消息的 IC/OOC 模式
+	IsWhisper       bool   `json:"isWhisper,omitempty"`       // 原消息是否为悄悄话
+	WhisperToUserID string `json:"whisperToUserId,omitempty"` // 悄悄话目标用户ID
+	IsHiddenDice    bool   `json:"isHiddenDice,omitempty"`    // 是否为暗骰
+	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
+}
+
 type Event struct {
-	ID         int64                      `json:"id"`
-	Type       EventName                  `json:"type"`
-	SelfID     string                     `json:"selfID"`
-	Platform   string                     `json:"platform"`
-	Timestamp  int64                      `json:"timestamp"`
-	Argv       *Argv                      `json:"argv"`
-	Channel    *Channel                   `json:"channel"`
-	Guild      *Guild                     `json:"guild"`
-	Login      *Login                     `json:"login"`
-	Member     *GuildMember               `json:"member"`
-	Message    *Message                   `json:"message"`
-	Operator   *User                      `json:"operator"`
-	Role       *GuildRole                 `json:"role"`
-	User       *User                      `json:"user"`
-	Button     *Button                    `json:"button"`
-	Typing     *TypingPreview             `json:"typing"`
-	Reorder    *MessageReorder            `json:"reorder"`
-	Presence   []*ChannelPresence         `json:"presence"`
-	AudioState *AudioPlaybackStatePayload `json:"audioState,omitempty"`
-	IForm      *ChannelIFormEventPayload  `json:"iform,omitempty"`
-	StickyNote *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	ID             int64                      `json:"id"`
+	Type           EventName                  `json:"type"`
+	SelfID         string                     `json:"selfID"`
+	Platform       string                     `json:"platform"`
+	Timestamp      int64                      `json:"timestamp"`
+	Argv           *Argv                      `json:"argv"`
+	Channel        *Channel                   `json:"channel"`
+	Guild          *Guild                     `json:"guild"`
+	Login          *Login                     `json:"login"`
+	Member         *GuildMember               `json:"member"`
+	Message        *Message                   `json:"message"`
+	Operator       *User                      `json:"operator"`
+	Role           *GuildRole                 `json:"role"`
+	User           *User                      `json:"user"`
+	Button         *Button                    `json:"button"`
+	Typing         *TypingPreview             `json:"typing"`
+	Reorder        *MessageReorder            `json:"reorder"`
+	Presence       []*ChannelPresence         `json:"presence"`
+	AudioState     *AudioPlaybackStatePayload `json:"audioState,omitempty"`
+	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
+	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	MessageContext *MessageContext            `json:"messageContext,omitempty"`
 }
 
 type TypingState string
@@ -429,8 +439,8 @@ type StickyNoteUserState struct {
 
 // StickyNoteEventPayload 便签事件载荷
 type StickyNoteEventPayload struct {
-	Note          *StickyNote `json:"note,omitempty"`
+	Note          *StickyNote   `json:"note,omitempty"`
 	Notes         []*StickyNote `json:"notes,omitempty"`
-	Action        string      `json:"action,omitempty"` // create/update/delete/push
-	TargetUserIDs []string    `json:"targetUserIds,omitempty"`
+	Action        string        `json:"action,omitempty"` // create/update/delete/push
+	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
 }

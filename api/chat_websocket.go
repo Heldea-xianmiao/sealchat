@@ -35,24 +35,31 @@ func (c *WsSyncConn) WriteJSON(v interface{}) error {
 }
 
 type ConnInfo struct {
-	User             *model.UserModel
-	Conn             *WsSyncConn
-	LastPingTime     int64
-	LastAliveTime    int64
-	LatencyMs        int64
-	ChannelId        string
-	WorldId          string
-	IsGuest          bool
-	IsObserver       bool
-	TypingEnabled    bool
-	TypingState      protocol.TypingState
-	TypingContent    string
-	TypingWhisperTo  string
-	TypingUpdatedAt  int64
-	TypingIcMode     string
-	TypingIdentityID string
-	TypingOrderKey   float64
-	Focused          bool
+	User                  *model.UserModel
+	Conn                  *WsSyncConn
+	LastPingTime          int64
+	LastAliveTime         int64
+	LatencyMs             int64
+	ChannelId             string
+	WorldId               string
+	IsGuest               bool
+	IsObserver            bool
+	TypingEnabled         bool
+	TypingState           protocol.TypingState
+	TypingContent         string
+	TypingWhisperTo       string
+	TypingUpdatedAt       int64
+	TypingIcMode          string
+	TypingIdentityID      string
+	TypingOrderKey        float64
+	Focused               bool
+	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
+	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
+}
+
+type BotHiddenDicePending struct {
+	TargetUserID string
+	Count        int
 }
 
 var commandTips utils.SyncMap[string, map[string]string]
@@ -87,11 +94,11 @@ func websocketWorks(app *fiber.App) {
 	userId2ConnInfoGlobal = userId2ConnInfo
 
 	guestAllowedAPIs := map[string]struct{}{
-		"channel.list":              {},
-		"channel.enter":             {},
-		"channel.members_count":     {},
+		"channel.list":               {},
+		"channel.enter":              {},
+		"channel.members_count":      {},
 		"channel.member.list.online": {},
-		"message.list":              {},
+		"message.list":               {},
 	}
 
 	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
