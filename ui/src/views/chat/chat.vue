@@ -1683,6 +1683,7 @@ const buildIdentityNameMap = (list: ChannelIdentity[]) => {
 };
 
 const identitySyncPromptPending = ref(false);
+const identitySyncDismissedForSession = ref(false);
 
 const isInObserverMode = () => {
   return chat.isObserver || chat.observerMode || !!chat.observerWorldId;
@@ -1714,6 +1715,9 @@ const maybePromptIdentitySync = async () => {
     return;
   }
   if (identitySyncDialogVisible.value || identitySyncPromptPending.value) {
+    return;
+  }
+  if (identitySyncDismissedForSession.value) {
     return;
   }
   if (isPrivateChatChannel(currentChannel) || !chat.currentWorldId) {
@@ -1748,6 +1752,7 @@ const maybePromptIdentitySync = async () => {
   });
   identitySyncPromptPending.value = false;
   if (!confirmed) {
+    identitySyncDismissedForSession.value = true;
     return;
   }
   await openIdentityManager();
