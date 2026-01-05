@@ -650,6 +650,45 @@ func FormatHostPort(host, port string) string {
 	return fmt.Sprintf("%s:%s", formattedHost, port)
 }
 
+// IsPortAvailable checks if a TCP port is available for binding
+func IsPortAvailable(addr string) bool {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// FindAvailablePort tries the given address first, then searches nearby ports if occupied.
+// Returns the available address and a boolean indicating if a fallback port was used.
+func FindAvailablePort(addr string) (string, bool) {
+	if IsPortAvailable(addr) {
+		return addr, false
+	}
+
+	host, portStr := splitHostPort(addr)
+	port := 3212
+	if portStr != "" {
+		if p, err := net.LookupPort("tcp", portStr); err == nil {
+			port = p
+		} else if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil {
+			port = 3212
+		}
+	}
+
+	// Try nearby ports: +1 to +100
+	for offset := 1; offset <= 100; offset++ {
+		candidate := FormatHostPort(host, fmt.Sprintf("%d", port+offset))
+		if IsPortAvailable(candidate) {
+			return candidate, true
+		}
+	}
+
+	// If no port found, return original (will fail at Listen)
+	return addr, false
+}
+
 func EnsureIPv6Bracket(host string) string {
 	trimmed := strings.TrimSpace(host)
 	if trimmed == "" {
