@@ -95,6 +95,7 @@ func websocketWorks(app *fiber.App) {
 
 	guestAllowedAPIs := map[string]struct{}{
 		"channel.list":               {},
+		"channel.favorite.list":      {},
 		"channel.enter":              {},
 		"channel.members_count":      {},
 		"channel.member.list.online": {},
@@ -523,13 +524,16 @@ func websocketWorks(app *fiber.App) {
 						// 私聊
 						apiWrap(ctx, msg, apiChannelPrivateCreate)
 						solved = true
-					case "channel.list":
-						apiWrap(ctx, msg, apiChannelList)
-						solved = true
+				case "channel.list":
+					apiWrap(ctx, msg, apiChannelList)
+					solved = true
+				case "channel.favorite.list":
+					apiWrap(ctx, msg, apiChannelFavoriteList)
+					solved = true
 
-					case "channel.members_count": // 自设API
-						apiWrap(ctx, msg, apiChannelMemberCount)
-						solved = true
+				case "channel.members_count": // 自设API
+					apiWrap(ctx, msg, apiChannelMemberCount)
+					solved = true
 					case "channel.member.list.online": // 自设API: 获取频道内在线用户
 						apiWrap(ctx, msg, apiChannelMemberListOnline)
 						solved = true
