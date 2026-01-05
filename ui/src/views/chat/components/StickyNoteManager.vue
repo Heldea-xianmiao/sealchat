@@ -737,6 +737,7 @@ onUnmounted(() => {
 
 .sticky-note-rail__body {
   width: 240px;
+  min-height: 240px;
   background: var(--sc-bg-elevated, #ffffff);
   border: 1px solid var(--sc-border-strong, rgba(15, 23, 42, 0.12));
   border-right: none;
