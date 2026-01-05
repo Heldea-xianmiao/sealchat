@@ -61,6 +61,7 @@ export interface StickyNote {
     id: string
     channelId: string
     worldId: string
+    folderId?: string
     title: string
     content: string
     contentText: string
@@ -87,6 +88,21 @@ export interface StickyNote {
         name?: string
         avatar: string
     }
+}
+
+// 便签文件夹类型
+export interface StickyNoteFolder {
+    id: string
+    channelId: string
+    worldId: string
+    parentId?: string
+    name: string
+    color?: string
+    orderIndex: number
+    creatorId: string
+    createdAt: number
+    updatedAt: number
+    children?: StickyNoteFolder[]
 }
 
 export interface StickyNoteUserState {
@@ -122,6 +138,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
     // 当前频道的便签
     const notes = ref<Record<string, StickyNote>>({})
+    // 文件夹
+    const folders = ref<Record<string, StickyNoteFolder>>({})
     // 用户状态
     const userStates = ref<Record<string, StickyNoteUserState>>({})
     // 当前打开的便签ID列表
@@ -141,6 +159,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
     // 计算属性
     const noteList = computed(() => Object.values(notes.value))
+    const folderList = computed(() => Object.values(folders.value))
 
     const activeNotes = computed(() =>
         activeNoteIds.value
@@ -151,6 +170,20 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     const pinnedNotes = computed(() =>
         noteList.value.filter(note => note.isPinned)
     )
+
+    // 按文件夹分组便签
+    const notesByFolder = computed(() => {
+        const result: Record<string, StickyNote[]> = { '': [] }
+        for (const folder of folderList.value) {
+            result[folder.id] = []
+        }
+        for (const note of noteList.value) {
+            const folderId = note.folderId || ''
+            if (!result[folderId]) result[folderId] = []
+            result[folderId].push(note)
+        }
+        return result
+    })
 
     async function shouldPersistUserStateRemote() {
         const channelId = currentChannelId.value
@@ -302,6 +335,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
             }
         } else {
             notes.value = {}
+            folders.value = {}
             userStates.value = {}
             activeNoteIds.value = []
             maxZIndex.value = 1000
@@ -314,8 +348,22 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
 
         try {
-            const response = await api.get(`api/v1/channels/${channelId}/sticky-notes`)
-            const items: StickyNoteWithState[] = response.data.items || []
+            // 并行加载便签和文件夹
+            const [notesResponse, foldersResponse] = await Promise.all([
+                api.get(`api/v1/channels/${channelId}/sticky-notes`),
+                api.get(`api/v1/channels/${channelId}/sticky-note-folders`).catch(() => ({ data: { folders: [] } }))
+            ])
+            const items: StickyNoteWithState[] = notesResponse.data.items || []
+            const folderItems: StickyNoteFolder[] = foldersResponse.data.folders || []
+
+            // 加载文件夹
+            const mergedFolders: Record<string, StickyNoteFolder> = {}
+            for (const folder of folderItems) {
+                if (folder?.id) {
+                    mergedFolders[folder.id] = folder
+                }
+            }
+            folders.value = mergedFolders
 
             const mergedNotes: Record<string, StickyNote> = { ...notes.value }
             const mergedStates: Record<string, StickyNoteUserState> = { ...userStates.value }
@@ -379,6 +427,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         visibility?: StickyNoteVisibility
         viewerIds?: string
         editorIds?: string
+        folderId?: string
         defaultX?: number
         defaultY?: number
         defaultW?: number
@@ -598,6 +647,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     // 清理状态
     function reset() {
         notes.value = {}
+        folders.value = {}
         userStates.value = {}
         activeNoteIds.value = []
         editingNoteId.value = null
@@ -643,9 +693,57 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         }
     }
 
+    // ===== 文件夹操作 =====
+
+    // 创建文件夹
+    async function createFolder(params: { name: string; parentId?: string; color?: string }) {
+        if (!currentChannelId.value) return null
+        try {
+            const response = await api.post(`api/v1/channels/${currentChannelId.value}/sticky-note-folders`, params)
+            const folder: StickyNoteFolder = response.data.folder
+            folders.value[folder.id] = folder
+            return folder
+        } catch (err) {
+            console.error('创建文件夹失败:', err)
+            return null
+        }
+    }
+
+    // 更新文件夹
+    async function updateFolder(folderId: string, updates: Partial<StickyNoteFolder>) {
+        try {
+            const response = await api.patch(`api/v1/sticky-note-folders/${folderId}`, updates)
+            folders.value[folderId] = response.data.folder
+        } catch (err) {
+            console.error('更新文件夹失败:', err)
+        }
+    }
+
+    // 删除文件夹
+    async function deleteFolder(folderId: string) {
+        try {
+            await api.delete(`api/v1/sticky-note-folders/${folderId}`)
+            delete folders.value[folderId]
+            // 清除便签的 folderId
+            for (const note of Object.values(notes.value)) {
+                if (note.folderId === folderId) {
+                    note.folderId = ''
+                }
+            }
+        } catch (err) {
+            console.error('删除文件夹失败:', err)
+        }
+    }
+
+    // 移动便签到文件夹
+    async function moveNoteToFolder(noteId: string, folderId: string | null) {
+        await updateNote(noteId, { folderId: folderId || '' })
+    }
+
     return {
         // State
         notes,
+        folders,
         userStates,
         activeNoteIds,
         editingNoteId,
@@ -656,6 +754,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
         // Computed
         noteList,
+        folderList,
+        notesByFolder,
         activeNotes,
         pinnedNotes,
 
@@ -679,6 +779,11 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         reset,
         parseTypeData,
         updateTypeData,
-        getDefaultTypeData
+        getDefaultTypeData,
+        // 文件夹操作
+        createFolder,
+        updateFolder,
+        deleteFolder,
+        moveNoteToFolder
     }
 })

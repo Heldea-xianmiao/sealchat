@@ -408,6 +408,7 @@ type StickyNote struct {
 	ID          string `json:"id"`
 	ChannelID   string `json:"channelId"`
 	WorldID     string `json:"worldId"`
+	FolderID    string `json:"folderId,omitempty"` // 所属文件夹
 	Title       string `json:"title"`
 	Content     string `json:"content"`
 	ContentText string `json:"contentText"`
@@ -440,6 +441,21 @@ type StickyNoteUserState struct {
 	Height    int    `json:"height"`
 	Minimized bool   `json:"minimized"`
 	ZIndex    int    `json:"zIndex"`
+}
+
+// StickyNoteFolder 便签文件夹
+type StickyNoteFolder struct {
+	ID         string              `json:"id"`
+	ChannelID  string              `json:"channelId"`
+	WorldID    string              `json:"worldId"`
+	ParentID   string              `json:"parentId,omitempty"`
+	Name       string              `json:"name"`
+	Color      string              `json:"color,omitempty"`
+	OrderIndex int                 `json:"orderIndex"`
+	CreatorID  string              `json:"creatorId"`
+	CreatedAt  int64               `json:"createdAt"`
+	UpdatedAt  int64               `json:"updatedAt"`
+	Children   []*StickyNoteFolder `json:"children,omitempty"`
 }
 
 // StickyNoteEventPayload 便签事件载荷
