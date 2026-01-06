@@ -212,7 +212,7 @@ export function isTipTapJson(content: string): boolean {
 export function tiptapJsonToPlainText(json: TipTapNode | string): string {
   try {
     const parsedJson = typeof json === 'string' ? JSON.parse(json) : json;
-    return extractText(parsedJson);
+    return extractText(parsedJson).replace(/\n+$/, '');
   } catch {
     return '';
   }
@@ -225,11 +225,44 @@ function extractText(node: TipTapNode): string {
     return node.text;
   }
 
+  if (node.type === 'hardBreak') {
+    return '\n';
+  }
+
   if (node.content && node.content.length > 0) {
-    return node.content.map(extractText).join('');
+    const childTexts = node.content.map((child) => extractText(child));
+    const joined = childTexts.join('');
+    // 段落、标题等块级元素后添加换行
+    if (node.type === 'paragraph' || node.type === 'heading' || node.type === 'listItem') {
+      return joined + '\n';
+    }
+    return joined;
   }
 
   return '';
+}
+
+/**
+ * 将纯文本转换为 TipTap JSON 格式
+ */
+export function plainTextToTiptapJson(text: string): TipTapNode {
+  if (!text || !text.trim()) {
+    return {
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    };
+  }
+
+  const lines = text.split('\n');
+  const content = lines.map((line) => ({
+    type: 'paragraph' as const,
+    content: line ? [{ type: 'text' as const, text: line }] : [],
+  }));
+
+  return {
+    type: 'doc',
+    content,
+  };
 }
 
 /**

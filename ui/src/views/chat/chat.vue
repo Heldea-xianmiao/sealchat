@@ -1097,6 +1097,8 @@ const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 const inputMode = ref<'plain' | 'rich'>('plain');
+const richContentCache = ref<string | null>(null);
+const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
 const chatInputClassList = computed(() => (wideInputMode.value ? ['chat-input--expanded'] : []));
 const wideInputTooltip = computed(() => (wideInputMode.value ? '退出广域输入模式' : '进入广域输入模式'));
@@ -1128,6 +1130,159 @@ interface InlineImageDraft {
 const inlineImages = reactive(new Map<string, InlineImageDraft>());
 const inlineImageMarkerRegexp = /\[\[图片:([a-zA-Z0-9_-]+)\]\]/g;
 let suspendInlineSync = false;
+const inlineImageAltMarkerRegexp = /^图片-([a-zA-Z0-9_-]+)$/;
+
+const buildInlineImageToken = (markerId: string) => `[[图片:${markerId}]]`;
+
+const resolveInlineImageMarkerId = (src?: string, alt?: string) => {
+  const altMatch = alt ? alt.match(inlineImageAltMarkerRegexp) : null;
+  if (altMatch) {
+    return altMatch[1];
+  }
+  if (src) {
+    for (const draft of inlineImages.values()) {
+      if (draft.objectUrl && draft.objectUrl === src) {
+        return draft.id;
+      }
+      if (draft.attachmentId) {
+        const normalizedSrc = normalizeAttachmentId(src);
+        const normalizedDraft = normalizeAttachmentId(draft.attachmentId);
+        if (normalizedSrc && normalizedDraft && normalizedSrc === normalizedDraft) {
+          return draft.id;
+        }
+      }
+    }
+  }
+  return nanoid();
+};
+
+const buildInlineImageDraftFromRich = (markerId: string, src?: string) => {
+  const record: InlineImageDraft = reactive({
+    id: markerId,
+    token: buildInlineImageToken(markerId),
+    status: 'uploaded',
+  });
+  const raw = (src || '').trim();
+  if (!raw) {
+    return record;
+  }
+  if (/^(blob:|data:)/i.test(raw)) {
+    record.objectUrl = raw;
+    return record;
+  }
+  if (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw)) {
+    record.attachmentId = normalizeAttachmentId(raw);
+  }
+  return record;
+};
+
+const resolveInlineImageSource = (draft?: InlineImageDraft) => {
+  if (!draft) {
+    return '';
+  }
+  if (draft.status === 'uploading' && draft.objectUrl) {
+    return draft.objectUrl;
+  }
+  if (draft.attachmentId) {
+    return draft.attachmentId.startsWith('id:') ? draft.attachmentId : `id:${draft.attachmentId}`;
+  }
+  if (draft.objectUrl) {
+    return draft.objectUrl;
+  }
+  return '';
+};
+
+const extractRichTextWithImages = (node: any, drafts: Map<string, InlineImageDraft>): string => {
+  if (!node) {
+    return '';
+  }
+  if (node.text !== undefined) {
+    return node.text;
+  }
+  if (node.type === 'hardBreak') {
+    return '\n';
+  }
+  if (node.type === 'image') {
+    const src = node.attrs?.src || '';
+    const alt = node.attrs?.alt || '';
+    const markerId = resolveInlineImageMarkerId(src, alt);
+    const token = buildInlineImageToken(markerId);
+    if (!drafts.has(markerId)) {
+      const existing = inlineImages.get(markerId);
+      drafts.set(markerId, existing ?? buildInlineImageDraftFromRich(markerId, src));
+    }
+    return token;
+  }
+  if (node.content && node.content.length > 0) {
+    const childTexts = node.content.map((child: any) => extractRichTextWithImages(child, drafts));
+    const joined = childTexts.join('');
+    if (node.type === 'paragraph' || node.type === 'heading' || node.type === 'listItem') {
+      return joined + '\n';
+    }
+    return joined;
+  }
+  return '';
+};
+
+const convertRichContentToPlain = (content: string) => {
+  const drafts = new Map<string, InlineImageDraft>();
+  try {
+    const json = JSON.parse(content);
+    const text = extractRichTextWithImages(json, drafts).replace(/\n+$/, '');
+    return { text, drafts };
+  } catch {
+    return { text: '', drafts };
+  }
+};
+
+const applyInlineImageDrafts = (drafts: Map<string, InlineImageDraft>) => {
+  inlineImages.forEach((draft, key) => {
+    if (!drafts.has(key)) {
+      revokeInlineImage(draft);
+      inlineImages.delete(key);
+    }
+  });
+  drafts.forEach((draft, key) => {
+    if (!inlineImages.has(key)) {
+      inlineImages.set(key, draft);
+    }
+  });
+};
+
+const buildRichContentFromPlain = (text: string) => {
+  if (!text || (!text.trim() && !containsInlineImageMarker(text))) {
+    return {
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    };
+  }
+  const lines = text.split('\n');
+  const content = lines.map((line) => {
+    inlineImageMarkerRegexp.lastIndex = 0;
+    let lastIndex = 0;
+    const nodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
+    let match: RegExpExecArray | null;
+    while ((match = inlineImageMarkerRegexp.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        nodes.push({ type: 'text', text: line.slice(lastIndex, match.index) });
+      }
+      const markerId = match[1];
+      const draft = inlineImages.get(markerId);
+      const src = resolveInlineImageSource(draft);
+      if (src) {
+        nodes.push({ type: 'image', attrs: { src, alt: `图片-${markerId}` } });
+      } else {
+        nodes.push({ type: 'text', text: match[0] });
+      }
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) {
+      nodes.push({ type: 'text', text: line.slice(lastIndex) });
+    }
+    return nodes.length ? { type: 'paragraph', content: nodes } : { type: 'paragraph' };
+  });
+  return { type: 'doc', content };
+};
 
 const hasUploadingInlineImages = computed(() => {
   for (const draft of inlineImages.values()) {
@@ -5384,6 +5539,7 @@ const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
 
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
+    clearInputModeCache();
     inputMode.value = entry.mode;
     suspendInlineSync = true;
     textToSend.value = entry.content;
@@ -6431,6 +6587,7 @@ const handleInlineFileChange = (event: Event) => {
 watch(() => chat.editing?.messageId, (messageId, previousId) => {
   if (!messageId && previousId) {
     stopEditingPreviewNow();
+    clearInputModeCache();
     textToSend.value = '';
     return;
   }
@@ -6438,6 +6595,7 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     if (previousId && previousId !== messageId) {
       stopEditingPreviewNow();
     }
+    clearInputModeCache();
     const editingMode = chat.editing.mode ?? detectMessageContentMode(chat.editing.originalContent || chat.editing.draft);
     inputMode.value = editingMode;
     let draft = '';
@@ -6550,6 +6708,7 @@ const send = throttle(async () => {
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
+  clearInputModeCache();
   suspendInlineSync = false;
   chat.curReplyTo = null;
 
@@ -6635,6 +6794,7 @@ const send = throttle(async () => {
       clearAutoRestoreEntry(channelKey);
     }
     textToSend.value = '';
+    clearInputModeCache();
     ensureInputFocus();
   } catch (e) {
     message.error('发送失败,您可能没有权限在此频道发送消息');
@@ -6831,11 +6991,48 @@ const handleRichUploadButtonClick = () => {
   doUpload();
 }
 
+const clearInputModeCache = () => {
+  richContentCache.value = null;
+  plainTextFromRichCache.value = '';
+};
+
 const toggleInputMode = () => {
   if (inputMode.value === 'plain') {
+    // Plain → Rich
+    const currentPlain = textToSend.value;
+    if (richContentCache.value && currentPlain === plainTextFromRichCache.value) {
+      // 未修改，恢复缓存的富文本
+      textToSend.value = richContentCache.value;
+    } else {
+      // 已修改或无缓存，将纯文本转为 TipTap JSON
+      richContentCache.value = null;
+      plainTextFromRichCache.value = '';
+      if (currentPlain.trim() || containsInlineImageMarker(currentPlain)) {
+        textToSend.value = JSON.stringify(buildRichContentFromPlain(currentPlain));
+      } else {
+        textToSend.value = '';
+      }
+    }
     inputMode.value = 'rich';
     message.info('已切换至富文本模式');
   } else {
+    // Rich → Plain
+    const currentRich = textToSend.value;
+    if (isTipTapJson(currentRich)) {
+      richContentCache.value = currentRich;
+      const { text, drafts } = convertRichContentToPlain(currentRich);
+      plainTextFromRichCache.value = text;
+      suspendInlineSync = true;
+      applyInlineImageDrafts(drafts);
+      textToSend.value = text;
+      suspendInlineSync = false;
+      syncInlineMarkersWithText(text);
+    } else {
+      // 非 TipTap JSON（可能是空内容或纯文本），直接清空缓存
+      richContentCache.value = null;
+      plainTextFromRichCache.value = '';
+      // textToSend 保持原样
+    }
     inputMode.value = 'plain';
     message.info('已切换至纯文本模式');
   }
@@ -7025,6 +7222,7 @@ chatEvent.on('message-updated', (e?: Event) => {
   if (chat.editing && chat.editing.messageId === e.message.id) {
     stopEditingPreviewNow();
     chat.cancelEditing();
+    clearInputModeCache();
     textToSend.value = '';
     ensureInputFocus();
   }
@@ -7255,6 +7453,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   stopEditingPreviewNow();
   chat.cancelEditing();
   textToSend.value = '';
+  clearInputModeCache();
   resetWindowState('live');
   resetDragState();
   localReorderOps.clear();
