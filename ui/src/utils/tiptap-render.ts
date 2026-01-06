@@ -20,6 +20,94 @@ interface RenderOptions {
   attachmentResolver?: (value: string) => string;
 }
 
+const DAY_TEXT_LUMINANCE_THRESHOLD = 0.9;
+const NIGHT_TEXT_LUMINANCE_THRESHOLD = 0.15;
+const DAY_TEXT_DISTANCE_THRESHOLD = 24;
+const NIGHT_TEXT_DISTANCE_THRESHOLD = 24;
+const DAY_TEXT_BACKGROUNDS = [
+  { r: 255, g: 255, b: 255 },
+  { r: 245, g: 245, b: 245 },
+  { r: 251, g: 253, b: 247 },
+];
+const NIGHT_TEXT_BACKGROUNDS = [
+  { r: 63, g: 63, b: 70 },
+  { r: 45, g: 45, b: 49 },
+];
+
+function normalizeCssColor(value: string): string {
+  return value.replace(/!important/gi, '').trim();
+}
+
+function parseCssColor(value: string): { r: number; g: number; b: number } | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const hexMatch = raw.match(/^#([0-9a-fA-F]{3,8})$/);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3 || hex.length === 4) {
+      const r = parseInt(hex[0] + hex[0], 16);
+      const g = parseInt(hex[1] + hex[1], 16);
+      const b = parseInt(hex[2] + hex[2], 16);
+      return { r, g, b };
+    }
+    if (hex.length === 6 || hex.length === 8) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return { r, g, b };
+    }
+  }
+
+  const rgbMatch = raw.match(/^rgba?\((.+)\)$/i);
+  if (rgbMatch) {
+    const parts = rgbMatch[1].split(',').map((part) => part.trim());
+    if (parts.length >= 3) {
+      const r = Number.parseFloat(parts[0]);
+      const g = Number.parseFloat(parts[1]);
+      const b = Number.parseFloat(parts[2]);
+      if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+        return { r, g, b };
+      }
+    }
+  }
+
+  return null;
+}
+
+function relativeLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const toLinear = (value: number) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function colorDistance(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }): number {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function getDisplayPalette(): 'day' | 'night' {
+  if (typeof document === 'undefined') return 'day';
+  const palette = document.documentElement?.dataset?.displayPalette;
+  return palette === 'night' ? 'night' : 'day';
+}
+
+function shouldFilterTextColor(value: string): boolean {
+  const rgb = parseCssColor(value);
+  if (!rgb) return false;
+  const palette = getDisplayPalette();
+  if (palette === 'night') {
+    if (relativeLuminance(rgb) <= NIGHT_TEXT_LUMINANCE_THRESHOLD) return true;
+    return NIGHT_TEXT_BACKGROUNDS.some((bg) => colorDistance(rgb, bg) <= NIGHT_TEXT_DISTANCE_THRESHOLD);
+  }
+  if (relativeLuminance(rgb) >= DAY_TEXT_LUMINANCE_THRESHOLD) return true;
+  return DAY_TEXT_BACKGROUNDS.some((bg) => colorDistance(rgb, bg) <= DAY_TEXT_DISTANCE_THRESHOLD);
+}
+
 /**
  * 渲染单个节点
  */
@@ -62,7 +150,10 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             break;
           case 'textStyle':
             if (mark.attrs?.color) {
-              text = `<span style="color: ${escapeHtml(mark.attrs.color)} !important">${text}</span>`;
+              const normalizedColor = normalizeCssColor(String(mark.attrs.color));
+              if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
+                text = `<span style="color: ${escapeHtml(normalizedColor)} !important">${text}</span>`;
+              }
             }
             break;
         }
