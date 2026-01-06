@@ -29,6 +29,7 @@ const utils = useUtilsStore();
 const updateStatus = ref<UpdateStatus | null>(null);
 const updateLoading = ref(false);
 const updateError = ref('');
+const updateBodyExpanded = ref(true);
 
 const fetchUpdateStatus = async () => {
   if (!hasUpdateItem.value) {
@@ -140,6 +141,15 @@ const updatePublishedAtText = computed(() => {
 });
 const updateBodyRaw = computed(() => (updateStatus.value?.latestBody || '').trim());
 const updateBodyHtml = computed(() => renderMarkdown(updateBodyRaw.value));
+const toggleUpdateBody = () => {
+  updateBodyExpanded.value = !updateBodyExpanded.value;
+};
+
+watch(updateBodyRaw, (next, prev) => {
+  if (next && next !== prev) {
+    updateBodyExpanded.value = false;
+  }
+});
 </script>
 
 <template>
@@ -190,7 +200,20 @@ const updateBodyHtml = computed(() => renderMarkdown(updateBodyRaw.value));
               正在加载更新内容...
             </div>
             <div v-else-if="updateError" class="text-xs text-red-500">{{ updateError }}</div>
-            <div v-else-if="updateBodyRaw" class="text-sm sc-update-body" v-html="updateBodyHtml"></div>
+            <div v-else-if="updateBodyRaw" class="flex flex-col gap-2">
+              <button
+                type="button"
+                class="text-xs text-blue-600 dark:text-blue-400 hover:underline self-start"
+                @click="toggleUpdateBody"
+              >
+                {{ updateBodyExpanded ? '收起更新内容' : '展开更新内容' }}
+              </button>
+              <div
+                class="text-sm sc-update-body"
+                :class="{ 'is-collapsed': !updateBodyExpanded }"
+                v-html="updateBodyHtml"
+              ></div>
+            </div>
             <div v-else class="text-xs text-slate-500 dark:text-slate-400">暂无更新内容</div>
           </div>
         </div>
@@ -234,6 +257,11 @@ const updateBodyHtml = computed(() => renderMarkdown(updateBodyRaw.value));
   background: rgba(249, 115, 22, 0.12);
   color: #f97316;
   border: 1px solid rgba(249, 115, 22, 0.35);
+}
+
+.sc-update-body.is-collapsed {
+  max-height: 8rem;
+  overflow: hidden;
 }
 
 .sc-update-body :deep(img) {

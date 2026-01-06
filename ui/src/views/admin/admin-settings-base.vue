@@ -35,6 +35,7 @@ const updateVersionInput = ref('');
 const updateLoading = ref(false);
 const updateVersionSaving = ref(false);
 const updateError = ref('');
+const updateBodyExpanded = ref(false);
 const serveAtHelp = '选择监听地址并设置端口，保存后需重启；0.0.0.0 对外开放，127.0.0.1 仅本机。';
 const baseServeAtHostOptions = [
   { label: '仅本机 (127.0.0.1)', value: '127.0.0.1' },
@@ -259,7 +260,11 @@ const renderMarkdown = (text: string) => {
   return html;
 };
 
-const updateBodyHtml = computed(() => renderMarkdown(updateStatus.value?.latestBody || ''));
+const updateBodyRaw = computed(() => (updateStatus.value?.latestBody || '').trim());
+const updateBodyHtml = computed(() => renderMarkdown(updateBodyRaw.value));
+const toggleUpdateBody = () => {
+  updateBodyExpanded.value = !updateBodyExpanded.value;
+};
 const updatePublishedAtText = computed(() => {
   const ts = updateStatus.value?.latestPublishedAt;
   if (!ts) return '未知';
@@ -269,6 +274,12 @@ const updateCheckedAtText = computed(() => {
   const ts = updateStatus.value?.lastCheckedAt;
   if (!ts) return '尚未检查';
   return dayjs(ts).format('YYYY-MM-DD HH:mm:ss');
+});
+
+watch(updateBodyRaw, (next, prev) => {
+  if (next && next !== prev) {
+    updateBodyExpanded.value = false;
+  }
 });
 
 const link = computed(() => {
@@ -519,7 +530,20 @@ const sendSmtpTestEmail = async () => {
             <span v-else class="text-xs text-emerald-500">已是最新</span>
             <n-button size="small" @click="triggerUpdateCheck" :loading="updateLoading">检查更新</n-button>
           </div>
-          <div v-if="updateStatus?.latestBody" class="text-sm update-check-body" v-html="updateBodyHtml"></div>
+          <div v-if="updateBodyRaw" class="flex flex-col gap-2">
+            <button
+              type="button"
+              class="text-xs text-blue-600 dark:text-blue-400 hover:underline self-start"
+              @click="toggleUpdateBody"
+            >
+              {{ updateBodyExpanded ? '收起更新内容' : '展开更新内容' }}
+            </button>
+            <div
+              class="text-sm update-check-body"
+              :class="{ 'is-collapsed': !updateBodyExpanded }"
+              v-html="updateBodyHtml"
+            ></div>
+          </div>
         </div>
       </n-form-item>
 
@@ -611,6 +635,11 @@ const sendSmtpTestEmail = async () => {
 </template>
 
 <style scoped>
+.update-check-body.is-collapsed {
+  max-height: 8rem;
+  overflow: hidden;
+}
+
 .update-check-body :deep(img) {
   max-width: 100%;
   border-radius: 6px;
