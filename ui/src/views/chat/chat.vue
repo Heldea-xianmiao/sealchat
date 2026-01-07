@@ -7,7 +7,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -9551,12 +9551,31 @@ onBeforeUnmount(() => {
                 />
               </div>
               <div class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline">
-                <n-button type="primary" circle size="medium" @click="send"
-                  :disabled="spectatorInputDisabled || chat.connectState !== 'connected' || isEditing">
-                  <template #icon>
-                    <n-icon :component="Send" size="18" />
-                  </template>
-                </n-button>
+                <template v-if="isEditing">
+                  <div class="edit-actions-group">
+                    <n-button size="medium" @click="saveEdit"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="edit-action-btn edit-action-btn--save">
+                      <template #icon>
+                        <n-icon :component="Check" size="16" />
+                      </template>
+                    </n-button>
+                    <n-button size="medium" @click="cancelEditing"
+                      class="edit-action-btn edit-action-btn--cancel">
+                      <template #icon>
+                        <n-icon :component="X" size="16" />
+                      </template>
+                    </n-button>
+                  </div>
+                </template>
+                <template v-else>
+                  <n-button type="primary" circle size="medium" @click="send"
+                    :disabled="spectatorInputDisabled || chat.connectState !== 'connected'">
+                    <template #icon>
+                      <n-icon :component="Send" size="18" />
+                    </template>
+                  </n-button>
+                </template>
               </div>
             </div>
         </div>
@@ -11639,6 +11658,64 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.edit-actions-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.edit-action-btn {
+  width: 40px !important;
+  height: 22px !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.edit-action-btn--save {
+  border-top-left-radius: 6px !important;
+  border-top-right-radius: 6px !important;
+  background-color: rgba(34, 197, 94, 0.15) !important;
+  border-color: rgba(34, 197, 94, 0.3) !important;
+  color: #16a34a !important;
+}
+
+.edit-action-btn--save:hover {
+  background-color: rgba(34, 197, 94, 0.25) !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+}
+
+.edit-action-btn--cancel {
+  border-bottom-left-radius: 6px !important;
+  border-bottom-right-radius: 6px !important;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+.edit-action-btn--cancel:hover {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  color: #dc2626 !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--save {
+  background-color: rgba(34, 197, 94, 0.2) !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+  color: #4ade80 !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--save:hover {
+  background-color: rgba(34, 197, 94, 0.3) !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--cancel:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #f87171 !important;
+}
+
 .chat-input-actions__cell {
   flex: 0 1 auto;
 }
@@ -11679,6 +11756,11 @@ onBeforeUnmount(() => {
   .chat-input-send-inline .n-button {
     width: 40px;
     height: 40px;
+  }
+
+  .edit-action-btn {
+    width: 36px !important;
+    height: 20px !important;
   }
 }
 
