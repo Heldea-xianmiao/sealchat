@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/afero"
 
 	"sealchat/pm"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -151,7 +152,18 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
 			ret.ServeAt = ""
 		}
-		return c.Status(http.StatusOK).JSON(ret)
+		ffmpegAvailable := false
+		if svc := service.GetAudioService(); svc != nil {
+			ffmpegAvailable = svc.FFmpegAvailable()
+		}
+		resp := struct {
+			utils.AppConfig
+			FFmpegAvailable bool `json:"ffmpegAvailable"`
+		}{
+			AppConfig:       ret,
+			FFmpegAvailable: ffmpegAvailable,
+		}
+		return c.Status(http.StatusOK).JSON(resp)
 	})
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)

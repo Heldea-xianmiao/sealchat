@@ -104,6 +104,20 @@ func main() {
 		log.Fatalf("初始化音频子系统失败: %v", err)
 	}
 
+	// 输出 FFmpeg 检测结果
+	if svc := service.GetAudioService(); svc != nil {
+		info := svc.PlatformInfo()
+		if svc.FFmpegAvailable() {
+			log.Printf("[音频] FFmpeg 已检测到: %s", info["ffmpeg"])
+			if info["ffprobe"] != "" {
+				log.Printf("[音频] FFprobe 已检测到: %s", info["ffprobe"])
+			}
+		} else {
+			log.Printf("[音频] 警告: FFmpeg 未检测到，音频工作台的转码功能将不可用")
+			log.Printf("[音频] 如需启用音频转码，请下载 FFmpeg: https://github.com/BtbN/FFmpeg-Builds/releases")
+		}
+	}
+
 	service.InitExportLimiter(service.ExportLimiterConfig{
 		BandwidthKBps: config.Export.DownloadBandwidthKBps,
 		BurstKB:       config.Export.DownloadBurstKB,

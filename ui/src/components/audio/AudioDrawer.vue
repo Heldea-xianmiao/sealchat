@@ -17,32 +17,39 @@
           <span>音频工作台</span>
         </div>
       </template>
-      <div class="audio-drawer__header">
-        <div>
-          <p class="audio-drawer__subtitle">多音轨播放 / 素材管理</p>
-          <n-tag size="small">{{ audio.networkMode === 'normal' ? '标准模式' : '弱网模式' }}</n-tag>
-        </div>
-        <n-button quaternary size="small" @click="audio.ensureInitialized">刷新数据</n-button>
-      </div>
 
-      <n-tabs type="segment" :value="audio.activeTab" @update:value="handleTabChange">
-        <n-tab-pane name="player" tab="播放控制">
-          <div class="audio-drawer__player">
-            <TransportBar />
-            <div class="audio-drawer__tracks">
-              <TrackMixerCard v-for="track in tracks" :key="track.id" :track="track" />
-            </div>
+      <!-- FFmpeg 不可用时显示提示 -->
+      <FFmpegMissingAlert v-if="!audio.ffmpegAvailable" />
+
+      <!-- FFmpeg 可用时显示正常内容 -->
+      <template v-else>
+        <div class="audio-drawer__header">
+          <div>
+            <p class="audio-drawer__subtitle">多音轨播放 / 素材管理</p>
+            <n-tag size="small">{{ audio.networkMode === 'normal' ? '标准模式' : '弱网模式' }}</n-tag>
           </div>
-        </n-tab-pane>
-        <n-tab-pane v-if="audio.canManage" name="playlist" tab="播放列表">
-          <ScenePlaylist />
-        </n-tab-pane>
-        <n-tab-pane v-if="audio.canManage" name="library" tab="素材库">
-          <AudioAssetManager />
-        </n-tab-pane>
-      </n-tabs>
+          <n-button quaternary size="small" @click="audio.ensureInitialized">刷新数据</n-button>
+        </div>
 
-      <n-alert v-if="audio.error" type="error" class="audio-drawer__alert">{{ audio.error }}</n-alert>
+        <n-tabs type="segment" :value="audio.activeTab" @update:value="handleTabChange">
+          <n-tab-pane name="player" tab="播放控制">
+            <div class="audio-drawer__player">
+              <TransportBar />
+              <div class="audio-drawer__tracks">
+                <TrackMixerCard v-for="track in tracks" :key="track.id" :track="track" />
+              </div>
+            </div>
+          </n-tab-pane>
+          <n-tab-pane v-if="audio.canManage" name="playlist" tab="播放列表">
+            <ScenePlaylist />
+          </n-tab-pane>
+          <n-tab-pane v-if="audio.canManage" name="library" tab="素材库">
+            <AudioAssetManager />
+          </n-tab-pane>
+        </n-tabs>
+
+        <n-alert v-if="audio.error" type="error" class="audio-drawer__alert">{{ audio.error }}</n-alert>
+      </template>
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -54,6 +61,7 @@ import TransportBar from './TransportBar.vue';
 import TrackMixerCard from './TrackMixerCard.vue';
 import ScenePlaylist from './ScenePlaylist.vue';
 import AudioAssetManager from './AudioAssetManager.vue';
+import FFmpegMissingAlert from './FFmpegMissingAlert.vue';
 
 const audio = useAudioStudioStore();
 type AudioTab = 'player' | 'playlist' | 'library';

@@ -117,6 +117,7 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  ffmpegAvailable?: boolean;
 }
 
 export interface UserInfo {
