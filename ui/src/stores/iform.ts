@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { watch } from 'vue';
+import { markRaw, watch } from 'vue';
 import { api } from './_config';
 import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
@@ -746,16 +746,17 @@ export const useIFormStore = defineStore('iform', {
       if (!targetChannel || !windowId || !formId || !el) {
         return;
       }
+      const host = markRaw(el);
       this.ensureHostRegistry(targetChannel, windowId, formId);
       const registry = this.embedHostsByChannel[targetChannel];
       const current = registry[windowId];
-      if (current && current.formId === formId && current[surface] === el) {
+      if (current && current.formId === formId && current[surface] === host) {
         return;
       }
       const nextSurface: EmbedHostEntry = {
         ...(current || { formId }),
         formId,
-        [surface]: el,
+        [surface]: host,
       };
       this.embedHostsByChannel = {
         ...this.embedHostsByChannel,
