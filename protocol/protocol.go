@@ -10,6 +10,8 @@ type Channel struct {
 	DefaultDiceExpr    string      `json:"defaultDiceExpr,omitempty"`
 	BuiltInDiceEnabled bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled  bool        `json:"botFeatureEnabled"`
+	BackgroundAttachmentId string `json:"backgroundAttachmentId"`
+	BackgroundSettings     string `json:"backgroundSettings"`
 }
 
 type ChannelType int

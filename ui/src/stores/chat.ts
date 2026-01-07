@@ -2421,6 +2421,24 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    // 编辑频道背景
+    async channelBackgroundEdit(id: string, updates: {
+      backgroundAttachmentId?: string;
+      backgroundSettings?: string;
+    }) {
+      const resp = await api.post<{ message: string }>(`api/v1/channel-info-edit`, updates, { params: { id } });
+      if (this.curChannel?.id === id) {
+        const channelResp = await this.channelInfoGet(id);
+        if (channelResp?.item) {
+          this.patchChannelAttributes(id, {
+            backgroundAttachmentId: channelResp.item.backgroundAttachmentId,
+            backgroundSettings: channelResp.item.backgroundSettings,
+          });
+        }
+      }
+      return resp?.data;
+    },
+
     async channelDissolve(channelId: string) {
       if (!channelId) {
         throw new Error('缺少频道ID');
@@ -3128,6 +3146,12 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (typeof event.channel?.botFeatureEnabled === 'boolean') {
     patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  if (typeof event.channel?.backgroundAttachmentId === 'string') {
+    patch.backgroundAttachmentId = event.channel.backgroundAttachmentId;
+  }
+  if (typeof event.channel?.backgroundSettings === 'string') {
+    patch.backgroundSettings = event.channel.backgroundSettings;
   }
   chat.patchChannelAttributes(channelId, patch);
 });

@@ -225,6 +225,58 @@ const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
+
+const channelBackgroundStyle = computed(() => {
+  const channel = chat.curChannel as SChannel | null;
+  if (!channel?.backgroundAttachmentId) return null;
+  let settings: { mode?: string; opacity?: number; blur?: number; brightness?: number } = {
+    mode: 'cover', opacity: 30, blur: 0, brightness: 100
+  };
+  if (channel.backgroundSettings) {
+    try {
+      const parsed = typeof channel.backgroundSettings === 'string'
+        ? JSON.parse(channel.backgroundSettings)
+        : channel.backgroundSettings;
+      settings = { ...settings, ...parsed };
+    } catch { /* ignore */ }
+  }
+  const attachmentId = channel.backgroundAttachmentId;
+  const bgUrl = resolveAttachmentUrl(attachmentId.startsWith('id:') ? attachmentId : `id:${attachmentId}`);
+  let bgSize = 'cover';
+  let bgRepeat = 'no-repeat';
+  const bgPosition = 'center';
+  switch (settings.mode) {
+    case 'contain': bgSize = 'contain'; break;
+    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
+    case 'center': bgSize = 'auto'; break;
+  }
+  return {
+    backgroundImage: `url(${bgUrl})`,
+    backgroundSize: bgSize,
+    backgroundRepeat: bgRepeat,
+    backgroundPosition: bgPosition,
+    opacity: (settings.opacity ?? 30) / 100,
+    filter: `blur(${settings.blur ?? 0}px) brightness(${settings.brightness ?? 100}%)`,
+  };
+});
+
+const channelBackgroundOverlayStyle = computed(() => {
+  const channel = chat.curChannel as SChannel | null;
+  if (!channel?.backgroundAttachmentId || !channel.backgroundSettings) return null;
+  let settings: { overlayColor?: string; overlayOpacity?: number } = {};
+  try {
+    const parsed = typeof channel.backgroundSettings === 'string'
+      ? JSON.parse(channel.backgroundSettings)
+      : channel.backgroundSettings;
+    settings = parsed;
+  } catch { /* ignore */ }
+  if (!settings.overlayColor || !(settings.overlayOpacity ?? 0)) return null;
+  return {
+    backgroundColor: settings.overlayColor,
+    opacity: (settings.overlayOpacity ?? 0) / 100,
+  };
+});
+
 const diceTrayVisible = ref(false);
 const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
@@ -8679,7 +8731,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full justify-between">
+  <div class="flex flex-col h-full justify-between chat-root-container">
+    <!-- 频道背景层 -->
+    <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
+    <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
       <ChatActionRibbon
@@ -8768,7 +8823,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
@@ -10046,6 +10101,25 @@ onBeforeUnmount(() => {
 </template>
 
 <style lang="scss" scoped>
+/* 频道背景层样式 */
+.chat-root-container {
+  position: relative;
+}
+
+.channel-background-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.channel-background-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .message-row {
   position: relative;
 }
@@ -10314,8 +10388,18 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact {
-  background-color: var(--chat-ic-bg);
+  --chat-compact-ic-bg: var(--chat-ic-bg);
+  --chat-compact-ooc-bg: var(--chat-ooc-bg);
+  --chat-compact-archived-bg: rgba(148, 163, 184, 0.2);
+  background-color: var(--chat-compact-ic-bg);
   transition: background-color 0.25s ease;
+}
+
+.chat--layout-compact.chat--has-background {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+  background-color: transparent;
 }
 
 .chat.chat--layout-compact.chat--no-avatar .message-row__surface {
@@ -10345,16 +10429,17 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row__surface--tone-ic {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-compact-ic-bg);
 }
 
 .chat--layout-compact .message-row__surface--tone-ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-compact-ooc-bg);
 }
 
 .chat--layout-compact .message-row__surface--tone-archived {
-  background-color: rgba(148, 163, 184, 0.2);
+  background-color: var(--chat-compact-archived-bg);
 }
+
 
 .chat--layout-compact .message-row__handle {
   margin-top: 0.1rem;
@@ -10376,23 +10461,19 @@ onBeforeUnmount(() => {
   padding: 0;
   border-radius: 0;
   border: none;
-  --typing-preview-bg: var(--chat-ic-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ic);
+  --typing-preview-bg: var(--chat-compact-ic-bg);
   background-color: var(--typing-preview-bg);
-  background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
-  background-size: 10px 10px;
+  background-image: none;
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
 .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--chat-ooc-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ooc);
+  --typing-preview-bg: var(--chat-compact-ooc-bg);
 }
 
 .chat--layout-compact .typing-preview-surface[data-tone='ic'],
 .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--chat-ic-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ic);
+  --typing-preview-bg: var(--chat-compact-ic-bg);
 }
 
 .identity-drawer__header {
@@ -10872,29 +10953,30 @@ onBeforeUnmount(() => {
 .chat--layout-bubble .typing-preview-bubble {
   padding: 0.5rem 0.75rem;
   border-radius: var(--chat-message-radius, 0.85rem);
-  background-color: var(--chat-preview-bg, #f6f7fb);
+  background-color: var(--chat-ic-bg, #f5f5f5);
+  border-color: transparent;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
-  background-color: #fbfdf7;
-  border-color: rgba(15, 23, 42, 0.14);
+  background-color: var(--chat-ic-bg, #f5f5f5);
+  border-color: transparent;
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
-  background-color: #ffffff;
-  border-color: rgba(15, 23, 42, 0.12);
+  background-color: var(--chat-ooc-bg, #ffffff);
+  border-color: transparent;
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
-  background-color: #3f3f45;
-  border-color: rgba(255, 255, 255, 0.16);
-  color: #f4f4f5;
+  background-color: var(--chat-ic-bg, #3f3f45);
+  border-color: transparent;
+  color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
-  background-color: #2D2D31;
-  border-color: rgba(255, 255, 255, 0.24);
-  color: #f5f3ff;
+  background-color: var(--chat-ooc-bg, #2D2D31);
+  border-color: transparent;
+  color: var(--chat-text-primary, #f5f3ff);
 }
 
 .chat--layout-compact .typing-preview-bubble {
@@ -12838,7 +12920,6 @@ onBeforeUnmount(() => {
   max-height: 45vh;
   overflow-y: auto;
 }
-</style>
 .identity-dialog :deep(.n-card) {
   background: var(--sc-bg-elevated, #ffffff);
   color: var(--sc-text-primary, #0f172a);
@@ -12925,9 +13006,29 @@ onBeforeUnmount(() => {
 }
 
 .dice-chip--preview {
-  border-style: dashed;
-  background: rgba(148, 163, 184, 0.25);
-  color: #475569;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  gap: 0;
+  white-space: inherit;
+}
+
+.dice-chip--preview .dice-chip__icon {
+  display: inline-flex;
+  margin-right: 0.2rem;
+}
+
+.dice-chip--preview .dice-chip__formula,
+.dice-chip--preview .dice-chip__equals,
+.dice-chip--preview .dice-chip__result {
+  font-weight: inherit;
+  font-size: inherit;
+  opacity: 1;
+  margin-right: 0;
 }
 
 .dice-chip--error {
@@ -12998,6 +13099,32 @@ onBeforeUnmount(() => {
   background: rgba(51, 65, 85, 0.65);
   border-color: rgba(148, 163, 184, 0.4);
   color: #e2e8f0;
+}
+
+.dice-chip:not(.dice-chip--preview) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  gap: 0;
+  white-space: inherit;
+}
+
+.dice-chip:not(.dice-chip--preview) .dice-chip__icon {
+  display: inline-flex;
+  margin-right: 0.2rem;
+}
+
+.dice-chip:not(.dice-chip--preview) .dice-chip__formula,
+.dice-chip:not(.dice-chip--preview) .dice-chip__equals,
+.dice-chip:not(.dice-chip--preview) .dice-chip__result {
+  font-weight: inherit;
+  font-size: inherit;
+  opacity: 1;
+  margin-right: 0;
 }
 
 /* Keyword Tooltip Styles */
@@ -13203,3 +13330,4 @@ onBeforeUnmount(() => {
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: rgba(180, 140, 60, 0.25);
 }
+</style>

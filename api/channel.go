@@ -10,6 +10,7 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/pm/perm_tree"
+	"sealchat/protocol"
 	"sealchat/service"
 	"sealchat/utils"
 )
@@ -197,6 +198,8 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 		return nil
 	}
 
+	user := getCurUser(c)
+
 	// 解析请求体
 	var updates model.ChannelModel
 	if err := c.BodyParser(&updates); err != nil {
@@ -211,10 +214,37 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 			"error": "频道信息更新失败",
 		})
 	}
+	if channel, err := model.ChannelGet(channelId); err == nil {
+		broadcastChannelUpdated(user, channel)
+	}
 
 	return c.JSON(fiber.Map{
 		"message": "频道信息更新成功",
 	})
+}
+
+func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelModel) {
+	if channel == nil || channel.ID == "" {
+		return
+	}
+	if userId2ConnInfoGlobal == nil {
+		return
+	}
+	event := &protocol.Event{
+		Type:    protocol.EventChannelUpdated,
+		Channel: channel.ToProtocolType(),
+	}
+	if operator != nil {
+		event.User = operator.ToProtocolType()
+	}
+	ctx := &ChatContext{
+		User:            operator,
+		UserId2ConnInfo: userId2ConnInfoGlobal,
+	}
+	ctx.BroadcastEventInChannel(channel.ID, event)
+	if operator != nil {
+		ctx.BroadcastEventInChannelForBot(channel.ID, event)
+	}
 }
 
 // ChannelInfoGet 处理获取频道信息请求

@@ -32,6 +32,9 @@ type ChannelModel struct {
 
 	SortOrder int `json:"sortOrder" gorm:"index"` // 优先级序号，越大越靠前
 
+	BackgroundAttachmentId string `json:"backgroundAttachmentId" gorm:"size:100"` // 背景图附件ID
+	BackgroundSettings     string `json:"backgroundSettings" gorm:"type:text"`    // JSON: 背景显示设置
+
 	FriendInfo   *FriendModel `json:"friendInfo,omitempty" gorm:"-"`
 	MembersCount int          `json:"membersCount" gorm:"-"`
 }
@@ -45,10 +48,10 @@ func (m *ChannelModel) UpdateRecentSent() {
 	db.Model(m).Update("recent_sent_at", m.RecentSentAt)
 }
 
-// ChannelInfoEdit 可修改内容: 名称，简介，公开或非公开，成员正在输入提示，优先级序号
+// ChannelInfoEdit 可修改内容: 名称，简介，公开或非公开，成员正在输入提示，优先级序号，背景图
 func ChannelInfoEdit(channelId string, updates *ChannelModel) error {
 	if err := db.Model(&ChannelModel{}).
-		Where("id = ?", channelId).Select("name", "note", "perm_type", "sort_order").
+		Where("id = ?", channelId).Select("name", "note", "perm_type", "sort_order", "background_attachment_id", "background_settings").
 		Updates(updates).Error; err != nil {
 		return err
 	}
@@ -72,6 +75,8 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 		DefaultDiceExpr:    c.DefaultDiceExpr,
 		BuiltInDiceEnabled: c.BuiltInDiceEnabled,
 		BotFeatureEnabled:  c.BotFeatureEnabled,
+		BackgroundAttachmentId: c.BackgroundAttachmentId,
+		BackgroundSettings:     c.BackgroundSettings,
 	}
 }
 
