@@ -1929,6 +1929,8 @@ export const useChatStore = defineStore({
       archivedOnly?: boolean;
       icOnly?: boolean;
       userIds?: string[];
+      roleIds?: string[];
+      includeRoleless?: boolean;
       limit?: number;
     }) {
       const payload: Record<string, any> = {
@@ -1953,6 +1955,12 @@ export const useChatStore = defineStore({
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
         }
+        if (options.roleIds && options.roleIds.length > 0) {
+          payload.role_ids = options.roleIds;
+        }
+        if (typeof options.includeRoleless === 'boolean') {
+          payload.include_roleless = options.includeRoleless;
+        }
         if (typeof options.limit === 'number') {
           const normalizedLimit = Number(options.limit);
           if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
@@ -1970,6 +1978,8 @@ export const useChatStore = defineStore({
       includeOoc?: boolean;
       icOnly?: boolean;
       userIds?: string[];
+      roleIds?: string[];
+      includeRoleless?: boolean;
     }) {
       const payload: Record<string, any> = {
         channel_id: channelId,
@@ -1989,6 +1999,12 @@ export const useChatStore = defineStore({
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
+        }
+        if (options.roleIds && options.roleIds.length > 0) {
+          payload.role_ids = options.roleIds;
+        }
+        if (typeof options.includeRoleless === 'boolean') {
+          payload.include_roleless = options.includeRoleless;
         }
       }
       const resp = await this.sendAPI('message.list', payload);

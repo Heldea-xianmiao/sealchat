@@ -684,12 +684,16 @@ const fetchRibbonRoleOptions = async (channelId?: string | null) => {
       return;
     }
     const items = Array.isArray(payload?.items) ? payload.items : [];
-    ribbonRoleOptions.value = items
+    const mapped = items
       .map((item) => ({
         id: String(item.id || ''),
         label: item.label || '未命名角色',
       }))
       .filter((item) => item.id);
+    if (!mapped.some((item) => item.id === ROLELESS_FILTER_ID)) {
+      mapped.push({ id: ROLELESS_FILTER_ID, label: '其他' });
+    }
+    ribbonRoleOptions.value = mapped;
   } catch (error) {
     if (currentSeq === ribbonRoleOptionsSeq) {
       ribbonRoleOptions.value = [];
@@ -3389,11 +3393,38 @@ const isMergeCandidate = (message?: Message | null) => {
   return true;
 };
 
-const roleFilterActive = computed(() => Array.isArray(chat.filterState.roleIds) && chat.filterState.roleIds.length > 0);
+const ROLELESS_FILTER_ID = '__roleless__';
+
+const normalizeRoleFilterState = (roleIds?: string[]) => {
+  const raw = Array.isArray(roleIds) ? roleIds : [];
+  const normalized = raw
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  const includeRoleless = normalized.includes(ROLELESS_FILTER_ID);
+  const filteredRoleIds = normalized.filter((id) => id !== ROLELESS_FILTER_ID);
+  return { roleIds: filteredRoleIds, includeRoleless };
+};
+
+const roleFilterState = computed(() => normalizeRoleFilterState(chat.filterState.roleIds));
+const roleFilterActive = computed(() => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  return roleIds.length > 0 || includeRoleless;
+});
+const roleFilterSignature = computed(() => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  return `${includeRoleless ? '1' : '0'}:${roleIds.join(',')}`;
+});
+const buildRoleFilterOptions = () => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  if (!roleIds.length && !includeRoleless) {
+    return {};
+  }
+  return { roleIds, includeRoleless };
+};
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
-  const { icFilter, showArchived, roleIds } = chat.filterState;
-  const filterRoleIds = Array.isArray(roleIds) ? roleIds : [];
+  const { icFilter, showArchived } = chat.filterState;
+  const { roleIds: filterRoleIds, includeRoleless } = roleFilterState.value;
   const allowMergeNeighbors = display.settings.mergeNeighbors && !roleFilterActive.value;
 
   const filtered = rows.value.filter((message) => {
@@ -3413,9 +3444,13 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
       return false;
     }
 
-    if (filterRoleIds.length > 0) {
-      const roleKey = getMessageRoleKey(message);
-      if (!roleKey || !filterRoleIds.includes(roleKey)) {
+    if (filterRoleIds.length > 0 || includeRoleless) {
+      const roleKey = getMessageRoleIdentityKey(message);
+      if (roleKey) {
+        if (!filterRoleIds.includes(roleKey)) {
+          return false;
+        }
+      } else if (!includeRoleless) {
         return false;
       }
     }
@@ -3449,6 +3484,16 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
   });
 });
 const visibleRows = computed(() => visibleRowEntries.value.map((entry) => entry.message));
+
+const getMessageRoleIdentityKey = (message: any): string => {
+  return (
+    message?.senderRoleId ||
+    message?.sender_role_id ||
+    (message as any)?.sender_identity_id ||
+    message?.identity?.id ||
+    ''
+  );
+};
 
 const getMessageRoleKey = (message: any): string => {
   return (
@@ -3766,6 +3811,7 @@ const mountHistoricalWindowWithSpan = async (
     const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
       includeArchived: true,
       includeOoc: true,
+      ...buildRoleFilterOptions(),
     });
     const normalized = normalizeMessageList(resp?.data || []);
     if (!normalized.length) {
@@ -3824,6 +3870,7 @@ const loadMessagesWithinWindow = async (
     const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
       includeArchived: true,
       includeOoc: true,
+      ...buildRoleFilterOptions(),
     });
     const incoming = normalizeMessageList(resp?.data || []);
     if (!incoming.length) {
@@ -3852,6 +3899,7 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     const resp = await chat.messageList(chat.curChannel.id, cursor, {
       includeArchived: true,
       includeOoc: true,
+      ...buildRoleFilterOptions(),
     });
     const incoming = normalizeMessageList(resp?.data || []);
     if (!incoming.length) {
@@ -7567,7 +7615,9 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       const lastCreatedAt = rows.value[rows.value.length - 1].createdAt || now;
 
       // 获取断线期间消息
-      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now)
+      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now, {
+        ...buildRoleFilterOptions(),
+      })
       console.log('时间起始', lastCreatedAt, now)
       console.log('相关数据', messages)
       if (messages.next) {
@@ -7648,6 +7698,7 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
       const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
         includeArchived: true,
         includeOoc: true,
+        ...buildRoleFilterOptions(),
       });
       const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
@@ -7680,6 +7731,7 @@ const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
       const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
         includeArchived: true,
         includeOoc: true,
+        ...buildRoleFilterOptions(),
       });
       const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
@@ -7738,6 +7790,7 @@ const fetchLatestMessages = async () => {
     const resp = await chat.messageList(chat.curChannel.id, undefined, {
       includeArchived: chat.filterState.showArchived,
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
+      ...buildRoleFilterOptions(),
     });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
@@ -7769,6 +7822,16 @@ watch(
   },
 );
 
+watch(
+  () => roleFilterSignature.value,
+  async (next, prev) => {
+    if (!chat.curChannel?.id || next === prev) {
+      return;
+    }
+    await fetchLatestMessages();
+  },
+);
+
 const loadOlderMessagesByWindow = async () => {
   const first = rows.value[0];
   const boundary = normalizeTimestamp(first?.createdAt);
@@ -7797,6 +7860,7 @@ const loadOlderMessages = async () => {
       const resp = await chat.messageList(chat.curChannel.id, messageWindow.beforeCursor, {
         includeArchived: chat.filterState.showArchived,
         limit: PAGINATED_MESSAGE_LOAD_LIMIT,
+        ...buildRoleFilterOptions(),
       });
       normalized = normalizeMessageList(resp.data);
       nextCursor = resp?.next ?? '';

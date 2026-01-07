@@ -1127,6 +1127,8 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	IncludeArchived bool     `json:"include_archived"`
 	ArchivedOnly    bool     `json:"archived_only"`
 	UserIDs         []string `json:"user_ids"`
+	RoleIDs         []string `json:"role_ids"`
+	IncludeRoleless bool     `json:"include_roleless"`
 	Limit           int      `json:"limit"`
 }) (any, error) {
 	db := model.GetDB()
@@ -1174,6 +1176,30 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 	if len(data.UserIDs) > 0 {
 		q = q.Where("user_id IN ?", data.UserIDs)
+	}
+	roleIDs := make([]string, 0, len(data.RoleIDs))
+	for _, id := range data.RoleIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed != "" {
+			roleIDs = append(roleIDs, trimmed)
+		}
+	}
+	includeRoleless := data.IncludeRoleless
+	if len(roleIDs) > 0 || includeRoleless {
+		roleCond := "(sender_role_id IN ? OR sender_identity_id IN ?)"
+		roleArgs := []any{roleIDs, roleIDs}
+		if includeRoleless {
+			roleCond = "(" + roleCond + " OR ((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL)))"
+		}
+		if len(roleIDs) == 0 && includeRoleless {
+			roleCond = "((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL))"
+			roleArgs = nil
+		}
+		if roleArgs != nil {
+			q = q.Where(roleCond, roleArgs...)
+		} else {
+			q = q.Where(roleCond)
+		}
 	}
 
 	if data.Type == "time" {
