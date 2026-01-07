@@ -1980,6 +1980,7 @@ export const useChatStore = defineStore({
       userIds?: string[];
       roleIds?: string[];
       includeRoleless?: boolean;
+      limit?: number;
     }) {
       const payload: Record<string, any> = {
         channel_id: channelId,
@@ -2005,6 +2006,12 @@ export const useChatStore = defineStore({
         }
         if (typeof options.includeRoleless === 'boolean') {
           payload.include_roleless = options.includeRoleless;
+        }
+        if (typeof options.limit === 'number') {
+          const normalizedLimit = Number(options.limit);
+          if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
+            payload.limit = normalizedLimit;
+          }
         }
       }
       const resp = await this.sendAPI('message.list', payload);

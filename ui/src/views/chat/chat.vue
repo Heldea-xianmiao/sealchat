@@ -3252,6 +3252,8 @@ const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 30;
 const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
 const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
+const SEARCH_JUMP_LIMIT_PRIMARY = 30;
+const SEARCH_JUMP_LIMIT_RETRY = 50;
 const HISTORY_PAGINATION_WINDOW_MS = 5 * 60 * 1000;
 const HISTORY_WINDOW_EXPANSION_LIMIT = 5;
 
@@ -3794,6 +3796,19 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
   }
 };
 
+const loadSearchJumpWindow = async (from: number, to: number, limit: number) => {
+  const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
+    includeArchived: true,
+    includeOoc: true,
+    limit,
+    ...buildRoleFilterOptions(),
+  });
+  return {
+    resp,
+    normalized: normalizeMessageList(resp?.data || []),
+  };
+};
+
 const mountHistoricalWindowWithSpan = async (
   payload: { messageId: string; createdAt?: number },
   spanMs: number,
@@ -3808,16 +3823,20 @@ const mountHistoricalWindowWithSpan = async (
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
-    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
-      includeArchived: true,
-      includeOoc: true,
-      ...buildRoleFilterOptions(),
-    });
-    const normalized = normalizeMessageList(resp?.data || []);
+    let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
     if (!normalized.length) {
       return false;
     }
-    const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    let containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (!containsTarget && normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
+      resp = retry.resp;
+      normalized = retry.normalized;
+      if (!normalized.length) {
+        return false;
+      }
+      containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    }
     if (!containsTarget) {
       return false;
     }
@@ -3867,16 +3886,21 @@ const loadMessagesWithinWindow = async (
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
-    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
-      includeArchived: true,
-      includeOoc: true,
-      ...buildRoleFilterOptions(),
-    });
-    const incoming = normalizeMessageList(resp?.data || []);
-    if (!incoming.length) {
+    let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
+    if (!normalized.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
+    mergeIncomingMessages(normalized, resp ? { before: resp.next ?? '' } : undefined);
+    if (messageExistsLocally(payload.messageId)) {
+      return true;
+    }
+    if (normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
+      if (!retry.normalized.length) {
+        return false;
+      }
+      mergeIncomingMessages(retry.normalized, retry.resp ? { before: retry.resp.next ?? '' } : undefined);
+    }
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
@@ -3896,16 +3920,33 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
   const cursorTime = Math.max(0, Math.floor(Number(payload.createdAt ?? Date.now())));
   const cursor = `${cursorOrder.toFixed(8)}|${cursorTime}|${payload.messageId}`;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, cursor, {
+    const firstResp = await chat.messageList(chat.curChannel.id, cursor, {
       includeArchived: true,
       includeOoc: true,
+      limit: SEARCH_JUMP_LIMIT_PRIMARY,
       ...buildRoleFilterOptions(),
     });
-    const incoming = normalizeMessageList(resp?.data || []);
+    let incoming = normalizeMessageList(firstResp?.data || []);
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
+    mergeIncomingMessages(incoming, firstResp ? { before: firstResp.next ?? '' } : undefined);
+    if (messageExistsLocally(payload.messageId)) {
+      return true;
+    }
+    if (incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retryResp = await chat.messageList(chat.curChannel.id, cursor, {
+        includeArchived: true,
+        includeOoc: true,
+        limit: SEARCH_JUMP_LIMIT_RETRY,
+        ...buildRoleFilterOptions(),
+      });
+      incoming = normalizeMessageList(retryResp?.data || []);
+      if (!incoming.length) {
+        return false;
+      }
+      mergeIncomingMessages(incoming, retryResp ? { before: retryResp.next ?? '' } : undefined);
+    }
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
