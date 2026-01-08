@@ -324,12 +324,17 @@ nav a:first-of-type {
    CHAT MESSAGE SPECIFIC
    -------------------------------------------------------------------------- */
 
-:root[data-custom-theme='true'] .message-row__surface--tone-ic {
+:root[data-custom-theme='true'] .chat--layout-compact .message-row__surface--tone-ic {
   background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg)) !important;
 }
 
-:root[data-custom-theme='true'] .message-row__surface--tone-ooc {
+:root[data-custom-theme='true'] .chat--layout-compact .message-row__surface--tone-ooc {
   background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg)) !important;
+}
+
+:root[data-custom-theme='true'] .chat--layout-bubble .message-row__surface--tone-ic,
+:root[data-custom-theme='true'] .chat--layout-bubble .message-row__surface--tone-ooc {
+  background-color: transparent !important;
 }
 
 /* --------------------------------------------------------------------------
@@ -389,6 +394,9 @@ nav a:first-of-type {
 /* Button comprehensive overrides */
 :root[data-custom-theme='true'] .n-button {
   --n-border: 1px solid var(--sc-border-mute) !important;
+  --n-border-hover: 1px solid var(--sc-border-strong) !important;
+  --n-border-pressed: 1px solid var(--sc-border-strong) !important;
+  --n-border-focus: 1px solid var(--sc-border-strong) !important;
   --n-text-color: var(--sc-text-primary) !important;
 }
 
@@ -571,6 +579,11 @@ nav a:first-of-type {
 :root[data-custom-theme='true'] .n-radio-button--checked {
   --n-color: var(--sc-bg-elevated) !important;
   background-color: var(--sc-bg-elevated) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+:root[data-custom-theme='true'] .n-radio-button:hover {
+  border-color: var(--sc-border-strong) !important;
 }
 
 /* Button groups */

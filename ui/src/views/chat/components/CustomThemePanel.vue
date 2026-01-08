@@ -47,8 +47,8 @@ const colorFields: { key: keyof CustomThemeColors; label: string; group: string 
   { key: 'textPrimary', label: '主文字', group: '文字' },
   { key: 'textSecondary', label: '次要文字', group: '文字' },
   // 聊天
-  { key: 'chatIcBg', label: '场内消息', group: '聊天区域' },
-  { key: 'chatOocBg', label: '场外消息', group: '聊天区域' },
+  { key: 'chatIcBg', label: '气泡（场内）', group: '气泡颜色' },
+  { key: 'chatOocBg', label: '气泡（场外）', group: '气泡颜色' },
   { key: 'chatStageBg', label: '聊天舞台', group: '聊天区域' },
   { key: 'chatPreviewBg', label: '预览背景', group: '聊天区域' },
   { key: 'chatPreviewDot', label: '预览圆点', group: '聊天区域' },

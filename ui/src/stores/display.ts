@@ -411,7 +411,8 @@ const normalizeCustomThemeColors = (value: any): CustomThemeColors => {
     'textPrimary', 'textSecondary',
     'chatIcBg', 'chatOocBg', 'chatStageBg', 'chatPreviewBg', 'chatPreviewDot',
     'borderMute', 'borderStrong',
-    'primaryColor', 'primaryColorHover'
+    'primaryColor', 'primaryColorHover',
+    'keywordBg', 'keywordBorder'
   ]
   colorKeys.forEach(key => {
     if (typeof value[key] === 'string' && value[key].trim()) {
@@ -957,7 +958,8 @@ export const useDisplayStore = defineStore('display', {
           // Use --custom-* prefix for chat colors so they can override scoped class variables
           if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
           if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
-          if (c.chatStageBg) setVar('--custom-chat-stage-bg', c.chatStageBg)
+          const stageBg = c.chatStageBg || c.chatIcBg
+          if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
           if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
           if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
           if (c.borderMute) setVar('--sc-border-mute', c.borderMute)

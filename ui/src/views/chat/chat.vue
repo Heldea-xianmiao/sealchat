@@ -10207,7 +10207,11 @@ onBeforeUnmount(() => {
 .chat--layout-bubble .message-row {
   padding-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
   padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
-  background-color: var(--sc-bg-surface);
+  background-color: var(--chat-stage-bg, var(--sc-bg-surface));
+}
+
+:root[data-custom-theme='true'] .chat--layout-bubble .message-row {
+  background-color: transparent;
 }
 
 .chat--layout-compact .message-row {
@@ -10377,7 +10381,7 @@ onBeforeUnmount(() => {
 }
 
 .chat {
-  background-color: var(--sc-bg-surface);
+  background-color: var(--chat-stage-bg, var(--sc-bg-surface));
   border: 1px solid var(--sc-border-strong);
   border-radius: 1rem;
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);

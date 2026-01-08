@@ -764,6 +764,21 @@ const handleOpenTutorialHub = () => {
   margin-bottom: 0.45rem;
 }
 
+.display-settings :deep(.n-radio-group),
+.display-settings :deep(.n-radio-button-group) {
+  --n-button-color: transparent !important;
+  --n-button-color-active: var(--sc-bg-elevated) !important;
+  background-color: transparent !important;
+}
+
+.display-settings :deep(.n-radio-button) {
+  background-color: transparent !important;
+}
+
+.display-settings :deep(.n-radio-button--checked) {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -796,22 +811,22 @@ const handleOpenTutorialHub = () => {
   gap: 0.75rem;
   padding: var(--chat-message-padding-y, 0.65rem) var(--chat-message-padding-x, 0.75rem);
   border-radius: var(--preview-radius, 1rem);
-  background-color: var(--sc-bg-surface);
+  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg, var(--sc-bg-surface)));
   border: 1px solid var(--sc-border-mute);
 }
 
 .display-preview--night .preview-card {
-  background-color: var(--sc-bg-input);
+  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg, var(--sc-bg-input)));
   color: var(--sc-text-primary);
 }
 
 .display-preview--night .preview-card--ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg, var(--sc-bg-input)));
 }
 
 .display-preview--night .preview-card--preview {
-  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px, transparent 1px);
+  background-color: var(--custom-chat-preview-bg, var(--chat-preview-bg, var(--sc-bg-surface)));
   background-size: 10px 10px;
 }
 
@@ -824,13 +839,13 @@ const handleOpenTutorialHub = () => {
 }
 
 .preview-card--ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg, var(--sc-bg-surface)));
 }
 
 .preview-card--preview {
   flex-direction: column;
-  background-color: var(--chat-preview-bg);
-  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-color: var(--custom-chat-preview-bg, var(--chat-preview-bg, var(--sc-bg-surface)));
+  background-image: radial-gradient(var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
