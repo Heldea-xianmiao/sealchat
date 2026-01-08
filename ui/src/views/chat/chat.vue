@@ -10481,6 +10481,18 @@ onBeforeUnmount(() => {
   padding-right: 0;
 }
 
+.chat--layout-compact .message-row--tone-ic {
+  background-color: var(--chat-compact-ic-bg);
+}
+
+.chat--layout-compact .message-row--tone-ooc {
+  background-color: var(--chat-compact-ooc-bg);
+}
+
+.chat--layout-compact .message-row--tone-archived {
+  background-color: var(--chat-compact-archived-bg);
+}
+
 .chat--layout-compact .message-row__surface {
   padding: 0.1rem 0.35rem;
   border-radius: 0;
