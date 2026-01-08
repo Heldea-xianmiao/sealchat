@@ -1401,7 +1401,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	// 权限检查：是否为消息作者，或世界管理员代编辑
 	isAuthor := msg.UserID == ctx.User.ID
 	isAdminEdit := false
-	var editorUserName string
+	editorUserName := strings.TrimSpace(ctx.User.Nickname)
+	if editorUserName == "" {
+		editorUserName = ctx.User.Username
+	}
 	if !isAuthor && channel.WorldID != "" {
 		world, err := service.GetWorldByID(channel.WorldID)
 		if err == nil && world != nil && world.AllowAdminEditMessages {
@@ -1409,10 +1412,6 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 				// 检查目标消息作者是否为非管理员
 				if !service.IsWorldAdmin(channel.WorldID, msg.UserID) {
 					isAdminEdit = true
-					editorUserName = ctx.User.Nickname
-					if editorUserName == "" {
-						editorUserName = ctx.User.Username
-					}
 				}
 			}
 		}
@@ -1577,17 +1576,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
 	}
-	if isAdminEdit {
-		updates["edited_by_user_id"] = ctx.User.ID
-		updates["edited_by_user_name"] = editorUserName
-		msg.EditedByUserID = ctx.User.ID
-		msg.EditedByUserName = editorUserName
-	} else if isAuthor {
-		updates["edited_by_user_id"] = ""
-		updates["edited_by_user_name"] = ""
-		msg.EditedByUserID = ""
-		msg.EditedByUserName = ""
-	}
+	updates["edited_by_user_id"] = ctx.User.ID
+	updates["edited_by_user_name"] = editorUserName
+	msg.EditedByUserID = ctx.User.ID
+	msg.EditedByUserName = editorUserName
 	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(updates).Error
 	if err != nil {
 		return nil, err

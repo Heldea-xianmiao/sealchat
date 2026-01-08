@@ -3628,6 +3628,12 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.editCount === undefined && msg.edit_count !== undefined) {
     msg.editCount = msg.edit_count;
   }
+  if (msg.editedByUserId === undefined && msg.edited_by_user_id !== undefined) {
+    msg.editedByUserId = msg.edited_by_user_id;
+  }
+  if (msg.editedByUserName === undefined && msg.edited_by_user_name !== undefined) {
+    msg.editedByUserName = msg.edited_by_user_name;
+  }
   if (msg.createdAt === undefined && msg.created_at !== undefined) {
     msg.createdAt = msg.created_at;
   }
@@ -7557,7 +7563,16 @@ chatEvent.on('message-updated', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
-  upsertMessage(e.message);
+  const incoming = normalizeMessageShape(e.message);
+  if (e.user?.id && incoming?.user?.id) {
+    const editorName = (e.user as any).nick
+      || (e.user as any).name
+      || (e.user as any).username
+      || '';
+    (incoming as any).editedByUserId = e.user.id;
+    (incoming as any).editedByUserName = editorName || (incoming as any).editedByUserName || '';
+  }
+  upsertMessage(incoming);
   removeTypingPreview(e.user?.id, 'editing');
   if (chat.editing && chat.editing.messageId === e.message.id) {
     stopEditingPreviewNow();
