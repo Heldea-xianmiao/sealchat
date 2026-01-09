@@ -43,6 +43,7 @@ watch(
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
     draft.showInputPreview = value.showInputPreview
+    draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
     draft.alwaysShowTimestamp = value.alwaysShowTimestamp
     draft.timestampFormat = value.timestampFormat
@@ -264,6 +265,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showInputPreview">
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入时自动滚动</p>
+            <p class="section-desc">仅对自己的实时预览生效，历史浏览状态下不会自动滚动</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.autoScrollTypingPreview">
+          <template #checked>输入时滚动到底部</template>
+          <template #unchecked>输入时不滚动到底部</template>
         </n-switch>
       </section>
 

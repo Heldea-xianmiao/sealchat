@@ -71,6 +71,7 @@ export interface DisplaySettings {
   palette: DisplayPalette
   showAvatar: boolean
   showInputPreview: boolean
+  autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
@@ -340,6 +341,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   palette: 'day',
   showAvatar: true,
   showInputPreview: true,
+  autoScrollTypingPreview: false,
   mergeNeighbors: true,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
@@ -481,6 +483,7 @@ const loadSettings = (): DisplaySettings => {
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
+      autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
@@ -570,6 +573,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
       ? coerceBoolean(patch.showInputPreview)
       : base.showInputPreview,
+  autoScrollTypingPreview:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'autoScrollTypingPreview')
+      ? coerceBoolean((patch as any).autoScrollTypingPreview)
+      : base.autoScrollTypingPreview,
   mergeNeighbors:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)

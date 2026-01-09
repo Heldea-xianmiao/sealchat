@@ -5116,6 +5116,7 @@ const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
   return canReorderAll.value;
 };
 const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
+const autoScrollTypingPreviewEnabled = computed(() => display.settings.autoScrollTypingPreview === true);
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
@@ -5123,6 +5124,135 @@ const typingPreviewItems = computed(() =>
     .filter((item) => item.mode === 'typing')
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
+);
+const hasSelfTypingPreview = computed(() =>
+  typingPreviewItems.value.some((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing'),
+);
+const selfTypingPreviewSignature = computed(() => {
+  const selfPreview = typingPreviewItems.value.find(
+    (item) => item.userId === selfPreviewUserId.value && item.mode === 'typing',
+  );
+  if (!selfPreview) {
+    return '';
+  }
+  return `${selfPreview.content}__${selfPreview.indicatorOnly ? '1' : '0'}`;
+});
+
+const selfTypingPreviewKey = computed(() =>
+  selfPreviewUserId.value ? `${selfPreviewUserId.value}-typing` : '',
+);
+let selfPreviewResizeObserver: ResizeObserver | null = null;
+let selfPreviewObservedEl: HTMLElement | null = null;
+let lastSelfPreviewHeight = 0;
+let pendingSelfPreviewScroll = false;
+
+const disconnectSelfPreviewObserver = () => {
+  if (selfPreviewResizeObserver && selfPreviewObservedEl) {
+    selfPreviewResizeObserver.unobserve(selfPreviewObservedEl);
+  }
+  selfPreviewObservedEl = null;
+  lastSelfPreviewHeight = 0;
+};
+
+const disposeSelfPreviewObserver = () => {
+  disconnectSelfPreviewObserver();
+  if (selfPreviewResizeObserver) {
+    selfPreviewResizeObserver.disconnect();
+    selfPreviewResizeObserver = null;
+  }
+};
+
+const scheduleSelfPreviewAutoScroll = () => {
+  if (pendingSelfPreviewScroll) {
+    return;
+  }
+  pendingSelfPreviewScroll = true;
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      pendingSelfPreviewScroll = false;
+      if (!autoScrollTypingPreviewEnabled.value) {
+        return;
+      }
+      if (!inputPreviewEnabled.value) {
+        return;
+      }
+      scrollToBottom();
+    });
+  });
+};
+
+const ensureSelfPreviewObserver = async () => {
+  if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  const key = selfTypingPreviewKey.value;
+  if (!key) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  await nextTick();
+  const el = typingPreviewRowRefs.get(key);
+  if (!el) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  if (selfPreviewObservedEl === el) {
+    return;
+  }
+  disconnectSelfPreviewObserver();
+  selfPreviewObservedEl = el;
+  lastSelfPreviewHeight = el.getBoundingClientRect().height;
+  if (!selfPreviewResizeObserver) {
+    selfPreviewResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || entry.target !== selfPreviewObservedEl) {
+        return;
+      }
+      const nextHeight = entry.contentRect.height;
+      if (nextHeight > lastSelfPreviewHeight) {
+        scheduleSelfPreviewAutoScroll();
+      }
+      lastSelfPreviewHeight = nextHeight;
+    });
+  }
+  selfPreviewResizeObserver.observe(el);
+};
+
+watch(
+  [typingPreviewItems, selfPreviewUserId, autoScrollTypingPreviewEnabled, inputPreviewEnabled],
+  () => {
+    void ensureSelfPreviewObserver();
+  },
+  { flush: 'post' },
+);
+
+watch(
+  hasSelfTypingPreview,
+  (hasPreview, prevHasPreview) => {
+    if (!hasPreview || prevHasPreview) {
+      return;
+    }
+    if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
+      return;
+    }
+    scheduleSelfPreviewAutoScroll();
+  },
+  { flush: 'post' },
+);
+
+watch(
+  selfTypingPreviewSignature,
+  (next, prev) => {
+    if (!next || next === prev) {
+      return;
+    }
+    if (!autoScrollTypingPreviewEnabled.value || !inputPreviewEnabled.value) {
+      return;
+    }
+    scheduleSelfPreviewAutoScroll();
+  },
+  { flush: 'post' },
 );
  
 const resolveSelfPreviewDisplayName = () => {
@@ -7827,6 +7957,7 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  disposeSelfPreviewObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
