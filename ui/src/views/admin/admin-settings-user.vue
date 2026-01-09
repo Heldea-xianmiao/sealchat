@@ -166,7 +166,9 @@ const handleRoleChange = async (userId: string, roleLst: string[], oldRoleLst: s
     message.success('角色已成功修改');
   } catch (error) {
     console.error('修改角色失败:', error);
-    message.error('修改角色失败，请重试');
+    const respError = (error as any)?.response?.data;
+    const errorMessage = respError?.error || respError?.message || '修改角色失败，请重试';
+    message.error(errorMessage);
   }
 };
 

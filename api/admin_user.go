@@ -197,6 +197,24 @@ func AdminUserRoleUnlinkByUserId(c *fiber.Ctx) error {
 		return nil
 	}
 
+	for _, roleId := range body.RoleIds {
+		if roleId != "sys-admin" {
+			continue
+		}
+		adminIDs, err := model.UserRoleMappingUserIdListByRoleId("sys-admin")
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "查询管理员列表失败",
+			})
+		}
+		if len(adminIDs) == 1 && adminIDs[0] == body.UserId {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "至少保留一个平台管理员",
+			})
+		}
+		break
+	}
+
 	_, err := service.UserRoleUnlink(body.RoleIds, []string{body.UserId})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
