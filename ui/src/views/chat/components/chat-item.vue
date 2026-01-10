@@ -22,6 +22,9 @@ import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useDisplayStore, type TimestampFormat } from '@/stores/display'
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
+import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
+import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
+import { chatEvent } from '@/stores/chat'
 
 type EditingPreviewInfo = {
   userId: string;
@@ -389,7 +392,39 @@ const contentClassList = computed(() => {
 });
 
 const isEditing = computed(() => chat.isEditingMessage(props.item?.id));
-const canEdit = computed(() => props.item?.user?.id === user.info.id);
+const resolveMessageUserId = (item: any) => (
+  item?.user?.id
+  || item?.user_id
+  || item?.member?.user?.id
+  || item?.member?.userId
+  || item?.member?.user_id
+  || ''
+);
+const targetUserId = computed(() => resolveMessageUserId(props.item));
+const canEdit = computed(() => {
+  // 自己的消息可编辑
+  if (targetUserId.value && targetUserId.value === user.info.id) return true;
+  if (!targetUserId.value) return false;
+  // 检查世界管理员编辑权限
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = worldDetail?.allowAdminEditMessages
+    || worldDetail?.world?.allowAdminEditMessages
+    || chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (allowAdminEdit) {
+    const memberRole = worldDetail?.memberRole;
+    const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+    const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    if (isWorldAdmin) {
+      const channelId = chat.curChannel?.id;
+      if (channelId && targetUserId.value && chat.isChannelAdmin(channelId, targetUserId.value)) {
+        return false;
+      }
+      return true; // 后端会进一步验证目标消息作者是否为非管理员
+    }
+  }
+  return false;
+});
 
 // Multi-select computed properties (merged from props and store)
 const effectiveMultiSelectMode = computed(() => props.isMultiSelectMode || chat.multiSelect?.active || false);
@@ -612,6 +647,211 @@ const applyDiceTone = () => {
   });
 };
 
+// 处理消息链接渲染
+const processMessageLinks = () => {
+  nextTick(() => {
+    const host = messageContentRef.value;
+    if (!host) return;
+
+    // 1. 处理已标记的 pending 链接（来自 tiptap-render）
+    const pendingLinks = host.querySelectorAll<HTMLAnchorElement>('.message-jump-link-pending');
+    pendingLinks.forEach((link) => {
+      let worldId = link.dataset.worldId || '';
+      let channelId = link.dataset.channelId || '';
+      let messageId = link.dataset.messageId || '';
+      const url = link.href;
+
+      if (!worldId || !channelId || !messageId) {
+        const parsed = parseMessageLink(url);
+        if (parsed) {
+          worldId = parsed.worldId;
+          channelId = parsed.channelId;
+          messageId = parsed.messageId;
+        }
+      }
+
+      if (!worldId || !channelId || !messageId) return;
+
+      const info = resolveMessageLinkInfo(url, {
+        currentWorldId: chat.currentWorldId,
+        worldMap: chat.worldMap,
+        findChannelById: (id) => chat.findChannelById(id),
+      });
+
+      if (!info) {
+        link.classList.remove('message-jump-link-pending');
+        return;
+      }
+
+      // 创建新的链接元素
+      const wrapper = document.createElement('span');
+      wrapper.innerHTML = renderMessageLinkHtml(info);
+      const newLink = wrapper.firstElementChild as HTMLAnchorElement;
+      if (!newLink) return;
+
+      // 绑定点击事件（内联跳转，不开新标签页）
+      newLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handleMessageLinkClick(info);
+      });
+
+      link.replaceWith(newLink);
+    });
+
+    // 2. 处理纯文本中的消息链接 URL
+    processPlainTextMessageLinks(host);
+  });
+};
+
+// 处理纯文本中的消息链接
+// 支持两种格式:
+// 1. [自定义标题](http://.../#/worldId/channelId?msg=messageId)
+// 2. http://.../#/worldId/channelId?msg=messageId
+const processPlainTextMessageLinks = (host: HTMLElement) => {
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+  const nodesToProcess: { node: Text; segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> }[] = [];
+
+  // 收集需要处理的文本节点
+  let textNode: Text | null;
+  while ((textNode = walker.nextNode() as Text | null)) {
+    // 跳过已处理的链接内部的文本
+    const parent = textNode.parentElement;
+    if (parent?.closest('.message-jump-link, a')) continue;
+
+    const text = textNode.textContent || '';
+    const segments: Array<{ type: 'text' | 'titled' | 'plain'; content: string; title?: string; url?: string; index: number; length: number }> = [];
+
+    // 先匹配带标题的链接 [title](url)
+    TITLED_MESSAGE_LINK_REGEX.lastIndex = 0;
+    let titledMatch: RegExpExecArray | null;
+    const titledMatches: { index: number; length: number; title: string; url: string }[] = [];
+    while ((titledMatch = TITLED_MESSAGE_LINK_REGEX.exec(text)) !== null) {
+      titledMatches.push({
+        index: titledMatch.index,
+        length: titledMatch[0].length,
+        title: titledMatch[1],
+        url: titledMatch[2],
+      });
+    }
+
+    // 再匹配普通链接，但排除已被带标题链接覆盖的部分
+    MESSAGE_LINK_REGEX.lastIndex = 0;
+    let plainMatch: RegExpExecArray | null;
+    const plainMatches: { index: number; length: number; url: string }[] = [];
+    while ((plainMatch = MESSAGE_LINK_REGEX.exec(text)) !== null) {
+      const matchStart = plainMatch.index;
+      const matchEnd = matchStart + plainMatch[0].length;
+      // 检查是否被带标题的链接覆盖
+      const isCovered = titledMatches.some(t => matchStart >= t.index && matchEnd <= t.index + t.length);
+      if (!isCovered) {
+        plainMatches.push({
+          index: plainMatch.index,
+          length: plainMatch[0].length,
+          url: plainMatch[0],
+        });
+      }
+    }
+
+    if (titledMatches.length === 0 && plainMatches.length === 0) continue;
+
+    // 合并并排序所有匹配
+    const allMatches = [
+      ...titledMatches.map(m => ({ ...m, type: 'titled' as const })),
+      ...plainMatches.map(m => ({ ...m, type: 'plain' as const, title: undefined })),
+    ].sort((a, b) => a.index - b.index);
+
+    nodesToProcess.push({ node: textNode, segments: allMatches.map(m => ({
+      type: m.type,
+      content: text.slice(m.index, m.index + m.length),
+      title: m.title,
+      url: m.url,
+      index: m.index,
+      length: m.length,
+    })) });
+  }
+
+  // 处理收集到的节点（倒序处理避免索引变化）
+  for (const { node, segments } of nodesToProcess.reverse()) {
+    const text = node.textContent || '';
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+
+    for (const seg of segments) {
+      // 添加链接前的文本
+      if (seg.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, seg.index)));
+      }
+
+      // 解析链接参数
+      const url = seg.url!;
+      const params = parseMessageLink(url);
+      if (params) {
+        const info = resolveMessageLinkInfo(url, {
+          currentWorldId: chat.currentWorldId,
+          worldMap: chat.worldMap,
+          findChannelById: (id) => chat.findChannelById(id),
+        }, seg.title);
+
+        if (info) {
+          const wrapper = document.createElement('span');
+          wrapper.innerHTML = renderMessageLinkHtml(info);
+          const linkEl = wrapper.firstElementChild as HTMLAnchorElement;
+          if (linkEl) {
+            linkEl.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleMessageLinkClick(info);
+            });
+            fragment.appendChild(linkEl);
+          } else {
+            fragment.appendChild(document.createTextNode(seg.content));
+          }
+        } else {
+          fragment.appendChild(document.createTextNode(seg.content));
+        }
+      } else {
+        fragment.appendChild(document.createTextNode(seg.content));
+      }
+
+      lastIndex = seg.index + seg.length;
+    }
+
+    // 添加剩余文本
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    node.replaceWith(fragment);
+  }
+};
+
+const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId: string; isCurrentWorld: boolean }) => {
+  // 内联跳转，不开新标签页
+  if (!info.isCurrentWorld) {
+    try {
+      await chat.switchWorld(info.worldId, { force: true });
+    } catch {
+      message.error('无法访问该世界');
+      return;
+    }
+  }
+
+  if (chat.curChannel?.id !== info.channelId) {
+    const switched = await chat.channelSwitchTo(info.channelId);
+    if (!switched) {
+      message.error('无法访问该频道');
+      return;
+    }
+  }
+
+  await nextTick();
+  chatEvent.emit('search-jump', {
+    messageId: info.messageId,
+    channelId: info.channelId,
+  });
+};
+
 const openContextMenu = (point: { x: number, y: number }, item: any) => {
   chat.avatarMenu.show = false;
   chat.messageMenu.optionsComponent.x = point.x;
@@ -825,6 +1065,7 @@ onMounted(() => {
 
   applyDiceTone();
   ensureImageViewer();
+  processMessageLinks();
 
   timestampInterval = setInterval(() => {
     timestampTicker.value = Date.now();
@@ -843,6 +1084,7 @@ onMounted(() => {
 watch([displayContent, () => props.tone], () => {
   applyDiceTone();
   ensureImageViewer();
+  processMessageLinks();
 }, { immediate: true });
 
 watch(() => otherEditingPreview.value?.previewHtml, () => {
@@ -1000,8 +1242,11 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
           <template #trigger>
             <span class="edited-label">(已编辑)</span>
           </template>
-          <span v-if="editedTimeText2">编辑于 {{ editedTimeText2 }}</span>
-          <span v-else>编辑时间未知</span>
+          <div>
+            <span v-if="props.item?.editedByUserName">由 {{ props.item.editedByUserName }} 编辑</span>
+            <span v-if="editedTimeText2">{{ props.item?.editedByUserName ? '于' : '编辑于' }} {{ editedTimeText2 }}</span>
+            <span v-else-if="!props.item?.editedByUserName">编辑时间未知</span>
+          </div>
         </n-popover>
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>

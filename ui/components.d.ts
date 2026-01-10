@@ -7,12 +7,14 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    AdminEditNoticeModal: typeof import('./src/components/AdminEditNoticeModal.vue')['default']
     AudioAssetManager: typeof import('./src/components/audio/AudioAssetManager.vue')['default']
     AudioDrawer: typeof import('./src/components/audio/AudioDrawer.vue')['default']
     AudioSearchBar: typeof import('./src/components/audio/AudioSearchBar.vue')['default']
     Avatar: typeof import('./src/components/avatar.vue')['default']
     AvatarEditor: typeof import('./src/components/AvatarEditor.vue')['default']
     AvatarSetupPrompt: typeof import('./src/components/AvatarSetupPrompt.vue')['default']
+    FFmpegMissingAlert: typeof import('./src/components/audio/FFmpegMissingAlert.vue')['default']
     GalleryButton: typeof import('./src/components/gallery/GalleryButton.vue')['default']
     GalleryCollectionTree: typeof import('./src/components/gallery/GalleryCollectionTree.vue')['default']
     GalleryContextMenu: typeof import('./src/components/gallery/GalleryContextMenu.vue')['default']
@@ -94,6 +96,7 @@ declare module 'vue' {
     NTooltip: typeof import('naive-ui')['NTooltip']
     NTree: typeof import('naive-ui')['NTree']
     NTreeSelect: typeof import('naive-ui')['NTreeSelect']
+    NUpload: typeof import('naive-ui')['NUpload']
     OnboardingResumePrompt: typeof import('./src/components/onboarding/OnboardingResumePrompt.vue')['default']
     OnboardingRoot: typeof import('./src/components/onboarding/OnboardingRoot.vue')['default']
     OnboardingSpotlight: typeof import('./src/components/onboarding/OnboardingSpotlight.vue')['default']

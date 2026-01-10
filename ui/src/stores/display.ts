@@ -71,6 +71,7 @@ export interface DisplaySettings {
   palette: DisplayPalette
   showAvatar: boolean
   showInputPreview: boolean
+  autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
@@ -104,6 +105,8 @@ export interface DisplaySettings {
   activeCustomThemeId: string | null
   // 右键菜单
   disableContextMenu: boolean
+  // 输入区域自定义高度
+  inputAreaHeight: number  // 0 means auto
 }
 
 export const FAVORITE_CHANNEL_LIMIT = 4
@@ -141,6 +144,23 @@ const MESSAGE_PADDING_X_MAX = 48
 const MESSAGE_PADDING_Y_DEFAULT = 14
 const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
+const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
+const INPUT_AREA_HEIGHT_MIN = 80
+const INPUT_AREA_HEIGHT_MAX = 600
+export const INPUT_AREA_HEIGHT_LIMITS = {
+  MIN: INPUT_AREA_HEIGHT_MIN,
+  MAX: INPUT_AREA_HEIGHT_MAX,
+}
+const normalizeInputAreaHeight = (value: unknown) => {
+  const raw = coerceNumberInRange(
+    value,
+    INPUT_AREA_HEIGHT_DEFAULT,
+    INPUT_AREA_HEIGHT_DEFAULT,
+    INPUT_AREA_HEIGHT_MAX,
+  )
+  if (raw <= 0) return 0
+  return Math.max(raw, INPUT_AREA_HEIGHT_MIN)
+}
 const KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT = 1  // 1em - 中文标准首行缩进
 const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
@@ -321,6 +341,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   palette: 'day',
   showAvatar: true,
   showInputPreview: true,
+  autoScrollTypingPreview: false,
   mergeNeighbors: true,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
@@ -351,6 +372,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   customThemes: [],
   activeCustomThemeId: null,
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
+  inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
 })
 const defaultSettings = (): DisplaySettings => createDefaultDisplaySettings()
 
@@ -391,7 +413,8 @@ const normalizeCustomThemeColors = (value: any): CustomThemeColors => {
     'textPrimary', 'textSecondary',
     'chatIcBg', 'chatOocBg', 'chatStageBg', 'chatPreviewBg', 'chatPreviewDot',
     'borderMute', 'borderStrong',
-    'primaryColor', 'primaryColorHover'
+    'primaryColor', 'primaryColorHover',
+    'keywordBg', 'keywordBorder'
   ]
   colorKeys.forEach(key => {
     if (typeof value[key] === 'string' && value[key].trim()) {
@@ -460,6 +483,7 @@ const loadSettings = (): DisplaySettings => {
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
+      autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
@@ -530,6 +554,7 @@ const loadSettings = (): DisplaySettings => {
       customThemes: normalizeCustomThemes((parsed as any)?.customThemes),
       activeCustomThemeId: typeof (parsed as any)?.activeCustomThemeId === 'string' ? (parsed as any).activeCustomThemeId : null,
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
+      inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
     }
   } catch (error) {
     console.warn('加载显示模式设置失败，使用默认值', error)
@@ -548,6 +573,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
       ? coerceBoolean(patch.showInputPreview)
       : base.showInputPreview,
+  autoScrollTypingPreview:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'autoScrollTypingPreview')
+      ? coerceBoolean((patch as any).autoScrollTypingPreview)
+      : base.autoScrollTypingPreview,
   mergeNeighbors:
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
@@ -698,6 +727,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'disableContextMenu')
       ? coerceBoolean((patch as any).disableContextMenu)
       : base.disableContextMenu,
+  inputAreaHeight:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
+      ? normalizeInputAreaHeight((patch as any).inputAreaHeight)
+      : base.inputAreaHeight,
 })
 
 export const useDisplayStore = defineStore('display', {
@@ -932,7 +965,8 @@ export const useDisplayStore = defineStore('display', {
           // Use --custom-* prefix for chat colors so they can override scoped class variables
           if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
           if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
-          if (c.chatStageBg) setVar('--custom-chat-stage-bg', c.chatStageBg)
+          const stageBg = c.chatStageBg || c.chatIcBg
+          if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
           if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
           if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
           if (c.borderMute) setVar('--sc-border-mute', c.borderMute)

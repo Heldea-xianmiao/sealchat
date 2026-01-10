@@ -43,6 +43,7 @@ watch(
     draft.palette = value.palette
     draft.showAvatar = value.showAvatar
     draft.showInputPreview = value.showInputPreview
+    draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
     draft.alwaysShowTimestamp = value.alwaysShowTimestamp
     draft.timestampFormat = value.timestampFormat
@@ -264,6 +265,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showInputPreview">
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">输入时自动滚动</p>
+            <p class="section-desc">关闭时仅在非历史模式且已在底部时保持可见，开启后输入时总是滚到底部</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.autoScrollTypingPreview">
+          <template #checked>输入时滚动到底部</template>
+          <template #unchecked>输入时不滚动到底部</template>
         </n-switch>
       </section>
 
@@ -514,7 +528,7 @@ const handleOpenTutorialHub = () => {
           <div class="control-field">
             <div>
               <p class="control-title">气泡间距</p>
-              <p class="control-desc">作用于消息行之间的 gap</p>
+              <p class="control-desc">作用于消息行之间的上下内间距</p>
             </div>
             <div class="control-input">
               <n-slider v-model:value="draft.bubbleGap" :min="4" :max="48" :step="2" :format-tooltip="formatPxTooltip" />
@@ -531,7 +545,7 @@ const handleOpenTutorialHub = () => {
           <div class="control-field">
             <div>
               <p class="control-title">紧凑间距</p>
-              <p class="control-desc">仅作用于紧凑模式消息块之间的 gap</p>
+              <p class="control-desc">仅作用于紧凑模式消息块之间的上下内间距</p>
             </div>
             <div class="control-input">
               <n-slider
@@ -764,6 +778,21 @@ const handleOpenTutorialHub = () => {
   margin-bottom: 0.45rem;
 }
 
+.display-settings :deep(.n-radio-group),
+.display-settings :deep(.n-radio-button-group) {
+  --n-button-color: transparent !important;
+  --n-button-color-active: var(--sc-bg-elevated) !important;
+  background-color: transparent !important;
+}
+
+.display-settings :deep(.n-radio-button) {
+  background-color: transparent !important;
+}
+
+.display-settings :deep(.n-radio-button--checked) {
+  background-color: var(--sc-bg-elevated) !important;
+}
+
 .section-title {
   font-size: 0.95rem;
   font-weight: 600;
@@ -796,22 +825,22 @@ const handleOpenTutorialHub = () => {
   gap: 0.75rem;
   padding: var(--chat-message-padding-y, 0.65rem) var(--chat-message-padding-x, 0.75rem);
   border-radius: var(--preview-radius, 1rem);
-  background-color: var(--sc-bg-surface);
+  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg, var(--sc-bg-surface)));
   border: 1px solid var(--sc-border-mute);
 }
 
 .display-preview--night .preview-card {
-  background-color: var(--sc-bg-input);
+  background-color: var(--custom-chat-ic-bg, var(--chat-ic-bg, var(--sc-bg-input)));
   color: var(--sc-text-primary);
 }
 
 .display-preview--night .preview-card--ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg, var(--sc-bg-input)));
 }
 
 .display-preview--night .preview-card--preview {
-  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
-  background-color: var(--chat-preview-bg);
+  background-image: radial-gradient(var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px, transparent 1px);
+  background-color: var(--custom-chat-preview-bg, var(--chat-preview-bg, var(--sc-bg-surface)));
   background-size: 10px 10px;
 }
 
@@ -824,13 +853,13 @@ const handleOpenTutorialHub = () => {
 }
 
 .preview-card--ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--custom-chat-ooc-bg, var(--chat-ooc-bg, var(--sc-bg-surface)));
 }
 
 .preview-card--preview {
   flex-direction: column;
-  background-color: var(--chat-preview-bg);
-  background-image: radial-gradient(var(--chat-preview-dot) 1px, transparent 1px);
+  background-color: var(--custom-chat-preview-bg, var(--chat-preview-bg, var(--sc-bg-surface)));
+  background-image: radial-gradient(var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 

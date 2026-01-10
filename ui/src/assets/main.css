@@ -387,3 +387,59 @@ body {
 .n-base-selection.n-base-selection--multiple .n-base-selection-tags {
   color: var(--sc-text-primary);
 }
+
+/* Message Jump Link - Discord style */
+.message-jump-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15em;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  background: var(--sc-chip-bg, rgba(88, 101, 242, 0.1));
+  color: var(--sc-accent, #5865f2);
+  font-weight: 500;
+  font-size: 0.9em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  vertical-align: baseline;
+}
+
+.message-jump-link:hover {
+  background: rgba(88, 101, 242, 0.2);
+  color: #4752c4;
+  text-decoration: none;
+}
+
+.message-jump-link__hash {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+.message-jump-link__name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-jump-link__separator {
+  opacity: 0.5;
+  font-size: 0.85em;
+  margin: 0 0.1em;
+}
+
+.message-jump-link .msg-link-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+[data-display-palette="night"] .message-jump-link {
+  background: rgba(88, 101, 242, 0.15);
+  color: #8a9aff;
+}
+
+[data-display-palette="night"] .message-jump-link:hover {
+  background: rgba(88, 101, 242, 0.25);
+  color: #a8b4ff;
+}

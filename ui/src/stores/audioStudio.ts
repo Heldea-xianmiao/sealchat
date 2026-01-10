@@ -3,6 +3,7 @@ import { Howl, Howler } from 'howler';
 import { nanoid } from 'nanoid';
 import { api, urlBase } from './_config';
 import { useUserStore } from './user';
+import { useUtilsStore } from './utils';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import type {
   AudioAsset,
@@ -270,6 +271,11 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     canManage(): boolean {
       const user = useUserStore();
       return Boolean(user.checkPerm?.('mod_admin'));
+    },
+
+    ffmpegAvailable(): boolean {
+      const utils = useUtilsStore();
+      return utils.config?.ffmpegAvailable === true;
     },
   },
 

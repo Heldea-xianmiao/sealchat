@@ -141,6 +141,50 @@ func canReorderAllMessages(userID string, channel *model.ChannelModel) bool {
 	return false
 }
 
+func apiMessageGet(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}) (any, error) {
+	db := model.GetDB()
+
+	// 权限检查
+	channelId := data.ChannelID
+	if ctx.IsReadOnly() {
+		if len(channelId) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelId); err != nil {
+			return nil, err
+		}
+	} else if len(channelId) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelId)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	var item model.MessageModel
+	q := db.Where("channel_id = ? AND id = ?", data.ChannelID, data.MessageID)
+	q = q.Where("is_deleted = ?", false)
+	q = q.Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, ctx.User.ID, ctx.User.ID)
+	q.Limit(1).Find(&item)
+
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	return map[string]any{
+		"id":            item.ID,
+		"channel_id":    item.ChannelID,
+		"created_at":    item.CreatedAt.UnixMilli(),
+		"display_order": item.DisplayOrder,
+	}, nil
+}
+
 func apiMessageDelete(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`
@@ -1127,6 +1171,8 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	IncludeArchived bool     `json:"include_archived"`
 	ArchivedOnly    bool     `json:"archived_only"`
 	UserIDs         []string `json:"user_ids"`
+	RoleIDs         []string `json:"role_ids"`
+	IncludeRoleless bool     `json:"include_roleless"`
 	Limit           int      `json:"limit"`
 }) (any, error) {
 	db := model.GetDB()
@@ -1174,6 +1220,30 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}
 	if len(data.UserIDs) > 0 {
 		q = q.Where("user_id IN ?", data.UserIDs)
+	}
+	roleIDs := make([]string, 0, len(data.RoleIDs))
+	for _, id := range data.RoleIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed != "" {
+			roleIDs = append(roleIDs, trimmed)
+		}
+	}
+	includeRoleless := data.IncludeRoleless
+	if len(roleIDs) > 0 || includeRoleless {
+		roleCond := "(sender_role_id IN ? OR sender_identity_id IN ?)"
+		roleArgs := []any{roleIDs, roleIDs}
+		if includeRoleless {
+			roleCond = "(" + roleCond + " OR ((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL)))"
+		}
+		if len(roleIDs) == 0 && includeRoleless {
+			roleCond = "((sender_role_id = '' OR sender_role_id IS NULL) AND (sender_identity_id = '' OR sender_identity_id IS NULL))"
+			roleArgs = nil
+		}
+		if roleArgs != nil {
+			q = q.Where(roleCond, roleArgs...)
+		} else {
+			q = q.Where(roleCond)
+		}
 	}
 
 	if data.Type == "time" {
@@ -1363,9 +1433,6 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if msg.ID == "" {
 		return nil, nil
 	}
-	if msg.UserID != ctx.User.ID {
-		return nil, nil
-	}
 	if msg.IsRevoked || msg.IsDeleted {
 		return nil, nil
 	}
@@ -1374,13 +1441,42 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	if channel.ID == "" {
 		return nil, nil
 	}
+
+	// 权限检查：是否为消息作者，或世界管理员代编辑
+	isAuthor := msg.UserID == ctx.User.ID
+	isAdminEdit := false
+	editorUserName := strings.TrimSpace(ctx.User.Nickname)
+	if editorUserName == "" {
+		editorUserName = ctx.User.Username
+	}
+	if !isAuthor && channel.WorldID != "" {
+		world, err := service.GetWorldByID(channel.WorldID)
+		if err == nil && world != nil && world.AllowAdminEditMessages {
+			if service.IsWorldAdmin(channel.WorldID, ctx.User.ID) {
+				// 检查目标消息作者是否为非管理员
+				if !service.IsWorldAdmin(channel.WorldID, msg.UserID) {
+					isAdminEdit = true
+				}
+			}
+		}
+	}
+	if !isAuthor && !isAdminEdit {
+		return nil, nil
+	}
 	channelData := channel.ToProtocolType()
 
-	member, _ := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
+	var authorUser *model.UserModel
+	if msg.UserID != "" && msg.UserID != ctx.User.ID {
+		authorUser = model.UserGet(msg.UserID)
+	} else {
+		authorUser = ctx.User
+	}
+
+	authorMember, _ := model.MemberGetByUserIDAndChannelID(msg.UserID, data.ChannelID, msg.SenderMemberName)
 
 	identityChanged := false
 	var resolvedIdentityProto *protocol.ChannelIdentity
-	if data.IdentityID != nil {
+	if data.IdentityID != nil && isAuthor {
 		identityChanged = true
 		rawIdentityID := strings.TrimSpace(*data.IdentityID)
 		identity, err := service.ChannelIdentityValidateMessageIdentity(ctx.User.ID, data.ChannelID, rawIdentityID)
@@ -1404,12 +1500,12 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 			msg.SenderIdentityAvatarID = ""
 			msg.SenderRoleID = ""
 			resolvedIdentityProto = nil
-			if member != nil && member.Nickname != "" {
-				msg.SenderMemberName = member.Nickname
-			} else if ctx.User.Nickname != "" {
-				msg.SenderMemberName = ctx.User.Nickname
-			} else {
-				msg.SenderMemberName = ctx.User.Username
+			if authorMember != nil && authorMember.Nickname != "" {
+				msg.SenderMemberName = authorMember.Nickname
+			} else if authorUser != nil && authorUser.Nickname != "" {
+				msg.SenderMemberName = authorUser.Nickname
+			} else if authorUser != nil {
+				msg.SenderMemberName = authorUser.Username
 			}
 		}
 	}
@@ -1449,9 +1545,13 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	buildMessage := func() *protocol.Message {
 		messageData := msg.ToProtocolType2(channelData)
 		messageData.Content = msg.Content
-		messageData.User = ctx.User.ToProtocolType()
-		if member != nil {
-			messageData.Member = member.ToProtocolType()
+		if authorUser != nil {
+			messageData.User = authorUser.ToProtocolType()
+		} else if msg.UserID != "" {
+			messageData.User = &protocol.User{ID: msg.UserID}
+		}
+		if authorMember != nil {
+			messageData.Member = authorMember.ToProtocolType()
 		}
 		if msg.WhisperTarget != nil {
 			messageData.WhisperTo = msg.WhisperTarget.ToProtocolType()
@@ -1520,6 +1620,10 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		updates["sender_member_name"] = msg.SenderMemberName
 		updates["sender_role_id"] = msg.SenderRoleID
 	}
+	updates["edited_by_user_id"] = ctx.User.ID
+	updates["edited_by_user_name"] = editorUserName
+	msg.EditedByUserID = ctx.User.ID
+	msg.EditedByUserName = editorUserName
 	err = db.Model(&model.MessageModel{}).Where("id = ?", msg.ID).Updates(updates).Error
 	if err != nil {
 		return nil, err
@@ -1551,7 +1655,7 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		Type:    protocol.EventMessageUpdated,
 		Message: messageData,
 		Channel: channelData,
-		User:    messageData.User,
+		User:    ctx.User.ToProtocolType(),
 	}
 
 	if msg.IsWhisper && msg.WhisperTo != "" {
@@ -2274,8 +2378,21 @@ func forwardHiddenDiceWhisperCopy(ctx *ChatContext, sourceChannel *model.Channel
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
 }
 
-func apiUnreadCount(ctx *ChatContext, data *struct{}) (any, error) {
-	chIds, _ := service.ChannelIdList(ctx.User.ID)
+func apiUnreadCount(ctx *ChatContext, data *struct {
+	WorldID        string `json:"world_id"`
+	IncludePrivate *bool  `json:"include_private"`
+}) (any, error) {
+	worldID := strings.TrimSpace(data.WorldID)
+	includePrivate := false
+	if data.IncludePrivate != nil {
+		includePrivate = *data.IncludePrivate
+	}
+	var chIds []string
+	if worldID == "" {
+		chIds, _ = service.ChannelIdList(ctx.User.ID)
+	} else {
+		chIds, _ = service.ChannelIdListByWorld(ctx.User.ID, worldID, includePrivate)
+	}
 	lst, err := model.ChannelUnreadFetch(chIds, ctx.User.ID)
 	if err != nil {
 		return nil, err

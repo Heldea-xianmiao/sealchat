@@ -54,6 +54,12 @@ const isSyncingFromProps = ref(false);
 const highlightColorPopoverShow = ref(false);
 const textColorPopoverShow = ref(false);
 
+// 链接弹窗状态
+const linkModalShow = ref(false);
+const linkText = ref('');
+const linkUrl = ref('');
+const linkOpenInNewTab = ref(false);
+
 // 预设高亮颜色色板 (7个预设 + 1个自定义)
 const highlightColors = [
   '#fef08a', // 黄色（默认）
@@ -438,10 +444,49 @@ const getActiveTextColor = () => {
 };
 
 const setLink = () => {
-  const url = window.prompt('输入链接地址:');
-  if (url) {
-    editor.value?.chain().focus().setLink({ href: url }).run();
+  const { from, to } = editor.value?.state.selection || { from: 0, to: 0 };
+  const hasSelection = from !== to;
+
+  if (hasSelection) {
+    // 有选中文本，获取选中内容作为默认链接文本
+    const selectedText = editor.value?.state.doc.textBetween(from, to, ' ') || '';
+    linkText.value = selectedText;
+  } else {
+    linkText.value = '';
   }
+  linkUrl.value = '';
+  linkOpenInNewTab.value = false;
+  linkModalShow.value = true;
+};
+
+const confirmLink = () => {
+  if (!linkUrl.value.trim()) {
+    linkModalShow.value = false;
+    return;
+  }
+
+  const url = linkUrl.value.trim();
+  const target = linkOpenInNewTab.value ? '_blank' : '_self';
+  const { from, to } = editor.value?.state.selection || { from: 0, to: 0 };
+  const hasSelection = from !== to;
+
+  if (hasSelection) {
+    // 有选中文本，直接设置链接
+    editor.value?.chain().focus().setLink({ href: url, target }).run();
+  } else {
+    // 没有选中文本，插入带链接的文本
+    const text = linkText.value.trim() || url;
+    editor.value?.chain().focus().insertContent({
+      type: 'text',
+      text: text,
+      marks: [{ type: 'link', attrs: { href: url, target } }],
+    }).run();
+  }
+
+  linkModalShow.value = false;
+  linkText.value = '';
+  linkUrl.value = '';
+  linkOpenInNewTab.value = false;
 };
 
 const unsetLink = () => {
@@ -849,6 +894,41 @@ defineExpose({
         </component>
       </div>
     </div>
+
+    <!-- 链接插入弹窗 -->
+    <n-modal
+      v-model:show="linkModalShow"
+      preset="card"
+      :bordered="false"
+      title="插入链接"
+      style="width: 360px; max-width: 90vw;"
+      :mask-closable="true"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="链接文本">
+          <n-input
+            v-model:value="linkText"
+            placeholder="显示的文字（可选，留空则显示链接地址）"
+          />
+        </n-form-item>
+        <n-form-item label="链接地址">
+          <n-input
+            v-model:value="linkUrl"
+            placeholder="https://example.com"
+            @keydown.enter="confirmLink"
+          />
+        </n-form-item>
+        <n-form-item label="打开方式">
+          <n-checkbox v-model:checked="linkOpenInNewTab">在新标签页中打开</n-checkbox>
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <n-button @click="linkModalShow = false">取消</n-button>
+          <n-button type="primary" @click="confirmLink" :disabled="!linkUrl.trim()">确定</n-button>
+        </div>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -873,6 +953,18 @@ defineExpose({
   }
 }
 
+.tiptap-editor.chat-input--fullscreen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .tiptap-editor.chat-input--expanded .tiptap-editor-wrapper {
   min-height: calc(100vh / 3);
   max-height: calc(100vh / 3);
@@ -881,6 +973,31 @@ defineExpose({
 .tiptap-editor.chat-input--expanded .tiptap-content {
   min-height: max(6rem, calc(100vh / 3 - 2.5rem));
   max-height: max(6rem, calc(100vh / 3 - 2.5rem));
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-editor-wrapper {
+  flex: 1 1 auto;
+  min-height: 100%;
+  max-height: 100%;
+  height: 100%;
+  overflow-y: auto;
+  touch-action: pan-y;
+  min-height: 0;
+}
+
+.tiptap-editor.chat-input--fullscreen .tiptap-content {
+  min-height: max(6rem, calc(100% - 2.5rem));
+  max-height: max(6rem, calc(100% - 2.5rem));
+}
+
+.tiptap-editor.chat-input--custom-height .tiptap-editor-wrapper {
+  min-height: var(--custom-input-height, 3rem);
+  max-height: var(--custom-input-height, 12rem);
+}
+
+.tiptap-editor.chat-input--custom-height .tiptap-content {
+  min-height: max(3rem, calc(var(--custom-input-height, 3rem) - 2.5rem));
+  max-height: max(3rem, calc(var(--custom-input-height, 12rem) - 2.5rem));
 }
 
 .tiptap-loading {
@@ -923,6 +1040,8 @@ defineExpose({
   min-height: 3rem;
   max-height: 12rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 
   /* 极简滚动条样式 - Webkit (Chrome, Safari, Edge) */
   &::-webkit-scrollbar {

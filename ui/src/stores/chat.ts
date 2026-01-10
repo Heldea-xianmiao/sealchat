@@ -118,10 +118,28 @@ interface ChatState {
     rangeAnchorId: string | null;
     rangeModeEnabled: boolean; // 范围选择模式：首条是起点，第二条是终点
   } | null;
+  // 当前频道的第一条未读消息信息
+  firstUnreadInfo: {
+    channelId: string;
+    messageId: string;
+    messageTime: number;
+  } | null;
 }
 
 const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
+
+const ROLELESS_FILTER_ID = '__roleless__';
+
+const normalizeRoleFilterIds = (roleIds?: string[]) => {
+  const raw = Array.isArray(roleIds) ? roleIds : [];
+  const normalized = raw
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  const includeRoleless = normalized.includes(ROLELESS_FILTER_ID);
+  const filteredRoleIds = normalized.filter((id) => id !== ROLELESS_FILTER_ID);
+  return { roleIds: filteredRoleIds, includeRoleless };
+};
 
 const resolveEmbedPaneId = (): string | null => {
   if (typeof window === 'undefined') return null;
@@ -318,6 +336,7 @@ export const useChatStore = defineStore({
     channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
     multiSelect: null,
+    firstUnreadInfo: null,
   }),
 
   getters: {
@@ -895,9 +914,9 @@ export const useChatStore = defineStore({
       delete this.channelTreeByWorld[worldId];
     },
 
-    async worldDetail(worldId: string) {
+    async worldDetail(worldId: string, options?: { force?: boolean }) {
       if (!worldId) return null;
-      if (this.worldDetailMap[worldId]) {
+      if (!options?.force && this.worldDetailMap[worldId]) {
         return this.worldDetailMap[worldId];
       }
       const endpoint = this.observerMode ? `/api/v1/public/worlds/${worldId}` : `/api/v1/worlds/${worldId}`;
@@ -917,7 +936,7 @@ export const useChatStore = defineStore({
       }
     },
 
-    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean }) {
+    async worldUpdate(worldId: string, payload: { name?: string; description?: string; visibility?: string; avatar?: string; enforceMembership?: boolean; allowAdminEditMessages?: boolean }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
@@ -934,6 +953,14 @@ export const useChatStore = defineStore({
       this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
       if (this.currentWorldId === worldId) {
         this.currentWorldId = this.joinedWorldIds[0] || '';
+      }
+      return resp.data;
+    },
+
+    async worldAckEditNotice(worldId: string) {
+      const resp = await api.post(`/api/v1/worlds/${worldId}/ack-edit-notice`);
+      if (this.worldDetailMap[worldId]) {
+        this.worldDetailMap[worldId].editNoticeAcked = true;
       }
       return resp.data;
     },
@@ -1133,7 +1160,17 @@ export const useChatStore = defineStore({
           return false;
         }
       }
-      const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
+      const { roleIds: filterRoleIds, includeRoleless } = normalizeRoleFilterIds(this.filterState.roleIds);
+      const enterPayload: Record<string, any> = {
+        channel_id: id,
+        include_archived: this.filterState.showArchived,
+        ic_filter: this.filterState.icFilter,
+      };
+      if (filterRoleIds.length > 0 || includeRoleless) {
+        enterPayload.role_ids = filterRoleIds;
+        enterPayload.include_roleless = includeRoleless;
+      }
+      const resp = await this.sendAPI('channel.enter', enterPayload);
       // console.log('switch', resp, this.curChannel);
 
       if (!resp.data?.member) {
@@ -1142,6 +1179,20 @@ export const useChatStore = defineStore({
       }
 
       this.curMember = resp.data.member;
+
+      // 保存第一条未读消息信息（在标记已读之前）
+      const firstUnreadMsgId = resp.data.first_unread_message_id;
+      const firstUnreadMsgTime = resp.data.first_unread_msg_time;
+      if (firstUnreadMsgId) {
+        this.firstUnreadInfo = {
+          channelId: id,
+          messageId: firstUnreadMsgId,
+          messageTime: firstUnreadMsgTime || 0,
+        };
+      } else {
+        this.firstUnreadInfo = null;
+      }
+
       await this.loadChannelIdentities(id);
       // 确保默认场外角色存在
       await this.ensureDefaultOocRole(id);
@@ -1754,7 +1805,7 @@ export const useChatStore = defineStore({
       }
 
       if (!this.observerMode) {
-        const countMap = await this.channelUnreadCount();
+        const countMap = await this.channelUnreadCount(finalWorld);
         this.unreadCountMap = countMap;
       }
       // console.log('countMap', countMap);
@@ -1929,6 +1980,8 @@ export const useChatStore = defineStore({
       archivedOnly?: boolean;
       icOnly?: boolean;
       userIds?: string[];
+      roleIds?: string[];
+      includeRoleless?: boolean;
       limit?: number;
     }) {
       const payload: Record<string, any> = {
@@ -1953,6 +2006,12 @@ export const useChatStore = defineStore({
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
         }
+        if (options.roleIds && options.roleIds.length > 0) {
+          payload.role_ids = options.roleIds;
+        }
+        if (typeof options.includeRoleless === 'boolean') {
+          payload.include_roleless = options.includeRoleless;
+        }
         if (typeof options.limit === 'number') {
           const normalizedLimit = Number(options.limit);
           if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
@@ -1970,6 +2029,9 @@ export const useChatStore = defineStore({
       includeOoc?: boolean;
       icOnly?: boolean;
       userIds?: string[];
+      roleIds?: string[];
+      includeRoleless?: boolean;
+      limit?: number;
     }) {
       const payload: Record<string, any> = {
         channel_id: channelId,
@@ -1989,6 +2051,18 @@ export const useChatStore = defineStore({
         }
         if (options.userIds && options.userIds.length > 0) {
           payload.user_ids = options.userIds;
+        }
+        if (options.roleIds && options.roleIds.length > 0) {
+          payload.role_ids = options.roleIds;
+        }
+        if (typeof options.includeRoleless === 'boolean') {
+          payload.include_roleless = options.includeRoleless;
+        }
+        if (typeof options.limit === 'number') {
+          const normalizedLimit = Number(options.limit);
+          if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
+            payload.limit = normalizedLimit;
+          }
         }
       }
       const resp = await this.sendAPI('message.list', payload);
@@ -2014,6 +2088,11 @@ export const useChatStore = defineStore({
     async messageRemove(channel_id: string, message_id: string) {
       const resp = await this.sendAPI('message.remove', { channel_id, message_id });
       return resp.data;
+    },
+
+    async messageGetById(channel_id: string, message_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
+      const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.get', { channel_id, message_id });
+      return (resp as any)?.data || null;
     },
 
     async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
@@ -2271,11 +2350,15 @@ export const useChatStore = defineStore({
     },
 
     // 获取未读信息
-    async channelUnreadCount() {
+    async channelUnreadCount(worldId?: string) {
       if (this.observerMode) {
         return {};
       }
-      const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', {});
+      const payload: { world_id?: string } = {};
+      if (worldId) {
+        payload.world_id = worldId;
+      }
+      const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', payload);
       return resp?.data;
     },
 
@@ -2391,6 +2474,24 @@ export const useChatStore = defineStore({
       sortOrder?: number;
     }) {
       const resp = await api.post<{ message: string }>(`api/v1/channel-info-edit`, updates, { params: { id } });
+      return resp?.data;
+    },
+
+    // 编辑频道背景
+    async channelBackgroundEdit(id: string, updates: {
+      backgroundAttachmentId?: string;
+      backgroundSettings?: string;
+    }) {
+      const resp = await api.post<{ message: string }>(`api/v1/channel-info-edit`, updates, { params: { id } });
+      if (this.curChannel?.id === id) {
+        const channelResp = await this.channelInfoGet(id);
+        if (channelResp?.item) {
+          this.patchChannelAttributes(id, {
+            backgroundAttachmentId: channelResp.item.backgroundAttachmentId,
+            backgroundSettings: channelResp.item.backgroundSettings,
+          });
+        }
+      }
       return resp?.data;
     },
 
@@ -3101,6 +3202,12 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (typeof event.channel?.botFeatureEnabled === 'boolean') {
     patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  if (typeof event.channel?.backgroundAttachmentId === 'string') {
+    patch.backgroundAttachmentId = event.channel.backgroundAttachmentId;
+  }
+  if (typeof event.channel?.backgroundSettings === 'string') {
+    patch.backgroundSettings = event.channel.backgroundSettings;
   }
   chat.patchChannelAttributes(channelId, patch);
 });

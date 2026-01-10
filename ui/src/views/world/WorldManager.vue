@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 
 const props = defineProps<{ worldId: string, visible: boolean }>();
 const emit = defineEmits(['update:visible']);
 const chat = useChatStore();
 const message = useMessage();
+const dialog = useDialog();
 const form = ref<any>({});
 const loading = ref(false);
 
@@ -19,6 +20,7 @@ watch(() => props.worldId, async (id) => {
     name: detail.world?.name,
     description: detail.world?.description,
     visibility: detail.world?.visibility,
+    allowAdminEditMessages: detail.world?.allowAdminEditMessages ?? false,
   };
 }, { immediate: true });
 
@@ -47,6 +49,17 @@ const remove = async () => {
     loading.value = false;
   }
 };
+
+const confirmRemove = () => {
+  dialog.warning({
+    title: '删除世界',
+    content: `确定要删除「${form.value.name || '该世界'}」吗？此操作不可恢复，世界内的所有频道和消息将被永久删除。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    maskClosable: false,
+    onPositiveClick: remove,
+  });
+};
 </script>
 
 <template>
@@ -71,12 +84,18 @@ const remove = async () => {
             { label: '隐藏链接', value: 'unlisted' },
           ]" />
         </n-form-item>
+        <n-form-item label="管理权限">
+          <n-switch v-model:value="form.allowAdminEditMessages" />
+          <span style="margin-left: 8px; color: var(--sc-text-secondary); font-size: 13px;">
+            允许管理员编辑其他成员发言
+          </span>
+        </n-form-item>
       </n-form>
     </div>
     <template #action>
       <n-space>
         <n-button quaternary @click="close">取消</n-button>
-        <n-button type="error" @click="remove" :loading="loading">删除世界</n-button>
+        <n-button type="error" @click="confirmRemove" :loading="loading">删除世界</n-button>
         <n-button type="primary" @click="save" :loading="loading">保存</n-button>
       </n-space>
     </template>

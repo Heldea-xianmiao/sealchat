@@ -7,7 +7,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -56,7 +56,7 @@ import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcast
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
 import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
-import { Settings, Close as CloseIcon } from '@vicons/ionicons5';
+import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
@@ -65,6 +65,7 @@ import { ensureDefaultDiceExpr, matchDiceExpressions, type DiceMatch } from '@/u
 import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
+import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -224,6 +225,58 @@ const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
 const scrollButtonColor = computed(() => (display.palette === 'night' ? 'rgba(148, 163, 184, 0.25)' : '#e5e7eb'));
 const scrollButtonTextColor = computed(() => (display.palette === 'night' ? 'rgba(248, 250, 252, 0.95)' : '#111827'));
+
+const channelBackgroundStyle = computed(() => {
+  const channel = chat.curChannel as SChannel | null;
+  if (!channel?.backgroundAttachmentId) return null;
+  let settings: { mode?: string; opacity?: number; blur?: number; brightness?: number } = {
+    mode: 'cover', opacity: 30, blur: 0, brightness: 100
+  };
+  if (channel.backgroundSettings) {
+    try {
+      const parsed = typeof channel.backgroundSettings === 'string'
+        ? JSON.parse(channel.backgroundSettings)
+        : channel.backgroundSettings;
+      settings = { ...settings, ...parsed };
+    } catch { /* ignore */ }
+  }
+  const attachmentId = channel.backgroundAttachmentId;
+  const bgUrl = resolveAttachmentUrl(attachmentId.startsWith('id:') ? attachmentId : `id:${attachmentId}`);
+  let bgSize = 'cover';
+  let bgRepeat = 'no-repeat';
+  const bgPosition = 'center';
+  switch (settings.mode) {
+    case 'contain': bgSize = 'contain'; break;
+    case 'tile': bgSize = 'auto'; bgRepeat = 'repeat'; break;
+    case 'center': bgSize = 'auto'; break;
+  }
+  return {
+    backgroundImage: `url(${bgUrl})`,
+    backgroundSize: bgSize,
+    backgroundRepeat: bgRepeat,
+    backgroundPosition: bgPosition,
+    opacity: (settings.opacity ?? 30) / 100,
+    filter: `blur(${settings.blur ?? 0}px) brightness(${settings.brightness ?? 100}%)`,
+  };
+});
+
+const channelBackgroundOverlayStyle = computed(() => {
+  const channel = chat.curChannel as SChannel | null;
+  if (!channel?.backgroundAttachmentId || !channel.backgroundSettings) return null;
+  let settings: { overlayColor?: string; overlayOpacity?: number } = {};
+  try {
+    const parsed = typeof channel.backgroundSettings === 'string'
+      ? JSON.parse(channel.backgroundSettings)
+      : channel.backgroundSettings;
+    settings = parsed;
+  } catch { /* ignore */ }
+  if (!settings.overlayColor || !(settings.overlayOpacity ?? 0)) return null;
+  return {
+    backgroundColor: settings.overlayColor,
+    opacity: (settings.overlayOpacity ?? 0) / 100,
+  };
+});
+
 const diceTrayVisible = ref(false);
 const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
@@ -683,12 +736,16 @@ const fetchRibbonRoleOptions = async (channelId?: string | null) => {
       return;
     }
     const items = Array.isArray(payload?.items) ? payload.items : [];
-    ribbonRoleOptions.value = items
+    const mapped = items
       .map((item) => ({
         id: String(item.id || ''),
         label: item.label || '未命名角色',
       }))
       .filter((item) => item.id);
+    if (!mapped.some((item) => item.id === ROLELESS_FILTER_ID)) {
+      mapped.push({ id: ROLELESS_FILTER_ID, label: '其他' });
+    }
+    ribbonRoleOptions.value = mapped;
   } catch (error) {
     if (currentSeq === ribbonRoleOptionsSeq) {
       ribbonRoleOptions.value = [];
@@ -832,6 +889,16 @@ const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
 const isManagingEmoji = ref(false);
+const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
+
+const toggleEmojiRemarkVisible = () => {
+  const userId = user.info?.id;
+  if (!userId) {
+    message.warning('请先登录');
+    return;
+  }
+  gallery.setEmojiRemarkVisible(!gallery.emojiRemarkVisible, userId);
+};
 
 const resolveEmojiAnchorElement = () => {
   if (typeof window === 'undefined') {
@@ -1097,12 +1164,158 @@ const topSentinelRef = ref<HTMLElement | null>(null);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 const textInputRef = ref<any>(null);
 const inputMode = ref<'plain' | 'rich'>('plain');
+const richContentCache = ref<string | null>(null);
+const plainTextFromRichCache = ref<string>('');
 const wideInputMode = ref(false);
-const chatInputClassList = computed(() => (wideInputMode.value ? ['chat-input--expanded'] : []));
+const isMobileWideInput = computed(() => wideInputMode.value && isMobileUa);
+const inputAreaHeightPreview = ref<number | null>(null);
+const customInputHeight = computed(() => (
+  inputAreaHeightPreview.value !== null
+    ? inputAreaHeightPreview.value
+    : display.settings.inputAreaHeight
+));
+const chatInputClassList = computed(() => {
+  const classes: string[] = [];
+  if (wideInputMode.value) classes.push('chat-input--expanded');
+  if (isMobileWideInput.value) classes.push('chat-input--fullscreen');
+  if (customInputHeight.value > 0 && !isMobileWideInput.value) classes.push('chat-input--custom-height');
+  return classes;
+});
+const chatInputStyle = computed(() => {
+  if (!isMobileWideInput.value && customInputHeight.value > 0) {
+    return { '--custom-input-height': `${customInputHeight.value}px` };
+  }
+  return {};
+});
 const wideInputTooltip = computed(() => (wideInputMode.value ? '退出广域输入模式' : '进入广域输入模式'));
 const toggleWideInputMode = () => {
   wideInputMode.value = !wideInputMode.value;
-  nextTick(() => textInputRef.value?.focus?.());
+  // 切换广域模式时清除自定义高度，回到默认的两种高度
+  if (customInputHeight.value > 0) {
+    display.updateSettings({ inputAreaHeight: 0 });
+    inputAreaHeightPreview.value = null;
+  }
+  nextTick(() => {
+    textInputRef.value?.focus?.();
+    updateWideInputViewportHeight();
+    requestAnimationFrame(updateWideInputViewportHeight);
+    window.setTimeout(updateWideInputViewportHeight, 160);
+  });
+};
+
+const updateWideInputViewportHeight = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (!isMobileWideInput.value) {
+    document.documentElement.style.removeProperty('--wide-input-height');
+    return;
+  }
+  const viewport = window.visualViewport;
+  const height = viewport?.height ?? window.innerHeight;
+  document.documentElement.style.setProperty('--wide-input-height', `${Math.round(height)}px`);
+};
+
+if (typeof window !== 'undefined') {
+  useEventListener(window, 'resize', updateWideInputViewportHeight);
+  useEventListener(window, 'orientationchange', updateWideInputViewportHeight);
+  if (window.visualViewport) {
+    useEventListener(window.visualViewport, 'resize', updateWideInputViewportHeight);
+  }
+}
+
+watch(isMobileWideInput, () => {
+  updateWideInputViewportHeight();
+}, { immediate: true });
+
+onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.style.removeProperty('--wide-input-height');
+  }
+});
+
+// 输入区域高度拖拽调整（通过上边框触发）
+const inputContainerRef = ref<HTMLElement | null>(null);
+const isResizingInput = ref(false);
+const resizeStartY = ref(0);
+const resizeStartHeight = ref(0);
+const resizePointerId = ref<number | null>(null);
+const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
+const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
+
+const handleInputBorderPointerDown = (e: PointerEvent) => {
+  if (isMobileWideInput.value) return;
+  const container = e.currentTarget as HTMLElement;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const offsetY = e.clientY - rect.top;
+  const threshold = e.pointerType === 'touch' ? RESIZE_BORDER_THRESHOLD_MOBILE : RESIZE_BORDER_THRESHOLD_DESKTOP;
+  if (offsetY > threshold) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  // 在容器上捕获指针
+  resizePointerId.value = e.pointerId;
+  container.setPointerCapture(e.pointerId);
+
+  isResizingInput.value = true;
+  resizeStartY.value = e.clientY;
+  const inputEditor = document.querySelector('.chat-input-editor-main') as HTMLElement;
+  resizeStartHeight.value = customInputHeight.value > 0
+    ? customInputHeight.value
+    : (inputEditor?.offsetHeight || INPUT_AREA_HEIGHT_LIMITS.MIN);
+  inputAreaHeightPreview.value = resizeStartHeight.value;
+
+  container.addEventListener('pointermove', handleInputResizeMove as EventListener);
+  container.addEventListener('pointerup', handleInputResizeEnd as EventListener);
+  container.addEventListener('pointercancel', handleInputResizeEnd as EventListener);
+  container.addEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+  document.body.style.cursor = 'row-resize';
+  document.body.style.userSelect = 'none';
+};
+
+const handleInputResizeMove = (e: PointerEvent) => {
+  if (!isResizingInput.value) return;
+  e.preventDefault();
+  const deltaY = resizeStartY.value - e.clientY;
+  const rawHeight = resizeStartHeight.value + deltaY;
+  if (rawHeight <= INPUT_AREA_HEIGHT_LIMITS.MIN) {
+    inputAreaHeightPreview.value = 0;
+    return;
+  }
+  const newHeight = Math.min(INPUT_AREA_HEIGHT_LIMITS.MAX, rawHeight);
+  inputAreaHeightPreview.value = Math.round(newHeight);
+};
+
+const handleInputResizeEnd = (e?: PointerEvent) => {
+  if (!isResizingInput.value) return;
+  isResizingInput.value = false;
+
+  const container = inputContainerRef.value;
+  const finalHeight = inputAreaHeightPreview.value ?? display.settings.inputAreaHeight;
+  inputAreaHeightPreview.value = null;
+  if (container) {
+    if (resizePointerId.value !== null) {
+      try {
+        container.releasePointerCapture(resizePointerId.value);
+      } catch (_) { /* ignore */ }
+    }
+    container.removeEventListener('pointermove', handleInputResizeMove as EventListener);
+    container.removeEventListener('pointerup', handleInputResizeEnd as EventListener);
+    container.removeEventListener('pointercancel', handleInputResizeEnd as EventListener);
+    container.removeEventListener('lostpointercapture', handleInputResizeEnd as EventListener);
+  }
+
+  resizePointerId.value = null;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  if (finalHeight !== display.settings.inputAreaHeight) {
+    display.updateSettings({ inputAreaHeight: finalHeight });
+  }
+};
+
+const handleInputResizeReset = () => {
+  inputAreaHeightPreview.value = null;
+  display.updateSettings({ inputAreaHeight: 0 });
 };
 const inlineImageInputRef = ref<HTMLInputElement | null>(null);
 const icHotkeyEnabled = computed(() => {
@@ -1128,6 +1341,159 @@ interface InlineImageDraft {
 const inlineImages = reactive(new Map<string, InlineImageDraft>());
 const inlineImageMarkerRegexp = /\[\[图片:([a-zA-Z0-9_-]+)\]\]/g;
 let suspendInlineSync = false;
+const inlineImageAltMarkerRegexp = /^图片-([a-zA-Z0-9_-]+)$/;
+
+const buildInlineImageToken = (markerId: string) => `[[图片:${markerId}]]`;
+
+const resolveInlineImageMarkerId = (src?: string, alt?: string) => {
+  const altMatch = alt ? alt.match(inlineImageAltMarkerRegexp) : null;
+  if (altMatch) {
+    return altMatch[1];
+  }
+  if (src) {
+    for (const draft of inlineImages.values()) {
+      if (draft.objectUrl && draft.objectUrl === src) {
+        return draft.id;
+      }
+      if (draft.attachmentId) {
+        const normalizedSrc = normalizeAttachmentId(src);
+        const normalizedDraft = normalizeAttachmentId(draft.attachmentId);
+        if (normalizedSrc && normalizedDraft && normalizedSrc === normalizedDraft) {
+          return draft.id;
+        }
+      }
+    }
+  }
+  return nanoid();
+};
+
+const buildInlineImageDraftFromRich = (markerId: string, src?: string) => {
+  const record: InlineImageDraft = reactive({
+    id: markerId,
+    token: buildInlineImageToken(markerId),
+    status: 'uploaded',
+  });
+  const raw = (src || '').trim();
+  if (!raw) {
+    return record;
+  }
+  if (/^(blob:|data:)/i.test(raw)) {
+    record.objectUrl = raw;
+    return record;
+  }
+  if (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw)) {
+    record.attachmentId = normalizeAttachmentId(raw);
+  }
+  return record;
+};
+
+const resolveInlineImageSource = (draft?: InlineImageDraft) => {
+  if (!draft) {
+    return '';
+  }
+  if (draft.status === 'uploading' && draft.objectUrl) {
+    return draft.objectUrl;
+  }
+  if (draft.attachmentId) {
+    return draft.attachmentId.startsWith('id:') ? draft.attachmentId : `id:${draft.attachmentId}`;
+  }
+  if (draft.objectUrl) {
+    return draft.objectUrl;
+  }
+  return '';
+};
+
+const extractRichTextWithImages = (node: any, drafts: Map<string, InlineImageDraft>): string => {
+  if (!node) {
+    return '';
+  }
+  if (node.text !== undefined) {
+    return node.text;
+  }
+  if (node.type === 'hardBreak') {
+    return '\n';
+  }
+  if (node.type === 'image') {
+    const src = node.attrs?.src || '';
+    const alt = node.attrs?.alt || '';
+    const markerId = resolveInlineImageMarkerId(src, alt);
+    const token = buildInlineImageToken(markerId);
+    if (!drafts.has(markerId)) {
+      const existing = inlineImages.get(markerId);
+      drafts.set(markerId, existing ?? buildInlineImageDraftFromRich(markerId, src));
+    }
+    return token;
+  }
+  if (node.content && node.content.length > 0) {
+    const childTexts = node.content.map((child: any) => extractRichTextWithImages(child, drafts));
+    const joined = childTexts.join('');
+    if (node.type === 'paragraph' || node.type === 'heading' || node.type === 'listItem') {
+      return joined + '\n';
+    }
+    return joined;
+  }
+  return '';
+};
+
+const convertRichContentToPlain = (content: string) => {
+  const drafts = new Map<string, InlineImageDraft>();
+  try {
+    const json = JSON.parse(content);
+    const text = extractRichTextWithImages(json, drafts).replace(/\n+$/, '');
+    return { text, drafts };
+  } catch {
+    return { text: '', drafts };
+  }
+};
+
+const applyInlineImageDrafts = (drafts: Map<string, InlineImageDraft>) => {
+  inlineImages.forEach((draft, key) => {
+    if (!drafts.has(key)) {
+      revokeInlineImage(draft);
+      inlineImages.delete(key);
+    }
+  });
+  drafts.forEach((draft, key) => {
+    if (!inlineImages.has(key)) {
+      inlineImages.set(key, draft);
+    }
+  });
+};
+
+const buildRichContentFromPlain = (text: string) => {
+  if (!text || (!text.trim() && !containsInlineImageMarker(text))) {
+    return {
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    };
+  }
+  const lines = text.split('\n');
+  const content = lines.map((line) => {
+    inlineImageMarkerRegexp.lastIndex = 0;
+    let lastIndex = 0;
+    const nodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
+    let match: RegExpExecArray | null;
+    while ((match = inlineImageMarkerRegexp.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        nodes.push({ type: 'text', text: line.slice(lastIndex, match.index) });
+      }
+      const markerId = match[1];
+      const draft = inlineImages.get(markerId);
+      const src = resolveInlineImageSource(draft);
+      if (src) {
+        nodes.push({ type: 'image', attrs: { src, alt: `图片-${markerId}` } });
+      } else {
+        nodes.push({ type: 'text', text: match[0] });
+      }
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < line.length) {
+      nodes.push({ type: 'text', text: line.slice(lastIndex) });
+    }
+    return nodes.length ? { type: 'paragraph', content: nodes } : { type: 'paragraph' };
+  });
+  return { type: 'doc', content };
+};
 
 const hasUploadingInlineImages = computed(() => {
   for (const draft of inlineImages.values()) {
@@ -2948,6 +3314,8 @@ const SCROLL_STICKY_THRESHOLD = 200;
 const INITIAL_MESSAGE_LOAD_LIMIT = 30;
 const PAGINATED_MESSAGE_LOAD_LIMIT = 20;
 const SEARCH_ANCHOR_WINDOW_LIMIT = 10;
+const SEARCH_JUMP_LIMIT_PRIMARY = 30;
+const SEARCH_JUMP_LIMIT_RETRY = 50;
 const HISTORY_PAGINATION_WINDOW_MS = 5 * 60 * 1000;
 const HISTORY_WINDOW_EXPANSION_LIMIT = 5;
 
@@ -3089,11 +3457,38 @@ const isMergeCandidate = (message?: Message | null) => {
   return true;
 };
 
-const roleFilterActive = computed(() => Array.isArray(chat.filterState.roleIds) && chat.filterState.roleIds.length > 0);
+const ROLELESS_FILTER_ID = '__roleless__';
+
+const normalizeRoleFilterState = (roleIds?: string[]) => {
+  const raw = Array.isArray(roleIds) ? roleIds : [];
+  const normalized = raw
+    .map((id) => String(id ?? '').trim())
+    .filter((id) => id.length > 0);
+  const includeRoleless = normalized.includes(ROLELESS_FILTER_ID);
+  const filteredRoleIds = normalized.filter((id) => id !== ROLELESS_FILTER_ID);
+  return { roleIds: filteredRoleIds, includeRoleless };
+};
+
+const roleFilterState = computed(() => normalizeRoleFilterState(chat.filterState.roleIds));
+const roleFilterActive = computed(() => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  return roleIds.length > 0 || includeRoleless;
+});
+const roleFilterSignature = computed(() => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  return `${includeRoleless ? '1' : '0'}:${roleIds.join(',')}`;
+});
+const buildRoleFilterOptions = () => {
+  const { roleIds, includeRoleless } = roleFilterState.value;
+  if (!roleIds.length && !includeRoleless) {
+    return {};
+  }
+  return { roleIds, includeRoleless };
+};
 
 const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
-  const { icFilter, showArchived, roleIds } = chat.filterState;
-  const filterRoleIds = Array.isArray(roleIds) ? roleIds : [];
+  const { icFilter, showArchived } = chat.filterState;
+  const { roleIds: filterRoleIds, includeRoleless } = roleFilterState.value;
   const allowMergeNeighbors = display.settings.mergeNeighbors && !roleFilterActive.value;
 
   const filtered = rows.value.filter((message) => {
@@ -3113,9 +3508,13 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
       return false;
     }
 
-    if (filterRoleIds.length > 0) {
-      const roleKey = getMessageRoleKey(message);
-      if (!roleKey || !filterRoleIds.includes(roleKey)) {
+    if (filterRoleIds.length > 0 || includeRoleless) {
+      const roleKey = getMessageRoleIdentityKey(message);
+      if (roleKey) {
+        if (!filterRoleIds.includes(roleKey)) {
+          return false;
+        }
+      } else if (!includeRoleless) {
         return false;
       }
     }
@@ -3149,6 +3548,16 @@ const visibleRowEntries = computed<VisibleRowEntry[]>(() => {
   });
 });
 const visibleRows = computed(() => visibleRowEntries.value.map((entry) => entry.message));
+
+const getMessageRoleIdentityKey = (message: any): string => {
+  return (
+    message?.senderRoleId ||
+    message?.sender_role_id ||
+    (message as any)?.sender_identity_id ||
+    message?.identity?.id ||
+    ''
+  );
+};
 
 const getMessageRoleKey = (message: any): string => {
   return (
@@ -3218,6 +3627,12 @@ const normalizeMessageShape = (msg: any): Message => {
   }
   if (msg.editCount === undefined && msg.edit_count !== undefined) {
     msg.editCount = msg.edit_count;
+  }
+  if (msg.editedByUserId === undefined && msg.edited_by_user_id !== undefined) {
+    msg.editedByUserId = msg.edited_by_user_id;
+  }
+  if (msg.editedByUserName === undefined && msg.edited_by_user_name !== undefined) {
+    msg.editedByUserName = msg.edited_by_user_name;
   }
   if (msg.createdAt === undefined && msg.created_at !== undefined) {
     msg.createdAt = msg.created_at;
@@ -3449,6 +3864,19 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
   }
 };
 
+const loadSearchJumpWindow = async (from: number, to: number, limit: number) => {
+  const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
+    includeArchived: true,
+    includeOoc: true,
+    limit,
+    ...buildRoleFilterOptions(),
+  });
+  return {
+    resp,
+    normalized: normalizeMessageList(resp?.data || []),
+  };
+};
+
 const mountHistoricalWindowWithSpan = async (
   payload: { messageId: string; createdAt?: number },
   spanMs: number,
@@ -3463,15 +3891,20 @@ const mountHistoricalWindowWithSpan = async (
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
-    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
-      includeArchived: true,
-      includeOoc: true,
-    });
-    const normalized = normalizeMessageList(resp?.data || []);
+    let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
     if (!normalized.length) {
       return false;
     }
-    const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    let containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (!containsTarget && normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
+      resp = retry.resp;
+      normalized = retry.normalized;
+      if (!normalized.length) {
+        return false;
+      }
+      containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    }
     if (!containsTarget) {
       return false;
     }
@@ -3521,15 +3954,21 @@ const loadMessagesWithinWindow = async (
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
-    const resp = await chat.messageListDuring(chat.curChannel.id, from, to, {
-      includeArchived: true,
-      includeOoc: true,
-    });
-    const incoming = normalizeMessageList(resp?.data || []);
-    if (!incoming.length) {
+    let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
+    if (!normalized.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
+    mergeIncomingMessages(normalized, resp ? { before: resp.next ?? '' } : undefined);
+    if (messageExistsLocally(payload.messageId)) {
+      return true;
+    }
+    if (normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
+      if (!retry.normalized.length) {
+        return false;
+      }
+      mergeIncomingMessages(retry.normalized, retry.resp ? { before: retry.resp.next ?? '' } : undefined);
+    }
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
@@ -3549,15 +3988,33 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
   const cursorTime = Math.max(0, Math.floor(Number(payload.createdAt ?? Date.now())));
   const cursor = `${cursorOrder.toFixed(8)}|${cursorTime}|${payload.messageId}`;
   try {
-    const resp = await chat.messageList(chat.curChannel.id, cursor, {
+    const firstResp = await chat.messageList(chat.curChannel.id, cursor, {
       includeArchived: true,
       includeOoc: true,
+      limit: SEARCH_JUMP_LIMIT_PRIMARY,
+      ...buildRoleFilterOptions(),
     });
-    const incoming = normalizeMessageList(resp?.data || []);
+    let incoming = normalizeMessageList(firstResp?.data || []);
     if (!incoming.length) {
       return false;
     }
-    mergeIncomingMessages(incoming, resp ? { before: resp.next ?? '' } : undefined);
+    mergeIncomingMessages(incoming, firstResp ? { before: firstResp.next ?? '' } : undefined);
+    if (messageExistsLocally(payload.messageId)) {
+      return true;
+    }
+    if (incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+      const retryResp = await chat.messageList(chat.curChannel.id, cursor, {
+        includeArchived: true,
+        includeOoc: true,
+        limit: SEARCH_JUMP_LIMIT_RETRY,
+        ...buildRoleFilterOptions(),
+      });
+      incoming = normalizeMessageList(retryResp?.data || []);
+      if (!incoming.length) {
+        return false;
+      }
+      mergeIncomingMessages(incoming, retryResp ? { before: retryResp.next ?? '' } : undefined);
+    }
     return messageExistsLocally(payload.messageId);
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
@@ -3615,15 +4072,38 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       return;
     }
   }
+
+  // 如果没有 createdAt，先通过 API 获取消息详情
+  let enrichedPayload = { ...payload };
+  if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
+    try {
+      const msgInfo = await chat.messageGetById(chat.curChannel.id, targetId);
+      if (msgInfo) {
+        enrichedPayload.createdAt = msgInfo.created_at;
+        enrichedPayload.displayOrder = msgInfo.display_order;
+      } else {
+        message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+        return;
+      }
+    } catch (error) {
+      console.warn('获取消息详情失败', error);
+    }
+  }
+
   await nextTick();
   let target = messageRowRefs.get(targetId);
   if (!target) {
-    const loaded = await ensureSearchTargetVisible(payload);
+    const loaded = await ensureSearchTargetVisible(enrichedPayload);
     if (!loaded) {
       return;
     }
     await nextTick();
-    target = messageRowRefs.get(targetId);
+    // 等待 DOM 渲染完成，最多重试几次
+    for (let i = 0; i < 5; i++) {
+      target = messageRowRefs.get(targetId);
+      if (target) break;
+      await new Promise(r => setTimeout(r, 50));
+    }
     if (!target) {
       if (messageExistsLocally(targetId)) {
         message.warning('消息已加载，但当前筛选条件可能将其隐藏，请调整筛选后重试');
@@ -4659,6 +5139,11 @@ const shouldShowTypingHandle = (preview: TypingPreviewItem) => {
   return canReorderAll.value;
 };
 const inputPreviewEnabled = computed(() => display.settings.showInputPreview !== false);
+const autoScrollTypingPreviewAlways = computed(() => display.settings.autoScrollTypingPreview === true);
+const shouldObserveTypingPreview = computed(() => (
+  inputPreviewEnabled.value
+  && (autoScrollTypingPreviewAlways.value || (!inHistoryMode.value && !historyLocked.value))
+));
 const activeIdentityForPreview = computed(() => chat.getActiveIdentity(chat.curChannel?.id || ''));
 const selfPreviewUserId = computed(() => user.info?.id || '__self__');
 const typingPreviewItems = computed(() =>
@@ -4666,6 +5151,142 @@ const typingPreviewItems = computed(() =>
     .filter((item) => item.mode === 'typing')
     .slice()
     .sort((a, b) => a.orderKey - b.orderKey),
+);
+const selfTypingPreview = computed(() =>
+  typingPreviewItems.value.find((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing') || null,
+);
+const selfTypingPreviewSignature = computed(() => {
+  if (!selfTypingPreview.value) {
+    return '';
+  }
+  return `${selfTypingPreview.value.content}__${selfTypingPreview.value.indicatorOnly ? '1' : '0'}`;
+});
+const hasSelfTypingPreview = computed(() =>
+  typingPreviewItems.value.some((item) => item.userId === selfPreviewUserId.value && item.mode === 'typing'),
+);
+
+const selfTypingPreviewKey = computed(() =>
+  selfPreviewUserId.value ? `${selfPreviewUserId.value}-typing` : '',
+);
+let selfPreviewResizeObserver: ResizeObserver | null = null;
+let selfPreviewObservedEl: HTMLElement | null = null;
+let lastSelfPreviewHeight = 0;
+let pendingSelfPreviewScroll = false;
+
+const disconnectSelfPreviewObserver = () => {
+  if (selfPreviewResizeObserver && selfPreviewObservedEl) {
+    selfPreviewResizeObserver.unobserve(selfPreviewObservedEl);
+  }
+  selfPreviewObservedEl = null;
+  lastSelfPreviewHeight = 0;
+};
+
+const disposeSelfPreviewObserver = () => {
+  disconnectSelfPreviewObserver();
+  if (selfPreviewResizeObserver) {
+    selfPreviewResizeObserver.disconnect();
+    selfPreviewResizeObserver = null;
+  }
+};
+
+const shouldAutoScrollTypingPreview = () => {
+  if (!inputPreviewEnabled.value) {
+    return false;
+  }
+  if (autoScrollTypingPreviewAlways.value) {
+    return true;
+  }
+  if (inHistoryMode.value || historyLocked.value) {
+    return false;
+  }
+  return isNearBottom();
+};
+
+const scheduleSelfPreviewAutoScroll = () => {
+  if (pendingSelfPreviewScroll) {
+    return;
+  }
+  if (!shouldAutoScrollTypingPreview()) {
+    return;
+  }
+  pendingSelfPreviewScroll = true;
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      pendingSelfPreviewScroll = false;
+      if (!shouldAutoScrollTypingPreview()) {
+        return;
+      }
+      scrollToBottom();
+    });
+  });
+};
+
+const ensureSelfPreviewObserver = async () => {
+  if (!shouldObserveTypingPreview.value) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  const key = selfTypingPreviewKey.value;
+  if (!key) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  await nextTick();
+  const el = typingPreviewRowRefs.get(key);
+  if (!el) {
+    disconnectSelfPreviewObserver();
+    return;
+  }
+  if (selfPreviewObservedEl === el) {
+    return;
+  }
+  disconnectSelfPreviewObserver();
+  selfPreviewObservedEl = el;
+  lastSelfPreviewHeight = el.getBoundingClientRect().height;
+  if (!selfPreviewResizeObserver) {
+    selfPreviewResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || entry.target !== selfPreviewObservedEl) {
+        return;
+      }
+      const nextHeight = entry.contentRect.height;
+      if (nextHeight > lastSelfPreviewHeight) {
+        scheduleSelfPreviewAutoScroll();
+      }
+      lastSelfPreviewHeight = nextHeight;
+    });
+  }
+  selfPreviewResizeObserver.observe(el);
+};
+
+watch(
+  [typingPreviewItems, selfPreviewUserId, shouldObserveTypingPreview],
+  () => {
+    void ensureSelfPreviewObserver();
+  },
+  { flush: 'post' },
+);
+
+watch(
+  hasSelfTypingPreview,
+  (hasPreview, prevHasPreview) => {
+    if (!hasPreview || prevHasPreview) {
+      return;
+    }
+    scheduleSelfPreviewAutoScroll();
+  },
+  { flush: 'post' },
+);
+
+watch(
+  selfTypingPreviewSignature,
+  (next, prev) => {
+    if (!next || next === prev) {
+      return;
+    }
+    scheduleSelfPreviewAutoScroll();
+  },
+  { flush: 'post' },
 );
  
 const resolveSelfPreviewDisplayName = () => {
@@ -4733,7 +5354,6 @@ let lastTypingChannelId = '';
 let lastTypingWhisperTargetId: string | null = null;
 
 const upsertTypingPreview = (item: TypingPreviewItem) => {
-  const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const isSelfPreview = item.userId === selfPreviewUserId.value;
   let orderKey: number;
   if (isSelfPreview) {
@@ -4758,9 +5378,6 @@ const upsertTypingPreview = (item: TypingPreviewItem) => {
     typingPreviewList.value.splice(existingIndex, 1, { ...item, orderKey });
   } else {
     typingPreviewList.value.push({ ...item, orderKey });
-  }
-  if (shouldStick) {
-    toBottom();
   }
 };
 
@@ -5384,6 +6001,7 @@ const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
 
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
+    clearInputModeCache();
     inputMode.value = entry.mode;
     suspendInlineSync = true;
     textToSend.value = entry.content;
@@ -5772,12 +6390,56 @@ const resolveIdentityPreviewInfo = (channelId?: string, identityId?: string | nu
   };
 };
 
+const resolveMessageUserId = (msg?: Message) => (
+  msg?.user?.id
+  || (msg as any)?.user_id
+  || (msg as any)?.member?.user?.id
+  || (msg as any)?.member?.userId
+  || (msg as any)?.member?.user_id
+  || ''
+);
+
+const canEditMessage = (target?: Message) => {
+  if (!target?.id || !chat.curChannel?.id) {
+    return false;
+  }
+  const targetUserId = resolveMessageUserId(target);
+  if (!targetUserId) {
+    return false;
+  }
+  if (targetUserId === user.info.id) {
+    return true;
+  }
+  const worldId = chat.currentWorldId;
+  if (!worldId) {
+    return false;
+  }
+  const detail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = detail?.allowAdminEditMessages
+    ?? detail?.world?.allowAdminEditMessages
+    ?? chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (!allowAdminEdit) {
+    return false;
+  }
+  const isWorldAdmin = detail?.memberRole === 'owner'
+    || detail?.memberRole === 'admin'
+    || detail?.world?.ownerId === user.info.id
+    || chat.worldMap[worldId]?.ownerId === user.info.id;
+  if (!isWorldAdmin) {
+    return false;
+  }
+  if (chat.isChannelAdmin(chat.curChannel.id, targetUserId)) {
+    return false;
+  }
+  return true;
+};
+
 const beginEdit = (target?: Message) => {
   if (!target?.id || !chat.curChannel?.id) {
     return;
   }
-  if (target.user?.id !== user.info.id) {
-    message.error('只能编辑自己发送的消息');
+  if (!canEditMessage(target)) {
+    message.error('无权编辑该消息');
     return;
   }
   stopTypingPreviewNow();
@@ -6431,6 +7093,7 @@ const handleInlineFileChange = (event: Event) => {
 watch(() => chat.editing?.messageId, (messageId, previousId) => {
   if (!messageId && previousId) {
     stopEditingPreviewNow();
+    clearInputModeCache();
     textToSend.value = '';
     return;
   }
@@ -6438,6 +7101,7 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
     if (previousId && previousId !== messageId) {
       stopEditingPreviewNow();
     }
+    clearInputModeCache();
     const editingMode = chat.editing.mode ?? detectMessageContentMode(chat.editing.originalContent || chat.editing.draft);
     inputMode.value = editingMode;
     let draft = '';
@@ -6550,6 +7214,7 @@ const send = throttle(async () => {
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
+  clearInputModeCache();
   suspendInlineSync = false;
   chat.curReplyTo = null;
 
@@ -6635,6 +7300,7 @@ const send = throttle(async () => {
       clearAutoRestoreEntry(channelKey);
     }
     textToSend.value = '';
+    clearInputModeCache();
     ensureInputFocus();
   } catch (e) {
     message.error('发送失败,您可能没有权限在此频道发送消息');
@@ -6831,11 +7497,48 @@ const handleRichUploadButtonClick = () => {
   doUpload();
 }
 
+const clearInputModeCache = () => {
+  richContentCache.value = null;
+  plainTextFromRichCache.value = '';
+};
+
 const toggleInputMode = () => {
   if (inputMode.value === 'plain') {
+    // Plain → Rich
+    const currentPlain = textToSend.value;
+    if (richContentCache.value && currentPlain === plainTextFromRichCache.value) {
+      // 未修改，恢复缓存的富文本
+      textToSend.value = richContentCache.value;
+    } else {
+      // 已修改或无缓存，将纯文本转为 TipTap JSON
+      richContentCache.value = null;
+      plainTextFromRichCache.value = '';
+      if (currentPlain.trim() || containsInlineImageMarker(currentPlain)) {
+        textToSend.value = JSON.stringify(buildRichContentFromPlain(currentPlain));
+      } else {
+        textToSend.value = '';
+      }
+    }
     inputMode.value = 'rich';
     message.info('已切换至富文本模式');
   } else {
+    // Rich → Plain
+    const currentRich = textToSend.value;
+    if (isTipTapJson(currentRich)) {
+      richContentCache.value = currentRich;
+      const { text, drafts } = convertRichContentToPlain(currentRich);
+      plainTextFromRichCache.value = text;
+      suspendInlineSync = true;
+      applyInlineImageDrafts(drafts);
+      textToSend.value = text;
+      suspendInlineSync = false;
+      syncInlineMarkersWithText(text);
+    } else {
+      // 非 TipTap JSON（可能是空内容或纯文本），直接清空缓存
+      richContentCache.value = null;
+      plainTextFromRichCache.value = '';
+      // textToSend 保持原样
+    }
     inputMode.value = 'plain';
     message.info('已切换至纯文本模式');
   }
@@ -6928,7 +7631,6 @@ chatEvent.on('message-created', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
-    const shouldStick = !inHistoryMode.value && visibleRows.value.length === rows.value.length && isNearBottom();
   const incoming = normalizeMessageShape(e.message);
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
@@ -6955,9 +7657,7 @@ chatEvent.on('message-created', (e?: Event) => {
       upsertMessage(matchedPending);
       removeTypingPreview(incoming.user?.id);
       removeTypingPreview(incoming.user?.id, 'editing');
-      if (shouldStick) {
-        toBottom();
-      }
+      toBottom();
       return;
     }
   } else {
@@ -7010,7 +7710,7 @@ chatEvent.on('message-created', (e?: Event) => {
   upsertMessage(incoming);
   removeTypingPreview(incoming.user?.id);
   removeTypingPreview(incoming.user?.id, 'editing');
-  if (shouldStick) {
+  if (isSelf) {
     toBottom();
   }
 });
@@ -7020,11 +7720,21 @@ chatEvent.on('message-updated', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
     return;
   }
-  upsertMessage(e.message);
+  const incoming = normalizeMessageShape(e.message);
+  if (e.user?.id && incoming?.user?.id) {
+    const editorName = (e.user as any).nick
+      || (e.user as any).name
+      || (e.user as any).username
+      || '';
+    (incoming as any).editedByUserId = e.user.id;
+    (incoming as any).editedByUserName = editorName || (incoming as any).editedByUserName || '';
+  }
+  upsertMessage(incoming);
   removeTypingPreview(e.user?.id, 'editing');
   if (chat.editing && chat.editing.messageId === e.message.id) {
     stopEditingPreviewNow();
     chat.cancelEditing();
+    clearInputModeCache();
     textToSend.value = '';
     ensureInputFocus();
   }
@@ -7224,7 +7934,9 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       const lastCreatedAt = rows.value[rows.value.length - 1].createdAt || now;
 
       // 获取断线期间消息
-      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now)
+      const messages = await chat.messageListDuring(chat.curChannel?.id || '', lastCreatedAt, now, {
+        ...buildRoleFilterOptions(),
+      })
       console.log('时间起始', lastCreatedAt, now)
       console.log('相关数据', messages)
       if (messages.next) {
@@ -7248,6 +7960,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     }
   })
 
+  chatEvent.on('search-jump', async (e: any) => {
+    if (!e?.messageId) return;
+    await handleSearchJump({
+      messageId: e.messageId,
+      channelId: e.channelId,
+      displayOrder: e.displayOrder,
+      createdAt: e.createdAt,
+    });
+  });
+
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
   stopTypingPreviewNow();
@@ -7255,6 +7977,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   stopEditingPreviewNow();
   chat.cancelEditing();
   textToSend.value = '';
+  clearInputModeCache();
   resetWindowState('live');
   resetDragState();
   localReorderOps.clear();
@@ -7278,6 +8001,7 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  disposeSelfPreviewObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
@@ -7286,6 +8010,29 @@ onBeforeUnmount(() => {
 const showButton = ref(false);
 const historyHintVisible = computed(() => inHistoryMode.value || historyLocked.value);
 const historyHintLabel = computed(() => (isMobileUa ? '历史' : '当前浏览历史消息'));
+
+// 跳转到第一条未读消息相关
+const hasFirstUnread = computed(() => {
+  const info = chat.firstUnreadInfo;
+  return !!(info && info.channelId === chat.curChannel?.id && info.messageId);
+});
+
+const jumpToFirstUnread = async () => {
+  const info = chat.firstUnreadInfo;
+  if (!info || info.channelId !== chat.curChannel?.id || !info.messageId) {
+    return;
+  }
+  await handleSearchJump({
+    messageId: info.messageId,
+    createdAt: info.messageTime || undefined,
+  });
+  // 跳转后清除未读信息，避免重复跳转
+  chat.firstUnreadInfo = null;
+};
+
+const dismissFirstUnread = () => {
+  chat.firstUnreadInfo = null;
+};
 
 const computeAfterCursorFromRows = () => {
   updateWindowAnchorsFromRows();
@@ -7304,6 +8051,7 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
       const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
         includeArchived: true,
         includeOoc: true,
+        ...buildRoleFilterOptions(),
       });
       const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
@@ -7336,6 +8084,7 @@ const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
       const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
         includeArchived: true,
         includeOoc: true,
+        ...buildRoleFilterOptions(),
       });
       const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
         const created = normalizeTimestamp(msg.createdAt) ?? 0;
@@ -7394,6 +8143,7 @@ const fetchLatestMessages = async () => {
     const resp = await chat.messageList(chat.curChannel.id, undefined, {
       includeArchived: chat.filterState.showArchived,
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
+      ...buildRoleFilterOptions(),
     });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
@@ -7425,6 +8175,16 @@ watch(
   },
 );
 
+watch(
+  () => roleFilterSignature.value,
+  async (next, prev) => {
+    if (!chat.curChannel?.id || next === prev) {
+      return;
+    }
+    await fetchLatestMessages();
+  },
+);
+
 const loadOlderMessagesByWindow = async () => {
   const first = rows.value[0];
   const boundary = normalizeTimestamp(first?.createdAt);
@@ -7453,6 +8213,7 @@ const loadOlderMessages = async () => {
       const resp = await chat.messageList(chat.curChannel.id, messageWindow.beforeCursor, {
         includeArchived: chat.filterState.showArchived,
         limit: PAGINATED_MESSAGE_LOAD_LIMIT,
+        ...buildRoleFilterOptions(),
       });
       normalized = normalizeMessageList(resp.data);
       nextCursor = resp?.next ?? '';
@@ -8214,6 +8975,7 @@ const handleGalleryDrop = async (event: DragEvent) => {
 
 
 onBeforeUnmount(() => {
+  handleInputResizeEnd();
   chatEvent.off('channel-identity-open', handleIdentityMenuOpen);
   chatEvent.off('channel-identity-updated', handleIdentityUpdated);
   chatEvent.off('action-ribbon-toggle', handleActionRibbonToggleRequest);
@@ -8229,7 +8991,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full justify-between">
+  <div class="flex flex-col h-full justify-between chat-root-container">
+    <!-- 频道背景层 -->
+    <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
+    <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
       <ChatActionRibbon
@@ -8318,7 +9083,7 @@ onBeforeUnmount(() => {
 
     <div
       class="chat overflow-y-auto h-full px-4 pt-6"
-      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator }]"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
       @scroll="onScroll"
       @dragover="handleGalleryDragOver" @drop="handleGalleryDrop"
@@ -8563,8 +9328,24 @@ onBeforeUnmount(() => {
     >说点什么吧</div>
 
     <!-- flex-grow -->
-    <div class="edit-area flex justify-between relative">
+    <div class="edit-area flex justify-between relative" :class="{ 'edit-area--wide-input': isMobileWideInput }">
       <div class="history-floating space-y-3 flex flex-col items-end">
+        <!-- 跳转到第一条未读消息按钮 -->
+        <n-button
+          v-if="hasFirstUnread"
+          class="jump-to-unread-button history-floating__button"
+          size="small"
+          type="info"
+          @click="jumpToFirstUnread"
+        >
+          跳转到未读
+          <span
+            class="jump-to-unread-close"
+            role="button"
+            aria-label="关闭未读跳转"
+            @click.stop="dismissFirstUnread"
+          >X</span>
+        </n-button>
         <div
           v-if="historyHintVisible"
           class="history-mode-hint"
@@ -8615,8 +9396,10 @@ onBeforeUnmount(() => {
       </div>
 
       <div
+        ref="inputContainerRef"
         class="chat-input-container flex flex-col w-full relative"
-        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled }"
+        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
+        @pointerdown="handleInputBorderPointerDown"
       >
         <transition name="fade">
           <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop>
@@ -8647,7 +9430,17 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="chat-input-area relative flex-1">
-            <div class="chat-input-actions input-floating-toolbar flex flex-1 items-center justify-between gap-2">
+            <div
+              :class="[
+                'chat-input-actions',
+                'input-floating-toolbar',
+                'flex',
+                'items-center',
+                'justify-between',
+                'gap-2',
+                { 'flex-1': !isMobileWideInput },
+              ]"
+            >
               <div class="chat-input-actions__group chat-input-actions__group--leading">
                 <div class="chat-input-actions__cell identity-switcher-cell">
                   <ChannelIdentitySwitcher
@@ -8683,7 +9476,7 @@ onBeforeUnmount(() => {
                       :x="emojiPopoverXCoord"
                       :y="emojiPopoverYCoord"
                     >
-                      <div class="emoji-panel">
+                      <div class="emoji-panel" :class="{ 'emoji-panel--hide-remark': !emojiRemarkVisible }">
                         <div class="emoji-panel__header">
                           <div class="emoji-panel__header-left">
                             <div class="emoji-panel__title">{{ $t('inputBox.emojiTitle') }}</div>
@@ -8698,16 +9491,32 @@ onBeforeUnmount(() => {
                               表情管理
                             </n-tooltip>
                           </div>
-                          <n-tooltip trigger="hover">
-                            <template #trigger>
-                              <n-button text size="small" @click="emojiPopoverShow = false">
-                                <template #icon>
-                                  <n-icon :component="CloseIcon" />
-                                </template>
-                              </n-button>
-                            </template>
-                            关闭
-                          </n-tooltip>
+                          <div class="emoji-panel__header-right">
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button
+                                  text
+                                  size="small"
+                                  class="emoji-panel__toggle-remark"
+                                  @click="toggleEmojiRemarkVisible"
+                                >
+                                  <span>{{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}</span>
+                                  <n-icon :component="emojiRemarkVisible ? EyeOffOutline : EyeOutline" />
+                                </n-button>
+                              </template>
+                              {{ emojiRemarkVisible ? '隐藏备注' : '显示备注' }}
+                            </n-tooltip>
+                            <n-tooltip trigger="hover">
+                              <template #trigger>
+                                <n-button text size="small" @click="emojiPopoverShow = false">
+                                  <template #icon>
+                                    <n-icon :component="CloseIcon" />
+                                  </template>
+                                </n-button>
+                              </template>
+                              关闭
+                            </n-tooltip>
+                          </div>
                         </div>
 
                         <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
@@ -9095,7 +9904,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <div class="chat-input-editor-row">
+            <div class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
                 <ChatInputSwitcher
                   ref="textInputRef"
@@ -9130,12 +9939,32 @@ onBeforeUnmount(() => {
                 />
               </div>
               <div class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline">
-                <n-button type="primary" circle size="medium" @click="send"
-                  :disabled="spectatorInputDisabled || chat.connectState !== 'connected' || isEditing">
-                  <template #icon>
-                    <n-icon :component="Send" size="18" />
-                  </template>
-                </n-button>
+                <template v-if="isEditing">
+                  <div class="edit-actions-group">
+                    <n-button size="medium" @click="saveEdit"
+                      :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                      class="edit-action-btn edit-action-btn--save">
+                      <template #icon>
+                        <n-icon :component="Check" size="16" />
+                      </template>
+                    </n-button>
+                    <n-button size="medium" @click="cancelEditing"
+                      class="edit-action-btn edit-action-btn--cancel">
+                      <template #icon>
+                        <n-icon :component="X" size="16" />
+                      </template>
+                    </n-button>
+                  </div>
+                </template>
+                <template v-else>
+                  <n-button size="medium" @click="send"
+                    :disabled="spectatorInputDisabled || chat.connectState !== 'connected'"
+                    class="send-action-btn">
+                    <template #icon>
+                      <n-icon :component="Send" size="18" />
+                    </template>
+                  </n-button>
+                </template>
               </div>
             </div>
         </div>
@@ -9564,32 +10393,58 @@ onBeforeUnmount(() => {
 </template>
 
 <style lang="scss" scoped>
-.message-row {
+/* 频道背景层样式 */
+.chat-root-container {
   position: relative;
 }
 
-.message-row + .message-row {
-  margin-top: var(--chat-bubble-gap, 0.85rem);
+.channel-background-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
 }
 
-.chat--layout-bubble .message-row + .message-row {
-  margin-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8);
+.channel-background-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
 }
 
-.chat--layout-compact .message-row + .message-row {
-  margin-top: var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35));
+.message-row {
+  position: relative;
+  padding-top: calc(var(--chat-bubble-gap, 0.85rem) / 2);
+  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) / 2);
+}
+
+.chat--layout-bubble .message-row {
+  padding-top: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
+  padding-bottom: calc(var(--chat-bubble-gap, 0.85rem) * 0.8 / 2);
+  background-color: var(--chat-stage-bg, var(--sc-bg-surface));
+}
+
+:root[data-custom-theme='true'] .chat--layout-bubble .message-row {
+  background-color: transparent;
+}
+
+.chat--layout-compact .message-row {
+  padding-top: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
+  padding-bottom: calc(var(--chat-compact-gap, calc(var(--chat-bubble-gap, 0.85rem) * 0.35)) / 2);
+}
+
+.chat--layout-bubble .message-row:first-child {
+  padding-top: 0;
+}
+
+.chat--layout-bubble .message-row:last-child {
+  padding-bottom: 0;
 }
 
 .message-row--tone-ic,
 .message-row--tone-ooc {
   margin: 0;
-  padding: 0;
   border: none;
-}
-
-.message-row + .message-row--tone-ic,
-.message-row + .message-row--tone-ooc {
-  margin-top: 0;
 }
 
 .selection-floating-bar {
@@ -9637,26 +10492,6 @@ onBeforeUnmount(() => {
 .selection-floating-bar__button.is-disabled {
   opacity: 0.45;
   pointer-events: none;
-}
-
-.message-row--self.message-row--tone-ic:not(:first-child),
-.message-row--self.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.chat--layout-compact .message-row--self.message-row--tone-ic:not(:first-child),
-.chat--layout-compact .message-row--self.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.message-row--tone-ic:not(:first-child),
-.message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
-}
-
-.chat--layout-compact .message-row--tone-ic:not(:first-child),
-.chat--layout-compact .message-row--tone-ooc:not(:first-child) {
-  margin-top: 0;
 }
 
 .message-row__surface {
@@ -9760,7 +10595,7 @@ onBeforeUnmount(() => {
 }
 
 .chat {
-  background-color: var(--sc-bg-surface);
+  background-color: var(--chat-stage-bg, var(--sc-bg-surface));
   border: 1px solid var(--sc-border-strong);
   border-radius: 1rem;
   box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
@@ -9832,8 +10667,18 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact {
-  background-color: var(--chat-ic-bg);
+  --chat-compact-ic-bg: var(--chat-ic-bg);
+  --chat-compact-ooc-bg: var(--chat-ooc-bg);
+  --chat-compact-archived-bg: rgba(148, 163, 184, 0.2);
+  background-color: var(--chat-compact-ic-bg);
   transition: background-color 0.25s ease;
+}
+
+.chat--layout-compact.chat--has-background {
+  --chat-compact-ic-bg: transparent;
+  --chat-compact-ooc-bg: transparent;
+  --chat-compact-archived-bg: transparent;
+  background-color: transparent;
 }
 
 .chat.chat--layout-compact.chat--no-avatar .message-row__surface {
@@ -9846,7 +10691,20 @@ onBeforeUnmount(() => {
 
 .chat--layout-compact .message-row {
   width: 100%;
-  padding: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.chat--layout-compact .message-row--tone-ic {
+  background-color: var(--chat-compact-ic-bg);
+}
+
+.chat--layout-compact .message-row--tone-ooc {
+  background-color: var(--chat-compact-ooc-bg);
+}
+
+.chat--layout-compact .message-row--tone-archived {
+  background-color: var(--chat-compact-archived-bg);
 }
 
 .chat--layout-compact .message-row__surface {
@@ -9863,16 +10721,17 @@ onBeforeUnmount(() => {
 }
 
 .chat--layout-compact .message-row__surface--tone-ic {
-  background-color: var(--chat-ic-bg);
+  background-color: var(--chat-compact-ic-bg);
 }
 
 .chat--layout-compact .message-row__surface--tone-ooc {
-  background-color: var(--chat-ooc-bg);
+  background-color: var(--chat-compact-ooc-bg);
 }
 
 .chat--layout-compact .message-row__surface--tone-archived {
-  background-color: rgba(148, 163, 184, 0.2);
+  background-color: var(--chat-compact-archived-bg);
 }
+
 
 .chat--layout-compact .message-row__handle {
   margin-top: 0.1rem;
@@ -9894,23 +10753,44 @@ onBeforeUnmount(() => {
   padding: 0;
   border-radius: 0;
   border: none;
-  --typing-preview-bg: var(--chat-ic-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ic);
+  --typing-preview-bg: var(--chat-compact-ic-bg);
+  background-color: var(--typing-preview-bg);
+  background-image: none;
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ooc'],
+.chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
+  --typing-preview-bg: var(--chat-compact-ooc-bg);
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ic'],
+.chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
+  --typing-preview-bg: var(--chat-compact-ic-bg);
+}
+
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface::before {
+  content: none;
+  display: none;
+}
+
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
   background-color: var(--typing-preview-bg);
   background-image: radial-gradient(var(--typing-preview-dot) 1px, transparent 1px);
   background-size: 10px 10px;
 }
 
-.chat--layout-compact .typing-preview-surface[data-tone='ooc'],
-.chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
-  --typing-preview-bg: var(--chat-ooc-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ooc);
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ooc'],
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ooc .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ooc-bg, #ffffff));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ooc));
 }
 
-.chat--layout-compact .typing-preview-surface[data-tone='ic'],
-.chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
-  --typing-preview-bg: var(--chat-ic-bg);
-  --typing-preview-dot: var(--chat-preview-dot-ic);
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-surface[data-tone='ic'],
+:root[data-custom-theme='true'] .chat--layout-compact .typing-preview-item--ic .typing-preview-surface {
+  --typing-preview-bg: var(--custom-chat-preview-bg, var(--chat-ic-bg, #fbfdf7));
+  --typing-preview-dot: var(--custom-chat-preview-dot, var(--chat-preview-dot-ic));
 }
 
 .identity-drawer__header {
@@ -10380,6 +11260,41 @@ onBeforeUnmount(() => {
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
+.typing-preview-surface {
+  position: relative;
+  z-index: 0;
+}
+
+.typing-preview-surface > * {
+  position: relative;
+  z-index: 1;
+}
+
+.chat--layout-compact .typing-preview-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 0.95rem;
+  background-color: var(--chat-preview-bg, var(--chat-ic-bg, #f6f7fb));
+  background-image: radial-gradient(
+    var(--typing-preview-dot, var(--chat-preview-dot, rgba(148, 163, 184, 0.35))) 1px,
+    transparent 1px
+  );
+  background-size: 10px 10px;
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ic']::before {
+  background-color: var(--chat-ic-bg, #fbfdf7);
+  --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
+}
+
+.chat--layout-compact .typing-preview-surface[data-tone='ooc']::before {
+  background-color: var(--chat-ooc-bg, #ffffff);
+  --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
+}
+
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-surface,
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-bubble,
 .chat--layout-compact.chat--palette-day:not(.chat--no-avatar) .typing-preview-bubble__body {
@@ -10390,29 +11305,33 @@ onBeforeUnmount(() => {
 .chat--layout-bubble .typing-preview-bubble {
   padding: 0.5rem 0.75rem;
   border-radius: var(--chat-message-radius, 0.85rem);
-  background-color: var(--chat-preview-bg, #f6f7fb);
+  background-color: var(--chat-ic-bg, #f5f5f5);
+  border-color: transparent;
+  background-image: none;
 }
 
 .typing-preview-bubble[data-tone='ic'] {
-  background-color: #fbfdf7;
+  background-color: var(--chat-ic-bg, #f5f5f5);
   border-color: rgba(15, 23, 42, 0.14);
+  --typing-preview-dot: var(--chat-preview-dot-ic, var(--chat-preview-dot, rgba(148, 163, 184, 0.35)));
 }
 
 .typing-preview-bubble[data-tone='ooc'] {
-  background-color: #ffffff;
+  background-color: var(--chat-ooc-bg, #ffffff);
   border-color: rgba(15, 23, 42, 0.12);
+  --typing-preview-dot: var(--chat-preview-dot-ooc, var(--chat-preview-dot, rgba(148, 163, 184, 0.25)));
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ic'] {
-  background-color: #3f3f45;
+  background-color: var(--chat-ic-bg, #3f3f45);
   border-color: rgba(255, 255, 255, 0.16);
-  color: #f4f4f5;
+  color: var(--chat-text-primary, #f4f4f5);
 }
 
 :root[data-display-palette='night'] .typing-preview-bubble[data-tone='ooc'] {
-  background-color: #2D2D31;
+  background-color: var(--chat-ooc-bg, #2D2D31);
   border-color: rgba(255, 255, 255, 0.24);
-  color: #f5f3ff;
+  color: var(--chat-text-primary, #f5f3ff);
 }
 
 .chat--layout-compact .typing-preview-bubble {
@@ -10957,6 +11876,54 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
+@media (max-width: 768px), (pointer: coarse) {
+  .edit-area.edit-area--wide-input {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: var(--wide-input-height, 100vh);
+    z-index: 60;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+    touch-action: none;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-container {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-area {
+    flex: 1 1 auto;
+    margin: 0;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-actions {
+    flex: 0 0 auto;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-editor-row {
+    flex: 1 1 auto;
+    margin-top: 0;
+    align-items: stretch;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .edit-area.edit-area--wide-input .chat-input-editor-main {
+    flex: 1 1 auto;
+    align-self: stretch;
+    min-height: 0;
+  }
+}
+
 .reply-banner {
   background-color: var(--sc-chip-bg);
   color: var(--sc-text-primary);
@@ -10969,6 +11936,47 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .scroll-bottom-button {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+}
+
+/* 跳转到未读按钮样式 */
+.jump-to-unread-button {
+  position: relative;
+  padding-right: 28px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+}
+
+.jump-to-unread-button:hover {
+  background-color: var(--sc-bg-hover, rgba(156, 163, 175, 0.12)) !important;
+  border-color: var(--sc-border-strong) !important;
+}
+
+.jump-to-unread-close {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--sc-border-mute);
+  background-color: var(--sc-bg-surface, #ffffff);
+  color: var(--sc-text-secondary, #6b7280);
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.jump-to-unread-close:hover {
+  background-color: var(--sc-bg-hover, rgba(156, 163, 175, 0.12));
+  color: var(--sc-text-primary, #1f2937);
+  border-color: var(--sc-border-strong);
 }
 
 .message-sentinel {
@@ -11030,6 +12038,57 @@ onBeforeUnmount(() => {
   margin: 0;
   box-shadow: none;
   transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  position: relative;
+
+  // 上边框拖拽热区
+  &::before {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: 0;
+    right: 0;
+    height: 12px;
+    cursor: row-resize;
+    z-index: 1;
+    touch-action: none;
+  }
+
+  // 可见的分隔线
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--sc-border-mute, rgba(148, 163, 184, 0.3));
+    transition: background-color 0.15s ease;
+    pointer-events: none;
+  }
+
+  &:hover::after {
+    background: var(--sc-border-mute, rgba(148, 163, 184, 0.5));
+  }
+
+  &.chat-input-container--resizing::after {
+    background: var(--primary-color, #3b82f6);
+  }
+
+  &.chat-input-container--resizing {
+    overscroll-behavior: contain;
+  }
+}
+
+// 移动端增大热区
+@media (max-width: 768px), (pointer: coarse) {
+  .chat-input-container::before {
+    top: -8px;
+    height: 20px;
+  }
+
+  .chat-input-container {
+    touch-action: none;
+  }
 }
 
 .chat-input-container--spectator-hidden {
@@ -11038,6 +12097,18 @@ onBeforeUnmount(() => {
 
 :root[data-display-palette='night'] .chat-input-container {
   box-shadow: none;
+
+  &::after {
+    background: rgba(161, 161, 170, 0.25);
+  }
+
+  &:hover::after {
+    background: rgba(161, 161, 170, 0.4);
+  }
+
+  &.chat-input-container--resizing::after {
+    background: var(--primary-color, #60a5fa);
+  }
 }
 
 .chat-input-area {
@@ -11107,6 +12178,91 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.edit-actions-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.send-action-btn {
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 10px !important;
+  padding: 0 !important;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-primary) !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.send-action-btn:hover:not(:disabled) {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  border-color: rgba(59, 130, 246, 0.4) !important;
+  color: #2563eb !important;
+}
+
+.send-action-btn:disabled {
+  opacity: 0.5;
+}
+
+:root[data-display-palette='night'] .send-action-btn:hover:not(:disabled) {
+  background-color: rgba(96, 165, 250, 0.2) !important;
+  border-color: rgba(96, 165, 250, 0.45) !important;
+  color: #60a5fa !important;
+}
+
+.edit-action-btn {
+  width: 40px !important;
+  height: 22px !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.edit-action-btn--save {
+  border-top-left-radius: 6px !important;
+  border-top-right-radius: 6px !important;
+  background-color: rgba(34, 197, 94, 0.15) !important;
+  border-color: rgba(34, 197, 94, 0.3) !important;
+  color: #16a34a !important;
+}
+
+.edit-action-btn--save:hover {
+  background-color: rgba(34, 197, 94, 0.25) !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+}
+
+.edit-action-btn--cancel {
+  border-bottom-left-radius: 6px !important;
+  border-bottom-right-radius: 6px !important;
+  background-color: var(--sc-chip-bg) !important;
+  border-color: var(--sc-border-mute) !important;
+  color: var(--sc-text-secondary) !important;
+}
+
+.edit-action-btn--cancel:hover {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  color: #dc2626 !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--save {
+  background-color: rgba(34, 197, 94, 0.2) !important;
+  border-color: rgba(34, 197, 94, 0.35) !important;
+  color: #4ade80 !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--save:hover {
+  background-color: rgba(34, 197, 94, 0.3) !important;
+  border-color: rgba(34, 197, 94, 0.5) !important;
+}
+
+:root[data-display-palette='night'] .edit-action-btn--cancel:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #f87171 !important;
+}
+
 .chat-input-actions__cell {
   flex: 0 1 auto;
 }
@@ -11147,6 +12303,17 @@ onBeforeUnmount(() => {
   .chat-input-send-inline .n-button {
     width: 40px;
     height: 40px;
+  }
+
+  .send-action-btn {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 8px !important;
+  }
+
+  .edit-action-btn {
+    width: 36px !important;
+    height: 20px !important;
   }
 }
 
@@ -11616,11 +12783,11 @@ onBeforeUnmount(() => {
 }
 
 .emoji-panel {
-  width: 320px;
+  width: 380px;
   max-height: 400px;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .emoji-panel__content {
@@ -11646,6 +12813,16 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.emoji-panel__header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.emoji-panel__toggle-remark :deep(.n-icon) {
+  margin-left: 4px;
 }
 
 .emoji-panel__title {
@@ -11677,14 +12854,14 @@ onBeforeUnmount(() => {
 
 .emoji-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(70px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(5, minmax(64px, 1fr));
+  gap: 0.5rem;
 }
 
 @media (max-width: 768px) {
   .emoji-grid {
     grid-template-columns: repeat(3, minmax(60px, 1fr));
-    gap: 0.5rem;
+    gap: 0.4rem;
   }
 }
 
@@ -11693,16 +12870,16 @@ onBeforeUnmount(() => {
   flex-direction: column;
   touch-action: manipulation;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.25rem;
   cursor: pointer;
   border-radius: 8px;
-  padding: 0.25rem;
+  padding: 0.15rem;
   transition: background-color 0.15s ease;
 }
 
 .emoji-item img {
-  width: 4.8rem;
-  height: 4.8rem;
+  width: 4.2rem;
+  height: 4.2rem;
   object-fit: contain;
 }
 
@@ -11739,7 +12916,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.25rem;
+}
+
+.emoji-panel--hide-remark .emoji-caption,
+.emoji-panel--hide-remark .emoji-item__actions {
+  display: none;
+}
+
+.emoji-panel--hide-remark .emoji-manage-item__content :deep(.n-button) {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .emoji-item img {
+    width: 4.8rem;
+    height: 4.8rem;
+  }
 }
 
 .emoji-manage-item :deep(.n-checkbox) {
@@ -12149,7 +13342,6 @@ onBeforeUnmount(() => {
   max-height: 45vh;
   overflow-y: auto;
 }
-</style>
 .identity-dialog :deep(.n-card) {
   background: var(--sc-bg-elevated, #ffffff);
   color: var(--sc-text-primary, #0f172a);
@@ -12236,9 +13428,29 @@ onBeforeUnmount(() => {
 }
 
 .dice-chip--preview {
-  border-style: dashed;
-  background: rgba(148, 163, 184, 0.25);
-  color: #475569;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  gap: 0;
+  white-space: inherit;
+}
+
+.dice-chip--preview .dice-chip__icon {
+  display: inline-flex;
+  margin-right: 0.2rem;
+}
+
+.dice-chip--preview .dice-chip__formula,
+.dice-chip--preview .dice-chip__equals,
+.dice-chip--preview .dice-chip__result {
+  font-weight: inherit;
+  font-size: inherit;
+  opacity: 1;
+  margin-right: 0;
 }
 
 .dice-chip--error {
@@ -12309,6 +13521,32 @@ onBeforeUnmount(() => {
   background: rgba(51, 65, 85, 0.65);
   border-color: rgba(148, 163, 184, 0.4);
   color: #e2e8f0;
+}
+
+.dice-chip:not(.dice-chip--preview) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  gap: 0;
+  white-space: inherit;
+}
+
+.dice-chip:not(.dice-chip--preview) .dice-chip__icon {
+  display: inline-flex;
+  margin-right: 0.2rem;
+}
+
+.dice-chip:not(.dice-chip--preview) .dice-chip__formula,
+.dice-chip:not(.dice-chip--preview) .dice-chip__equals,
+.dice-chip:not(.dice-chip--preview) .dice-chip__result {
+  font-weight: inherit;
+  font-size: inherit;
+  opacity: 1;
+  margin-right: 0;
 }
 
 /* Keyword Tooltip Styles */
@@ -12514,3 +13752,4 @@ onBeforeUnmount(() => {
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: rgba(180, 140, 60, 0.25);
 }
+</style>

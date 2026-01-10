@@ -10,6 +10,8 @@ type Channel struct {
 	DefaultDiceExpr    string      `json:"defaultDiceExpr,omitempty"`
 	BuiltInDiceEnabled bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled  bool        `json:"botFeatureEnabled"`
+	BackgroundAttachmentId string `json:"backgroundAttachmentId"`
+	BackgroundSettings     string `json:"backgroundSettings"`
 }
 
 type ChannelType int
@@ -106,8 +108,10 @@ type Message struct {
 	IcMode        string           `json:"icMode"`
 	IsWhisper     bool             `json:"isWhisper"`
 	WhisperTo     *User            `json:"whisperTo"`
-	IsEdited      bool             `json:"isEdited"`
-	EditCount     int              `json:"editCount"`
+	IsEdited         bool             `json:"isEdited"`
+	EditCount        int              `json:"editCount"`
+	EditedByUserId   string           `json:"editedByUserId,omitempty"`
+	EditedByUserName string           `json:"editedByUserName,omitempty"`
 	IsArchived    bool             `json:"isArchived"`
 	ArchivedAt    int64            `json:"archivedAt"`
 	ArchivedBy    string           `json:"archivedBy"`

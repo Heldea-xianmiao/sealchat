@@ -324,6 +324,15 @@ chatHistoryPersistentDays: -1
 dbUrl: postgresql://seal:123@localhost:5432/sealchat
 ```
 
+### IPv6 配置示例
+
+```yaml
+serveAt: "[::]:3212"
+domain: "[2001:db8::1]:3212"
+```
+
+注意：IPv6 地址必须使用中括号，否则会解析失败；服务地址保存时会自动补全中括号。
+
 ## 4. 对象存储（S3 兼容）
 
 SealChat 支持将附件/图片与音频存入 S3（或兼容协议的对象存储，如 MinIO、腾讯 COS 等）。相关配置在 `config.yaml` 的 `storage` 段，建议直接参考并复制 `config.yaml.example` / `config.docker.yaml.example` 中的示例，再按实际替换。

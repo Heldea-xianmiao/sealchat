@@ -62,7 +62,7 @@
                 <button
                   class="sticky-note-rail__action sticky-note-rail__action--add"
                   title="新建便签"
-                  @click="createNote"
+                  @click="createNote($event)"
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
@@ -70,14 +70,16 @@
                   <span>新建</span>
                 </button>
                 <!-- 类型选择器弹窗 -->
-                <Transition name="fade">
-                  <div v-if="showTypeSelector" class="sticky-note-type-popup">
-                    <div class="sticky-note-type-popup__backdrop" @click="showTypeSelector = false"></div>
-                    <div class="sticky-note-type-popup__content">
-                      <StickyNoteTypeSelector @select="handleTypeSelect" />
+                <Teleport to="body">
+                  <Transition name="fade">
+                    <div v-if="showTypeSelector" class="sticky-note-type-popup">
+                      <div class="sticky-note-type-popup__backdrop" @click="closeTypeSelector"></div>
+                      <div ref="typePopupRef" class="sticky-note-type-popup__content" :style="typePopupStyle">
+                        <StickyNoteTypeSelector @select="handleTypeSelect" />
+                      </div>
                     </div>
-                  </div>
-                </Transition>
+                  </Transition>
+                </Teleport>
               </div>
               <button
                 class="sticky-note-rail__action"
@@ -314,6 +316,9 @@ const userStore = useUserStore()
 const railOpen = ref(false)
 const railPinned = ref(false)
 const showTypeSelector = ref(false)
+const typePopupStyle = ref<Record<string, string>>({})
+const typePopupAnchor = ref<DOMRect | null>(null)
+const typePopupRef = ref<HTMLElement | null>(null)
 const showFolderInput = ref(false)
 const newFolderName = ref('')
 const expandedFolders = ref<Set<string>>(new Set())
@@ -583,13 +588,39 @@ function formatCreator(note: { creator?: { nickname?: string; nick?: string; nam
 }
 
 // 创建新便签
-async function createNote() {
+async function createNote(event?: MouseEvent) {
   showTypeSelector.value = true
+  const trigger = event?.currentTarget as HTMLElement | null
+  typePopupAnchor.value = trigger ? trigger.getBoundingClientRect() : null
+  await nextTick()
+  const popup = typePopupRef.value
+  const anchor = typePopupAnchor.value
+  if (!popup || !anchor) return
+  const gap = 6
+  const width = popup.offsetWidth
+  const height = popup.offsetHeight
+  const maxLeft = Math.max(8, window.innerWidth - width - 8)
+  const left = Math.min(Math.max(8, anchor.left), maxLeft)
+  const maxTop = Math.max(8, window.innerHeight - height - 8)
+  let top = anchor.bottom + gap
+  if (top > maxTop) {
+    top = Math.max(8, anchor.top - height - gap)
+  }
+  typePopupStyle.value = {
+    top: `${top}px`,
+    left: `${left}px`
+  }
+}
+
+function closeTypeSelector() {
+  showTypeSelector.value = false
+  typePopupStyle.value = {}
+  typePopupAnchor.value = null
 }
 
 // 选择类型后创建便签
 async function handleTypeSelect(type: StickyNoteType) {
-  showTypeSelector.value = false
+  closeTypeSelector()
   const offset = stickyNoteStore.activeNoteIds.length * 30
   const typeData = stickyNoteStore.getDefaultTypeData(type)
   await stickyNoteStore.createNote({
@@ -633,6 +664,7 @@ function openRail() {
 }
 
 function closeRail() {
+  if (showTypeSelector.value) return
   if (!railPinned.value) {
     railOpen.value = false
   }
@@ -1247,21 +1279,18 @@ onUnmounted(() => {
 
 /* 类型选择器弹窗 */
 .sticky-note-type-popup {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  margin-top: 4px;
+  position: fixed;
+  inset: 0;
+  z-index: 1102;
 }
 
 .sticky-note-type-popup__backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: -1;
 }
 
 .sticky-note-type-popup__content {
+  position: fixed;
   background: var(--sc-bg-elevated, #ffffff);
   border: 1px solid var(--sc-border-mute, rgba(0, 0, 0, 0.1));
   border-radius: 8px;

@@ -117,6 +117,7 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  ffmpegAvailable?: boolean;
 }
 
 export interface UserInfo {
@@ -150,6 +151,25 @@ interface APIMessageCreate {
   content: string
 }
 
+export interface ChannelBackgroundSettings {
+  mode: 'cover' | 'contain' | 'tile' | 'center';
+  opacity: number;       // 0-100
+  blur: number;          // 0-20 (px)
+  brightness: number;    // 50-150 (%)
+  overlayColor?: string; // rgba color
+  overlayOpacity?: number; // 0-100
+}
+
+export interface BackgroundPreset {
+  id: string;
+  name: string;
+  category?: string;
+  attachmentId: string;
+  thumbnailUrl?: string;
+  settings: ChannelBackgroundSettings;
+  createdAt: number;
+}
+
 export interface SChannel extends Channel {
   isPrivate?: boolean;
   createdAt?: string; // 频道创建时间
@@ -168,6 +188,8 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  backgroundAttachmentId?: string;
+  backgroundSettings?: ChannelBackgroundSettings | string;
 }
 
 export type APIMessageCreateResp = Message

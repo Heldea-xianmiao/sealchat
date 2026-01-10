@@ -2,6 +2,7 @@
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
 import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { computed } from 'vue';
 import Element from '@satorijs/element'
 import { useDialog, useMessage, useThemeVars } from 'naive-ui';
@@ -9,8 +10,10 @@ import { useUserStore } from '@/stores/user';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { useDisplayStore } from '@/stores/display';
+import { generateMessageLink } from '@/utils/messageLink';
 
 const chat = useChatStore()
+const utils = useUtilsStore()
 const message = useMessage()
 const dialog = useDialog()
 const themeVars = useThemeVars()
@@ -120,6 +123,28 @@ const isSelfMessage = computed(() => {
     return false;
   }
   return authorId === user.info.id;
+});
+
+const canEdit = computed(() => {
+  if (isSelfMessage.value) return true;
+  if (!targetUserId.value) return false;
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const allowAdminEdit = worldDetail?.allowAdminEditMessages
+    || worldDetail?.world?.allowAdminEditMessages
+    || chat.worldMap[worldId]?.allowAdminEditMessages;
+  if (allowAdminEdit) {
+    const memberRole = worldDetail?.memberRole;
+    const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+    const isWorldAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === user.info.id;
+    if (isWorldAdmin) {
+      if (targetIsAdmin.value) {
+        return false;
+      }
+      return true;
+    }
+  }
+  return false;
 });
 
 const canWhisper = computed(() => {
@@ -405,6 +430,49 @@ const clickMultiSelect = () => {
   chat.messageMenu.show = false;
 };
 
+const clickCopyMessageLink = async () => {
+  const msgId = menuMessage.value.raw?.id;
+  const curChannelId = chat.curChannel?.id;
+  const worldId = chat.currentWorldId;
+
+  if (!msgId || !curChannelId || !worldId) {
+    message.warning('无法生成消息链接');
+    return;
+  }
+
+  const linkBase = (() => {
+    const domain = utils.config?.domain?.trim() || '';
+    if (!domain) return '';
+    const webUrl = utils.config?.webUrl?.trim() || '';
+    let base = domain;
+    if (!/^(https?:)?\/\//i.test(base)) {
+      base = `${window.location.protocol}//${base}`;
+    }
+    if (webUrl) {
+      base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+    }
+    return base;
+  })();
+
+  const link = generateMessageLink(
+    {
+      worldId,
+      channelId: curChannelId,
+      messageId: msgId,
+    },
+    linkBase ? { base: linkBase } : undefined,
+  );
+
+  try {
+    await navigator.clipboard.writeText(link);
+    message.success('消息链接已复制');
+  } catch {
+    message.error('复制失败');
+  }
+
+  chat.messageMenu.show = false;
+};
+
 </script>
 
 <template>
@@ -413,11 +481,12 @@ const clickMultiSelect = () => {
     :options="contextMenuOptions">
     <context-menu-item v-if="chat.messageMenu.hasImage" label="添加到表情收藏" @click="addToMyEmoji" />
     <context-menu-item v-if="!chat.messageMenu.hasImage" label="复制内容" @click="clickCopy" />
+    <context-menu-item label="复制消息链接" @click="clickCopyMessageLink" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />
     <context-menu-item v-if="showUnarchiveAction" label="取消归档" @click="clickUnarchive" />
-    <context-menu-item label="编辑消息" @click="clickEdit" v-if="isSelfMessage" />
+    <context-menu-item label="编辑消息" @click="clickEdit" v-if="canEdit" />
     <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />
