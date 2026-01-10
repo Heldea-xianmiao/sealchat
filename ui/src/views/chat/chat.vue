@@ -1024,6 +1024,7 @@ const { t } = useI18n();
 
 // const virtualListRef = ref<InstanceType<typeof VirtualList> | null>(null);
 const messagesListRef = ref<HTMLElement | null>(null);
+const typingPreviewViewportRef = ref<HTMLElement | null>(null);
 const selectionBar = reactive({
   visible: false,
   text: '',
@@ -5288,7 +5289,75 @@ watch(
   },
   { flush: 'post' },
 );
- 
+
+// 监听整个 typing-preview-viewport 容器的高度变化（用于他人的实时广播）
+let typingViewportResizeObserver: ResizeObserver | null = null;
+let lastTypingViewportHeight = 0;
+
+const shouldAutoScrollRemoteTyping = () => {
+  if (inHistoryMode.value || historyLocked.value) {
+    return false;
+  }
+  return true;
+};
+
+const scheduleRemotePreviewAutoScroll = () => {
+  if (!shouldAutoScrollRemoteTyping()) {
+    return;
+  }
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (!shouldAutoScrollRemoteTyping()) {
+        return;
+      }
+      scrollToBottom();
+    });
+  });
+};
+
+const setupTypingViewportObserver = () => {
+  const el = typingPreviewViewportRef.value;
+  if (!el) {
+    return;
+  }
+  if (typingViewportResizeObserver) {
+    typingViewportResizeObserver.disconnect();
+  }
+  lastTypingViewportHeight = el.getBoundingClientRect().height;
+  typingViewportResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (!entry) {
+      return;
+    }
+    const nextHeight = entry.contentRect.height;
+    if (nextHeight > lastTypingViewportHeight) {
+      scheduleRemotePreviewAutoScroll();
+    }
+    lastTypingViewportHeight = nextHeight;
+  });
+  typingViewportResizeObserver.observe(el);
+};
+
+const disposeTypingViewportObserver = () => {
+  if (typingViewportResizeObserver) {
+    typingViewportResizeObserver.disconnect();
+    typingViewportResizeObserver = null;
+  }
+  lastTypingViewportHeight = 0;
+};
+
+watch(
+  typingPreviewViewportRef,
+  (el) => {
+    if (el) {
+      setupTypingViewportObserver();
+    } else {
+      disposeTypingViewportObserver();
+    }
+  },
+  { flush: 'post' },
+);
+
 const resolveSelfPreviewDisplayName = () => {
   const identity = activeIdentityForPreview.value;
   if (identity?.displayName) {
@@ -7712,6 +7781,10 @@ chatEvent.on('message-created', (e?: Event) => {
   removeTypingPreview(incoming.user?.id, 'editing');
   if (isSelf) {
     toBottom();
+  } else if (!inHistoryMode.value && !historyLocked.value) {
+    nextTick(() => {
+      scrollToBottom();
+    });
   }
 });
 
@@ -8002,6 +8075,7 @@ onBeforeUnmount(() => {
   stopEditingPreviewNow();
   resetTypingPreview();
   disposeSelfPreviewObserver();
+  disposeTypingViewportObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
@@ -9213,7 +9287,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
 
-      <div class="typing-preview-viewport" v-if="typingPreviewItems.length">
+      <div class="typing-preview-viewport" v-if="typingPreviewItems.length" ref="typingPreviewViewportRef">
         <div
           v-for="preview in typingPreviewItems"
           :key="`${preview.userId}-typing`"
@@ -13716,7 +13790,7 @@ onBeforeUnmount(() => {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-:global(.keyword-highlight:hover) {
+:global(.keyword-highlight:not(.keyword-highlight--underline):hover) {
   background: rgba(255, 220, 120, 0.95);
 }
 
@@ -13726,7 +13800,7 @@ onBeforeUnmount(() => {
 }
 
 :global(.keyword-highlight--underline:hover) {
-  background: rgba(255, 230, 150, 0.35);
+  background: transparent;
 }
 
 /* Night mode highlight */
@@ -13737,8 +13811,8 @@ onBeforeUnmount(() => {
   color: #fef3c7;
 }
 
-:global([data-display-palette='night'] .keyword-highlight:hover),
-:global(:root[data-display-palette='night'] .keyword-highlight:hover) {
+:global([data-display-palette='night'] .keyword-highlight:not(.keyword-highlight--underline):hover),
+:global(:root[data-display-palette='night'] .keyword-highlight:not(.keyword-highlight--underline):hover) {
   background: rgba(180, 140, 60, 0.5);
 }
 
@@ -13750,6 +13824,6 @@ onBeforeUnmount(() => {
 
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
-  background: rgba(180, 140, 60, 0.25);
+  background: transparent;
 }
 </style>
