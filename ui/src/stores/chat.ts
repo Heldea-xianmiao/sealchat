@@ -2090,6 +2090,11 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async messageGetById(channel_id: string, message_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
+      const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.get', { channel_id, message_id });
+      return (resp as any)?.data || null;
+    },
+
     async messageUpdate(channel_id: string, message_id: string, content: string, options?: { icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
       const payload: Record<string, any> = { channel_id, message_id, content };
       if (options?.icMode) {

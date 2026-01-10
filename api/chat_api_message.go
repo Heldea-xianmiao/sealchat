@@ -141,6 +141,50 @@ func canReorderAllMessages(userID string, channel *model.ChannelModel) bool {
 	return false
 }
 
+func apiMessageGet(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+}) (any, error) {
+	db := model.GetDB()
+
+	// 权限检查
+	channelId := data.ChannelID
+	if ctx.IsReadOnly() {
+		if len(channelId) >= 30 {
+			return nil, fmt.Errorf("频道不可公开访问")
+		}
+		if _, err := service.CanGuestAccessChannel(channelId); err != nil {
+			return nil, err
+		}
+	} else if len(channelId) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelId, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, nil
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelId)
+		if fr.ID == "" {
+			return nil, nil
+		}
+	}
+
+	var item model.MessageModel
+	q := db.Where("channel_id = ? AND id = ?", data.ChannelID, data.MessageID)
+	q = q.Where("is_deleted = ?", false)
+	q = q.Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, ctx.User.ID, ctx.User.ID)
+	q.Limit(1).Find(&item)
+
+	if item.ID == "" {
+		return nil, nil
+	}
+
+	return map[string]any{
+		"id":            item.ID,
+		"channel_id":    item.ChannelID,
+		"created_at":    item.CreatedAt.UnixMilli(),
+		"display_order": item.DisplayOrder,
+	}, nil
+}
+
 func apiMessageDelete(ctx *ChatContext, data *struct {
 	ChannelID string `json:"channel_id"`
 	MessageID string `json:"message_id"`

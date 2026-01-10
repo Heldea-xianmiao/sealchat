@@ -1,16 +1,18 @@
 <script setup lang="tsx">
-import { computed, ref, onMounted, watch } from 'vue';
+import { computed, ref, onMounted, watch, nextTick } from 'vue';
 import Chat from './chat/chat.vue'
 import ChatHeader from './components/header.vue'
 import ChatSidebar from './components/sidebar.vue'
 import { useWindowSize } from '@vueuse/core'
-import { useChatStore } from '@/stores/chat';
+import { useChatStore, chatEvent } from '@/stores/chat';
 import { useRoute, useRouter } from 'vue-router';
+import { useMessage } from 'naive-ui';
 
 const { width } = useWindowSize()
 const chat = useChatStore();
 const route = useRoute();
 const router = useRouter();
+const message = useMessage();
 
 const active = ref(false)
 const isSidebarCollapsed = ref(false)
@@ -113,6 +115,68 @@ watch(
   () => [chat.currentWorldId, chat.curChannel?.id, chat.channelTree.length, route.name],
   () => {
     void syncUrlWithSelection();
+  },
+  { immediate: true },
+);
+
+// 处理消息链接跳转 (msg query 参数)
+const pendingMessageJump = ref<string | null>(null);
+
+const handleMessageLinkJump = async () => {
+  const msgParam = route.query.msg;
+  const messageId = typeof msgParam === 'string' ? msgParam.trim() : '';
+  if (!messageId) return;
+
+  const worldId = typeof route.params.worldId === 'string' ? route.params.worldId.trim() : '';
+  const channelId = typeof route.params.channelId === 'string' ? route.params.channelId.trim() : '';
+  if (!worldId || !channelId) return;
+
+  // 标记待跳转的消息
+  pendingMessageJump.value = messageId;
+
+  // 确保世界和频道已切换
+  try {
+    if (chat.currentWorldId !== worldId) {
+      await chat.switchWorld(worldId, { force: true });
+    }
+    if (chat.curChannel?.id !== channelId) {
+      const switched = await chat.channelSwitchTo(channelId);
+      if (!switched) {
+        message.error('无法访问该频道');
+        pendingMessageJump.value = null;
+        return;
+      }
+    }
+
+    // 等待 DOM 更新后触发跳转
+    await nextTick();
+
+    // 触发消息跳转事件
+    chatEvent.emit('search-jump', {
+      messageId,
+      channelId,
+    });
+
+    // 清除 query 参数，避免刷新后重复跳转
+    await router.replace({
+      name: route.name as string,
+      params: route.params,
+      query: {},
+    });
+  } catch (error) {
+    console.warn('[message-link] jump failed', error);
+    message.error('跳转失败');
+  } finally {
+    pendingMessageJump.value = null;
+  }
+};
+
+watch(
+  () => route.query.msg,
+  (newVal) => {
+    if (newVal) {
+      void handleMessageLinkJump();
+    }
   },
   { immediate: true },
 );

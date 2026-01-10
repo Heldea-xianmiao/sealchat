@@ -4,6 +4,7 @@
  */
 
 import { urlBase } from '@/stores/_config';
+import { isLocalMessageLink, parseMessageLink } from './messageLink';
 
 interface TipTapNode {
   type: string;
@@ -146,6 +147,14 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
           case 'link':
             const href = mark.attrs?.href || '#';
             const target = mark.attrs?.target || '_blank';
+            // 检查是否为本站消息链接，添加特殊标记供后续处理
+            if (isLocalMessageLink(href)) {
+              const params = parseMessageLink(href);
+              if (params) {
+                text = `<a href="${escapeHtml(href)}" class="message-jump-link-pending" data-world-id="${escapeHtml(params.worldId)}" data-channel-id="${escapeHtml(params.channelId)}" data-message-id="${escapeHtml(params.messageId)}">${text}</a>`;
+                break;
+              }
+            }
             text = `<a href="${escapeHtml(href)}" class="${linkClass}" target="${target}" rel="noopener noreferrer">${text}</a>`;
             break;
           case 'textStyle':

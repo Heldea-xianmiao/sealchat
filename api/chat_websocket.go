@@ -100,6 +100,7 @@ func websocketWorks(app *fiber.App) {
 		"channel.members_count":      {},
 		"channel.member.list.online": {},
 		"message.list":               {},
+		"message.get":                {},
 	}
 
 	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
@@ -590,6 +591,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "message.list":
 						apiWrap(ctx, msg, apiMessageList)
+						solved = true
+					case "message.get":
+						apiWrap(ctx, msg, apiMessageGet)
 						solved = true
 					case "chat.export.test":
 						apiWrap(ctx, msg, apiChatExportTest)

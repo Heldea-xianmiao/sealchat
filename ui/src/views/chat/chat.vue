@@ -4072,15 +4072,38 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       return;
     }
   }
+
+  // 如果没有 createdAt，先通过 API 获取消息详情
+  let enrichedPayload = { ...payload };
+  if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
+    try {
+      const msgInfo = await chat.messageGetById(chat.curChannel.id, targetId);
+      if (msgInfo) {
+        enrichedPayload.createdAt = msgInfo.created_at;
+        enrichedPayload.displayOrder = msgInfo.display_order;
+      } else {
+        message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+        return;
+      }
+    } catch (error) {
+      console.warn('获取消息详情失败', error);
+    }
+  }
+
   await nextTick();
   let target = messageRowRefs.get(targetId);
   if (!target) {
-    const loaded = await ensureSearchTargetVisible(payload);
+    const loaded = await ensureSearchTargetVisible(enrichedPayload);
     if (!loaded) {
       return;
     }
     await nextTick();
-    target = messageRowRefs.get(targetId);
+    // 等待 DOM 渲染完成，最多重试几次
+    for (let i = 0; i < 5; i++) {
+      target = messageRowRefs.get(targetId);
+      if (target) break;
+      await new Promise(r => setTimeout(r, 50));
+    }
     if (!target) {
       if (messageExistsLocally(targetId)) {
         message.warning('消息已加载，但当前筛选条件可能将其隐藏，请调整筛选后重试');
@@ -7936,6 +7959,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
       await fetchLatestMessages();
     }
   })
+
+  chatEvent.on('search-jump', async (e: any) => {
+    if (!e?.messageId) return;
+    await handleSearchJump({
+      messageId: e.messageId,
+      channelId: e.channelId,
+      displayOrder: e.displayOrder,
+      createdAt: e.createdAt,
+    });
+  });
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
