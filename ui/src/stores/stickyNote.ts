@@ -116,6 +116,13 @@ export interface StickyNoteUserState {
     zIndex: number
 }
 
+export interface StickyNotePushLayout {
+    xPct: number
+    yPct: number
+    wPct: number
+    hPct: number
+}
+
 export interface StickyNoteWithState {
     note: StickyNote
     userState?: StickyNoteUserState
@@ -131,6 +138,8 @@ interface StickyNoteLocalCache {
 
 const LOCAL_CACHE_VERSION = 1
 const STORAGE_KEY_PREFIX = 'sealchat_sticky_notes'
+const MIN_NOTE_WIDTH = 200
+const MIN_NOTE_HEIGHT = 150
 
 export const useStickyNoteStore = defineStore('stickyNote', () => {
     const userStore = useUserStore()
@@ -531,9 +540,13 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 推送便签
-    async function pushNote(noteId: string, targetUserIds: string[]) {
+    async function pushNote(noteId: string, targetUserIds: string[], layout?: StickyNotePushLayout) {
         try {
-            await api.post(`api/v1/sticky-notes/${noteId}/push`, { targetUserIds })
+            const payload: { targetUserIds: string[]; layout?: StickyNotePushLayout } = { targetUserIds }
+            if (layout) {
+                payload.layout = layout
+            }
+            await api.post(`api/v1/sticky-notes/${noteId}/push`, payload)
             return true
         } catch (err) {
             console.error('推送便签失败:', err)
@@ -542,12 +555,16 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 打开便签
-    function openNote(noteId: string) {
+    function openNote(noteId: string, options?: { persistRemote?: boolean; state?: Partial<StickyNoteUserState> }) {
         if (!activeNoteIds.value.includes(noteId)) {
             activeNoteIds.value.push(noteId)
         }
-        bringToFront(noteId)
-        updateUserState(noteId, { isOpen: true, minimized: false })
+        bringToFront(noteId, options)
+        updateUserState(noteId, {
+            isOpen: true,
+            minimized: false,
+            ...options?.state
+        }, options)
     }
 
     function closeNoteLocal(noteId: string) {
@@ -568,9 +585,9 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 置顶便签
-    function bringToFront(noteId: string) {
+    function bringToFront(noteId: string, options?: { persistRemote?: boolean }) {
         maxZIndex.value += 1
-        updateUserState(noteId, { zIndex: maxZIndex.value })
+        updateUserState(noteId, { zIndex: maxZIndex.value }, options)
     }
 
     // 最小化便签
@@ -594,12 +611,40 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         editingNoteId.value = null
     }
 
+    function clampNumber(value: number, min: number, max: number) {
+        return Math.min(Math.max(value, min), max)
+    }
+
+    function resolvePushLayout(layout?: StickyNotePushLayout): Partial<StickyNoteUserState> | null {
+        if (!layout || typeof window === 'undefined') return null
+        const { xPct, yPct, wPct, hPct } = layout
+        if (![xPct, yPct, wPct, hPct].every(value => Number.isFinite(value))) {
+            return null
+        }
+        const viewportW = Math.max(window.innerWidth, 1)
+        const viewportH = Math.max(window.innerHeight, 1)
+        const rawW = Math.round(wPct * viewportW)
+        const rawH = Math.round(hPct * viewportH)
+        const width = clampNumber(rawW, MIN_NOTE_WIDTH, Math.max(MIN_NOTE_WIDTH, viewportW))
+        const height = clampNumber(rawH, MIN_NOTE_HEIGHT, Math.max(MIN_NOTE_HEIGHT, viewportH))
+        const maxX = Math.max(0, viewportW - width)
+        const maxY = Math.max(0, viewportH - height)
+        const rawX = Math.round(xPct * viewportW)
+        const rawY = Math.round(yPct * viewportH)
+        return {
+            positionX: clampNumber(rawX, 0, maxX),
+            positionY: clampNumber(rawY, 0, maxY),
+            width,
+            height
+        }
+    }
+
     // 处理WebSocket事件
     function handleStickyNoteEvent(event: any) {
         const payload = event.stickyNote
         if (!payload) return
 
-        const { note, action, targetUserIds } = payload
+        const { note, action, targetUserIds, layout } = payload
 
         switch (action) {
             case 'create':
@@ -628,7 +673,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
                     if (!isTarget) break
                     notes.value[note.id] = note
                     setVisible(true)
-                    openNote(note.id)
+                    const layoutState = resolvePushLayout(layout)
+                    openNote(note.id, { persistRemote: false, state: layoutState || undefined })
                 }
                 break
         }

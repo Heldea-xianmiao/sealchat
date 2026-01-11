@@ -217,7 +217,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, defineAsyncComponent } from 'vue'
 import { useMessage } from 'naive-ui'
-import { useStickyNoteStore, type StickyNote, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
+import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import StickyNoteEditor from './StickyNoteEditor.vue'
@@ -506,12 +506,31 @@ function copyContent() {
   navigator.clipboard.writeText(text)
 }
 
+function roundRatio(value: number) {
+  return Math.round(value * 10000) / 10000
+}
+
+function buildPushLayout(): StickyNotePushLayout | null {
+  if (typeof window === 'undefined' || !noteEl.value) return null
+  const viewportW = window.innerWidth
+  const viewportH = window.innerHeight
+  if (!viewportW || !viewportH) return null
+  const rect = noteEl.value.getBoundingClientRect()
+  return {
+    xPct: roundRatio(rect.left / viewportW),
+    yPct: roundRatio(rect.top / viewportH),
+    wPct: roundRatio(rect.width / viewportW),
+    hPct: roundRatio(rect.height / viewportH)
+  }
+}
+
 async function pushToTargets() {
   if (!note.value || pushTargets.value.length === 0) {
     message.warning('请选择推送对象')
     return
   }
-  const ok = await stickyNoteStore.pushNote(props.noteId, pushTargets.value)
+  const layout = buildPushLayout()
+  const ok = await stickyNoteStore.pushNote(props.noteId, pushTargets.value, layout || undefined)
   if (ok) {
     writePushTargets(pushTargets.value)
     message.success('已推送便签')
