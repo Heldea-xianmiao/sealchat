@@ -9337,7 +9337,7 @@ onBeforeUnmount(() => {
             <template v-else>
               <div class="typing-preview-content">
                 <div v-if="display.showAvatar" class="typing-preview-avatar">
-                  <AvatarVue :border="false" :size="48" :src="preview.avatar" />
+                  <AvatarVue :border="false" :src="preview.avatar" />
                 </div>
                 <div class="typing-preview-main">
                   <div class="typing-preview-bubble-header">
@@ -11290,9 +11290,9 @@ onBeforeUnmount(() => {
 
 .typing-preview-avatar {
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
-  min-width: 3rem;
+  width: var(--chat-avatar-size, 3rem);
+  height: var(--chat-avatar-size, 3rem);
+  min-width: var(--chat-avatar-size, 3rem);
 }
 
 .message-row__handle--placeholder {
