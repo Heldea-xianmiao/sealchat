@@ -1340,8 +1340,8 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 
 .chat-item__avatar {
   flex-shrink: 0;
-  width: 3rem;
-  height: 3rem;
+  width: var(--chat-avatar-size, 3rem);
+  height: var(--chat-avatar-size, 3rem);
 }
 
 @media (pointer: coarse) {
@@ -1455,7 +1455,8 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 }
 
 .chat-item--layout-bubble .chat-item__avatar {
-  width: 2.75rem;
+  width: var(--chat-avatar-size, 2.75rem);
+  height: var(--chat-avatar-size, 2.75rem);
   margin-right: 0.5rem;
 }
 

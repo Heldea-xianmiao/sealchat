@@ -70,6 +70,8 @@ export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
   showAvatar: boolean
+  avatarSize: number            // 头像大小 (px)
+  avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
   autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
@@ -150,6 +152,24 @@ const INPUT_AREA_HEIGHT_MAX = 600
 export const INPUT_AREA_HEIGHT_LIMITS = {
   MIN: INPUT_AREA_HEIGHT_MIN,
   MAX: INPUT_AREA_HEIGHT_MAX,
+}
+
+// 头像样式常量
+const AVATAR_SIZE_DEFAULT = 48
+const AVATAR_SIZE_MIN = 32
+const AVATAR_SIZE_MAX = 72
+export const AVATAR_SIZE_LIMITS = {
+  DEFAULT: AVATAR_SIZE_DEFAULT,
+  MIN: AVATAR_SIZE_MIN,
+  MAX: AVATAR_SIZE_MAX,
+}
+const AVATAR_BORDER_RADIUS_DEFAULT = 14 // 约等于 0.85rem
+const AVATAR_BORDER_RADIUS_MIN = 0
+const AVATAR_BORDER_RADIUS_MAX = 50 // 50% = 圆形
+export const AVATAR_BORDER_RADIUS_LIMITS = {
+  DEFAULT: AVATAR_BORDER_RADIUS_DEFAULT,
+  MIN: AVATAR_BORDER_RADIUS_MIN,
+  MAX: AVATAR_BORDER_RADIUS_MAX,
 }
 const normalizeInputAreaHeight = (value: unknown) => {
   const raw = coerceNumberInRange(
@@ -340,6 +360,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'day',
   showAvatar: true,
+  avatarSize: AVATAR_SIZE_DEFAULT,
+  avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
   autoScrollTypingPreview: false,
   mergeNeighbors: true,
@@ -482,6 +504,18 @@ const loadSettings = (): DisplaySettings => {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      avatarSize: coerceNumberInRange(
+        (parsed as any)?.avatarSize,
+        AVATAR_SIZE_DEFAULT,
+        AVATAR_SIZE_MIN,
+        AVATAR_SIZE_MAX,
+      ),
+      avatarBorderRadius: coerceNumberInRange(
+        (parsed as any)?.avatarBorderRadius,
+        AVATAR_BORDER_RADIUS_DEFAULT,
+        AVATAR_BORDER_RADIUS_MIN,
+        AVATAR_BORDER_RADIUS_MAX,
+      ),
       showInputPreview: coerceBoolean(parsed.showInputPreview),
       autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
@@ -569,6 +603,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  avatarSize:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'avatarSize')
+      ? coerceNumberInRange((patch as any).avatarSize, AVATAR_SIZE_DEFAULT, AVATAR_SIZE_MIN, AVATAR_SIZE_MAX)
+      : base.avatarSize,
+  avatarBorderRadius:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'avatarBorderRadius')
+      ? coerceNumberInRange((patch as any).avatarBorderRadius, AVATAR_BORDER_RADIUS_DEFAULT, AVATAR_BORDER_RADIUS_MIN, AVATAR_BORDER_RADIUS_MAX)
+      : base.avatarBorderRadius,
   showInputPreview:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showInputPreview')
       ? coerceBoolean(patch.showInputPreview)
@@ -931,6 +973,14 @@ export const useDisplayStore = defineStore('display', {
       setVar('--chat-paragraph-spacing', `${effective.paragraphSpacing}px`)
       setVar('--chat-message-padding-x', `${effective.messagePaddingX}px`)
       setVar('--chat-message-padding-y', `${effective.messagePaddingY}px`)
+
+      // Apply avatar style
+      setVar('--chat-avatar-size', `${effective.avatarSize}px`)
+      // Calculate border-radius: use percentage for values > 25 (approaching circle)
+      const radiusValue = effective.avatarBorderRadius >= 50
+        ? '50%'
+        : `${effective.avatarBorderRadius}%`
+      setVar('--chat-avatar-radius', radiusValue)
 
       // Apply custom theme colors
       const customColorVars = [

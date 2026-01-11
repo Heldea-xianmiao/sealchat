@@ -5,6 +5,7 @@ import { useOnboardingStore } from '@/stores/onboarding'
 import ShortcutSettingsPanel from './ShortcutSettingsPanel.vue'
 import IcOocRoleConfigPanel from './IcOocRoleConfigPanel.vue'
 import CustomThemePanel from './CustomThemePanel.vue'
+import AvatarStylePanel from './AvatarStylePanel.vue'
 
 interface Props {
   visible: boolean
@@ -21,6 +22,7 @@ const draft = reactive<DisplaySettings>(createDefaultDisplaySettings())
 const shortcutPanelVisible = ref(false)
 const roleConfigPanelVisible = ref(false)
 const customThemePanelVisible = ref(false)
+const avatarStylePanelVisible = ref(false)
 const display = useDisplayStore()
 const onboarding = useOnboardingStore()
 const timestampFormatOptions = [
@@ -223,10 +225,45 @@ const handleOpenTutorialHub = () => {
             <p class="section-desc">隐藏头像可获得更紧凑的布局</p>
           </div>
         </header>
-        <n-switch v-model:value="draft.showAvatar">
-          <template #checked>显示头像</template>
-          <template #unchecked>隐藏头像</template>
-        </n-switch>
+        <div class="avatar-display-row">
+          <n-switch v-model:value="draft.showAvatar">
+            <template #checked>显示头像</template>
+            <template #unchecked>隐藏头像</template>
+          </n-switch>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                circle
+                size="tiny"
+                quaternary
+                :disabled="!draft.showAvatar"
+                @click="avatarStylePanelVisible = true"
+              >
+                <template #icon>
+                  <n-icon size="16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"></path>
+                      <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"></path>
+                      <path d="M12 2v2"></path>
+                      <path d="M12 22v-2"></path>
+                      <path d="m17 20.66-1-1.73"></path>
+                      <path d="M11 10.27 7 3.34"></path>
+                      <path d="m20.66 17-1.73-1"></path>
+                      <path d="m3.34 7 1.73 1"></path>
+                      <path d="M14 12h8"></path>
+                      <path d="M2 12h2"></path>
+                      <path d="m20.66 7-1.73 1"></path>
+                      <path d="m3.34 17 1.73-1"></path>
+                      <path d="m17 3.34-1 1.73"></path>
+                      <path d="m11 13.73-4 6.93"></path>
+                    </svg>
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            样式设定
+          </n-tooltip>
+        </div>
       </section>
 
       <section class="display-settings__section">
@@ -702,6 +739,7 @@ const handleOpenTutorialHub = () => {
   <ShortcutSettingsPanel v-model:show="shortcutPanelVisible" />
   <IcOocRoleConfigPanel v-model:show="roleConfigPanelVisible" />
   <CustomThemePanel v-model:show="customThemePanelVisible" />
+  <AvatarStylePanel v-model:show="avatarStylePanelVisible" />
 </template>
 
 <style scoped lang="scss">
@@ -955,6 +993,12 @@ const handleOpenTutorialHub = () => {
 }
 
 .custom-theme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.avatar-display-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
