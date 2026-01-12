@@ -110,6 +110,11 @@ onLongPress(
   background-color: #ffffff;
 }
 
+:root[data-display-palette='night'] .avatar-shell--bordered {
+  background-color: rgba(30, 41, 59, 0.95);
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
 .avatar-shell--plain {
   border: none;
   background: transparent;

@@ -907,10 +907,6 @@ const doAvatarClick = (e: MouseEvent) => {
   if (isMobileUa) {
     return;
   }
-  if (!props.item?.member?.nick) {
-    message.warning('此用户无法查看')
-    return;
-  }
   if (avatarClickTimer) {
     clearTimeout(avatarClickTimer);
     avatarClickTimer = null;
