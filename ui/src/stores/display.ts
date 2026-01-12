@@ -392,7 +392,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordHighlightEnabled: true,
   worldKeywordUnderlineOnly: false,
   worldKeywordTooltipEnabled: true,
-  worldKeywordDeduplicateEnabled: false,
+  worldKeywordDeduplicateEnabled: true,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
   worldKeywordQuickInputEnabled: true,
   worldKeywordQuickInputTrigger: '/',
@@ -583,7 +583,7 @@ const loadSettings = (): DisplaySettings => {
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
       worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
-      worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? false),
+      worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? true),
       worldKeywordTooltipTextIndent: coerceFloatInRange(
         (parsed as any)?.worldKeywordTooltipTextIndent,
         KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
