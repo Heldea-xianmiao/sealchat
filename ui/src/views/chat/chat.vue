@@ -80,6 +80,8 @@ import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
+import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
+import { ensurePinyinLoaded, matchKeywords, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -5706,6 +5708,14 @@ const typingToggleClass = computed(() => ({
 
 const textToSend = ref('');
 
+// 术语快捷输入状态
+const keywordSuggestVisible = ref(false);
+const keywordSuggestQuery = ref('');
+const keywordSuggestIndex = ref(0);
+const keywordSuggestSlashPos = ref(-1);
+const keywordSuggestLoading = ref(false);
+const keywordSuggestOptions = ref<KeywordMatchResult[]>([]);
+
 // 输入历史（localStorage 版本，按频道保留 5 条）
 const HISTORY_STORAGE_KEY = 'sealchat_input_history_v1';
 const HISTORY_CHANNEL_FALLBACK = '__global__';
@@ -7418,6 +7428,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
+  checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
     emitEditingPreview();
@@ -8395,6 +8406,176 @@ const handleMentionSelect = () => {
   pauseKeydown.value = false;
 };
 
+// 术语快捷输入相关函数
+const performKeywordMatch = async (query: string) => {
+  keywordSuggestLoading.value = true;
+  try {
+    await ensurePinyinLoaded();
+    const keywords = worldGlossary.currentKeywords || [];
+    const results = matchKeywords(query, keywords, 5);
+    // 按分数升序排列（低分在上，高分在下靠近输入框）
+    keywordSuggestOptions.value = results.sort((a, b) => a.score - b.score);
+    keywordSuggestIndex.value = results.length > 0 ? results.length - 1 : 0;
+    keywordSuggestVisible.value = results.length > 0;
+  } finally {
+    keywordSuggestLoading.value = false;
+  }
+};
+
+const checkKeywordSuggest = () => {
+  if (!display.settings.worldKeywordQuickInputEnabled) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  const trigger = display.settings.worldKeywordQuickInputTrigger || '/';
+
+  let text: string;
+  let cursorPos: number;
+
+  if (inputMode.value === 'rich') {
+    // 富文本模式：从编辑器获取纯文本和光标位置
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (!editorInstance) {
+      keywordSuggestVisible.value = false;
+      return;
+    }
+    text = editorInstance.getText();
+    cursorPos = editorInstance.state.selection.from - 1; // TipTap 的 from 是基于 1 的
+  } else {
+    // 纯文本模式
+    text = textToSend.value;
+    cursorPos = getInputSelection().start;
+  }
+
+  const beforeCursor = text.slice(0, cursorPos);
+
+  // 查找最近的触发字符
+  const slashIndex = beforeCursor.lastIndexOf(trigger);
+  if (slashIndex === -1) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 提取查询内容
+  const query = beforeCursor.slice(slashIndex + 1);
+
+  // 检测是否是快捷命令模式 (/e 空格 或 /w 空格) - 仅当触发字符为 / 时检查
+  if (trigger === '/' && /^[ew]\s/.test(query)) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 检测两个连续空格
+  if (query.includes('  ')) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 空查询时不显示
+  if (!query.trim()) {
+    keywordSuggestVisible.value = false;
+    return;
+  }
+
+  // 执行匹配
+  keywordSuggestSlashPos.value = slashIndex;
+  keywordSuggestQuery.value = query;
+  performKeywordMatch(query);
+};
+
+const handleKeywordSuggestKeydown = (e: KeyboardEvent): boolean => {
+  if (!keywordSuggestVisible.value) return false;
+
+  const options = keywordSuggestOptions.value;
+  if (!options.length) return false;
+
+  if (e.key === 'ArrowDown') {
+    keywordSuggestIndex.value = Math.min(keywordSuggestIndex.value + 1, options.length - 1);
+    e.preventDefault();
+    return true;
+  }
+
+  if (e.key === 'ArrowUp') {
+    keywordSuggestIndex.value = Math.max(keywordSuggestIndex.value - 1, 0);
+    e.preventDefault();
+    return true;
+  }
+
+  if (e.key === 'Enter' && !e.isComposing) {
+    const selected = options[keywordSuggestIndex.value];
+    if (selected) {
+      applyKeywordSuggestion(selected);
+      e.preventDefault();
+      return true;
+    }
+  }
+
+  if (e.key === 'Escape') {
+    keywordSuggestVisible.value = false;
+    e.preventDefault();
+    return true;
+  }
+
+  return false;
+};
+
+const applyKeywordSuggestion = (result: KeywordMatchResult) => {
+  const keyword = result.keyword.keyword;
+
+  if (inputMode.value === 'rich') {
+    // 富文本模式：使用 TipTap 编辑器 API
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      // 删除触发字符和查询内容，然后插入术语
+      const deleteCount = keywordSuggestQuery.value.length + 1; // +1 for trigger char
+      editorInstance.chain()
+        .focus()
+        .deleteRange({
+          from: editorInstance.state.selection.from - deleteCount,
+          to: editorInstance.state.selection.from
+        })
+        .insertContent(keyword)
+        .run();
+    }
+  } else {
+    // 纯文本模式
+    const slashPos = keywordSuggestSlashPos.value;
+    const queryLen = keywordSuggestQuery.value.length;
+    const cursorPos = slashPos + queryLen + 1; // +1 for trigger char
+
+    const before = textToSend.value.slice(0, slashPos);
+    const after = textToSend.value.slice(cursorPos);
+
+    const newText = before + keyword + after;
+    const newCursor = slashPos + keyword.length;
+
+    textToSend.value = newText;
+
+    // 使用双重 nextTick 确保 DOM 完全更新
+    nextTick(() => {
+      nextTick(() => {
+        setInputSelection(newCursor, newCursor);
+        textInputRef.value?.focus?.();
+      });
+    });
+  }
+
+  keywordSuggestVisible.value = false;
+};
+
+const handleKeywordSuggestSelect = (result: KeywordMatchResult) => {
+  applyKeywordSuggestion(result);
+};
+
+const handleKeywordSuggestHover = (index: number) => {
+  keywordSuggestIndex.value = index;
+};
+
+const handleKeywordSuggestBlur = () => {
+  keywordSuggestVisible.value = false;
+};
+
 const toolbarHotkeyOrder: ToolbarHotkeyKey[] = [
   'icToggle',
   'whisper',
@@ -8487,6 +8668,11 @@ const handleToolbarHotkeyEvent = (event: KeyboardEvent) => {
 
 const keyDown = function (e: KeyboardEvent) {
   if (pauseKeydown.value) return;
+
+  // 优先处理术语快捷输入
+  if (handleKeywordSuggestKeydown(e)) {
+    return;
+  }
 
   if (!isEditing.value && handleWhisperKeydown(e)) {
     return;
@@ -9975,6 +10161,14 @@ onBeforeUnmount(() => {
             </div>
             <div class="chat-input-editor-row" :style="chatInputStyle">
               <div class="chat-input-editor-main">
+                <KeywordSuggestPanel
+                  :visible="keywordSuggestVisible"
+                  :options="keywordSuggestOptions"
+                  :active-index="keywordSuggestIndex"
+                  :loading="keywordSuggestLoading"
+                  @select="handleKeywordSuggestSelect"
+                  @hover="handleKeywordSuggestHover"
+                />
                 <ChatInputSwitcher
                   ref="textInputRef"
                   v-model="textToSend"
@@ -9992,6 +10186,7 @@ onBeforeUnmount(() => {
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
+                  @blur="handleKeywordSuggestBlur"
                   @input="handleSlashInput"
                   @paste-image="handlePlainPasteImage"
                   @drop-files="handlePlainDropFiles"
@@ -12229,6 +12424,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  position: relative;
 }
 
 .chat-input-editor-main :deep(.hybrid-input) {

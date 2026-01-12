@@ -74,6 +74,8 @@ watch(
   draft.worldKeywordUnderlineOnly = value.worldKeywordUnderlineOnly
   draft.worldKeywordTooltipEnabled = value.worldKeywordTooltipEnabled
   draft.worldKeywordTooltipTextIndent = value.worldKeywordTooltipTextIndent
+  draft.worldKeywordQuickInputEnabled = value.worldKeywordQuickInputEnabled
+  draft.worldKeywordQuickInputTrigger = value.worldKeywordQuickInputTrigger
   draft.toolbarHotkeys = value.toolbarHotkeys
   draft.autoSwitchRoleOnIcOocToggle = value.autoSwitchRoleOnIcOocToggle
   draft.showDragIndicator = value.showDragIndicator
@@ -462,6 +464,22 @@ const handleOpenTutorialHub = () => {
             <template #checked>术语去重</template>
             <template #unchecked>允许重复</template>
           </n-switch>
+        </div>
+        <div class="keyword-quick-input-row">
+          <n-switch v-model:value="draft.worldKeywordQuickInputEnabled">
+            <template #checked>术语快捷输入已开启</template>
+            <template #unchecked>术语快捷输入已关闭</template>
+          </n-switch>
+          <span class="quick-input-hint">触发字符</span>
+          <n-input
+            v-model:value="draft.worldKeywordQuickInputTrigger"
+            size="small"
+            :maxlength="1"
+            :disabled="!draft.worldKeywordQuickInputEnabled"
+            style="width: 50px; text-align: center"
+            placeholder="/"
+          />
+          <span class="quick-input-hint">输入该字符后可快速搜索并插入世界术语</span>
         </div>
         <div class="keyword-indent-settings">
           <span class="indent-label">多段首行缩进</span>
@@ -951,6 +969,19 @@ const handleOpenTutorialHub = () => {
   gap: 8px;
   align-items: center;
   margin-bottom: 12px;
+}
+
+.keyword-quick-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.quick-input-hint {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
 }
 
 .indent-label {

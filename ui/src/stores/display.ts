@@ -97,6 +97,8 @@ export interface DisplaySettings {
   worldKeywordTooltipEnabled: boolean
   worldKeywordDeduplicateEnabled: boolean
   worldKeywordTooltipTextIndent: number  // 术语气泡多段首行缩进（em），0 为关闭
+  worldKeywordQuickInputEnabled: boolean  // 术语快捷输入
+  worldKeywordQuickInputTrigger: string   // 术语快捷输入触发字符，默认 /
   toolbarHotkeys: Record<ToolbarHotkeyKey, ToolbarHotkeyConfig>
   autoSwitchRoleOnIcOocToggle: boolean
   // 拖拽排序
@@ -186,6 +188,11 @@ const KEYWORD_TOOLTIP_TEXT_INDENT_MIN = 0
 const KEYWORD_TOOLTIP_TEXT_INDENT_MAX = 4
 const SEND_SHORTCUT_DEFAULT: 'enter' | 'ctrlEnter' = 'enter'
 const coerceSendShortcut = (value?: string): 'enter' | 'ctrlEnter' => (value === 'ctrlEnter' ? 'ctrlEnter' : 'enter')
+const QUICK_INPUT_TRIGGER_DEFAULT = '/'
+const coerceQuickInputTrigger = (value?: string): string => {
+  if (typeof value === 'string' && value.length === 1) return value
+  return QUICK_INPUT_TRIGGER_DEFAULT
+}
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
@@ -387,6 +394,8 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   worldKeywordTooltipEnabled: true,
   worldKeywordDeduplicateEnabled: false,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
+  worldKeywordQuickInputEnabled: true,
+  worldKeywordQuickInputTrigger: '/',
   toolbarHotkeys: createDefaultToolbarHotkeys(),
   autoSwitchRoleOnIcOocToggle: true,
   showDragIndicator: false,  // 默认隐藏拖拽指示线
@@ -581,6 +590,8 @@ const loadSettings = (): DisplaySettings => {
         KEYWORD_TOOLTIP_TEXT_INDENT_MIN,
         KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
       ),
+      worldKeywordQuickInputEnabled: coerceBoolean((parsed as any)?.worldKeywordQuickInputEnabled ?? true),
+      worldKeywordQuickInputTrigger: coerceQuickInputTrigger((parsed as any)?.worldKeywordQuickInputTrigger),
       toolbarHotkeys,
       autoSwitchRoleOnIcOocToggle: coerceBoolean((parsed as any)?.autoSwitchRoleOnIcOocToggle ?? true),
       showDragIndicator: coerceBoolean((parsed as any)?.showDragIndicator ?? false),
@@ -741,6 +752,14 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
         KEYWORD_TOOLTIP_TEXT_INDENT_MAX,
       )
       : base.worldKeywordTooltipTextIndent,
+  worldKeywordQuickInputEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputEnabled')
+      ? coerceBoolean((patch as any).worldKeywordQuickInputEnabled)
+      : base.worldKeywordQuickInputEnabled,
+  worldKeywordQuickInputTrigger:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'worldKeywordQuickInputTrigger')
+      ? coerceQuickInputTrigger((patch as any).worldKeywordQuickInputTrigger)
+      : base.worldKeywordQuickInputTrigger,
   toolbarHotkeys:
     patch && Object.prototype.hasOwnProperty.call(patch, 'toolbarHotkeys')
       ? normalizeToolbarHotkeys((patch as any).toolbarHotkeys)
