@@ -138,13 +138,17 @@ type ChannelPresence struct {
 }
 
 type AudioTrackState struct {
-	Type    string  `json:"type"`
-	AssetID *string `json:"assetId"`
-	Volume  float64 `json:"volume"`
-	Muted   bool    `json:"muted"`
-	Solo    bool    `json:"solo"`
-	FadeIn  int     `json:"fadeIn"`
-	FadeOut int     `json:"fadeOut"`
+	Type         string  `json:"type"`
+	AssetID      *string `json:"assetId"`
+	Volume       float64 `json:"volume"`
+	Muted        bool    `json:"muted"`
+	Solo         bool    `json:"solo"`
+	FadeIn       int     `json:"fadeIn"`
+	FadeOut      int     `json:"fadeOut"`
+	IsPlaying    bool    `json:"isPlaying"`
+	Position     float64 `json:"position"`
+	LoopEnabled  bool    `json:"loopEnabled"`
+	PlaybackRate float64 `json:"playbackRate"`
 }
 
 type AudioPlaybackStatePayload struct {

@@ -58,6 +58,8 @@ type AudioUploadOptions struct {
 	Description string
 	Visibility  model.AudioAssetVisibility
 	CreatedBy   string
+	Scope       model.AudioAssetScope
+	WorldID     *string
 }
 
 func InitAudioService(cfg utils.AudioConfig, store *storage.Manager) error {
@@ -397,6 +399,12 @@ func (svc *audioService) newAssetRecord(originalName string, opts AudioUploadOpt
 	asset.Tags = model.JSONList[string](normalizeTags(opts.Tags))
 	asset.FolderID = cloneStringPtr(opts.FolderID)
 	asset.StorageType = model.StorageLocal
+	scope := opts.Scope
+	if scope == "" {
+		scope = model.AudioScopeCommon
+	}
+	asset.Scope = scope
+	asset.WorldID = cloneStringPtr(opts.WorldID)
 	return asset
 }
 

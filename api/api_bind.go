@@ -313,7 +313,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	audio.Get("/scenes", AudioSceneList)
 	audio.Get("/stream/:id", AudioAssetStream)
 	audio.Get("/state", AudioPlaybackStateGet)
-	audioAdmin := audio.Group("", UserRoleAdminMiddleware)
+	audioAdmin := audio.Group("", AudioWorkbenchMiddleware)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
 	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
 	audioAdmin.Delete("/assets/:id", AudioAssetDelete)

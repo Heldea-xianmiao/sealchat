@@ -27,14 +27,15 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir         string   `json:"storageDir" yaml:"storageDir"`
-	TempDir            string   `json:"tempDir" yaml:"tempDir"`
-	MaxUploadSizeMB    int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	AllowedMimeTypes   []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode    bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates  []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath         string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	StorageDir              string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                 string   `json:"tempDir" yaml:"tempDir"`
+	MaxUploadSizeMB         int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	AllowedMimeTypes        []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode         bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps      int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates       []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath              string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench bool    `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
 }
 
 type StorageMode string
@@ -242,14 +243,15 @@ func ReadConfig() *AppConfig {
 			Note:           "默认上传到 DicePP 云端获取海豹染色器 BBcode/Docx",
 		},
 		Audio: AudioConfig{
-			StorageDir:         "./static/audio",
-			TempDir:            "./data/audio-temp",
-			MaxUploadSizeMB:    80,
-			AllowedMimeTypes:   []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
-			EnableTranscode:    true,
-			DefaultBitrateKbps: 96,
-			AlternateBitrates:  []int{64, 128},
-			FFmpegPath:         "",
+			StorageDir:               "./static/audio",
+			TempDir:                  "./data/audio-temp",
+			MaxUploadSizeMB:          80,
+			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
+			EnableTranscode:          true,
+			DefaultBitrateKbps:       96,
+			AlternateBitrates:        []int{64, 128},
+			FFmpegPath:               "",
+			AllowWorldAudioWorkbench: false,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,
@@ -565,6 +567,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
+		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
 		_ = k.Set("export.storageDir", config.Export.StorageDir)
 		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
 		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)

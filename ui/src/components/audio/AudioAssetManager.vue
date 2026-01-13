@@ -37,6 +37,14 @@
           class="audio-library__filter-item"
         />
 
+        <n-select
+          v-model:value="selectedScope"
+          size="small"
+          placeholder="作用域"
+          :options="scopeOptions"
+          class="audio-library__filter-item"
+        />
+
         <div class="audio-library__duration">
           <label>时长 (秒)</label>
           <n-slider v-model:value="durationRange" :max="durationMax" :min="0" range size="small" />
@@ -57,7 +65,7 @@
           </template>
           刷新列表
         </n-button>
-        <n-button size="small" secondary @click="scrollToUpload" v-if="audio.canManage">
+        <n-button size="small" secondary @click="scrollToUpload" v-if="audio.canManage || audio.canManageCurrentWorld">
           <template #icon>
             <n-icon size="16">
               <CloudUploadOutline />
@@ -65,7 +73,7 @@
           </template>
           上传素材
         </n-button>
-        <n-button size="small" type="primary" @click="openCreateFolder" v-if="audio.canManage">
+        <n-button size="small" type="primary" @click="openCreateFolder" v-if="audio.canManage || audio.canManageCurrentWorld">
           <template #icon>
             <n-icon size="16">
               <FolderOpenOutline />
@@ -107,7 +115,7 @@
       <aside class="audio-library__folders">
         <div class="audio-library__folder-header">
           <span>文件夹</span>
-          <div class="audio-library__folder-actions" v-if="audio.canManage">
+          <div class="audio-library__folder-actions" v-if="audio.canManage || audio.canManageCurrentWorld">
             <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
             <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
             <n-button
@@ -165,9 +173,14 @@
               <h3>{{ selectedAsset.name }}</h3>
               <p class="audio-library__detail-subtitle">{{ folderLabel(selectedAsset.folderId) }}</p>
             </div>
-            <n-tag size="small" :type="selectedAsset.visibility === 'public' ? 'success' : 'warning'">
-              {{ selectedAsset.visibility === 'public' ? '公开' : '受限' }}
-            </n-tag>
+            <div class="audio-library__detail-tags">
+              <n-tag size="small" :type="selectedAsset.scope === 'common' ? 'info' : 'warning'">
+                {{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}
+              </n-tag>
+              <n-tag size="small" :type="selectedAsset.visibility === 'public' ? 'success' : 'warning'">
+                {{ selectedAsset.visibility === 'public' ? '公开' : '受限' }}
+              </n-tag>
+            </div>
           </header>
           <ul class="audio-library__detail-list">
             <li>时长：{{ formatDuration(selectedAsset.duration) }}</li>
@@ -191,7 +204,7 @@
           </div>
           <div class="audio-library__detail-actions">
             <n-button quaternary size="small" @click="copyStream(selectedAsset.id)">复制播放链接</n-button>
-            <n-button v-if="audio.canManage" secondary size="small" @click="openAssetEditor(selectedAsset)">
+            <n-button v-if="canEditSelectedAsset" secondary size="small" @click="openAssetEditor(selectedAsset)">
               编辑元数据
             </n-button>
           </div>
@@ -339,7 +352,7 @@ import {
   type TreeOption,
 } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
-import type { AudioAsset, AudioFolder } from '@/types/audio';
+import type { AudioAsset, AudioAssetScope, AudioFolder } from '@/types/audio';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import UploadPanel from './UploadPanel.vue';
 
@@ -351,6 +364,7 @@ const durationMax = 600;
 const keyword = ref(audio.filters.query ?? '');
 const selectedTags = ref<string[]>([...audio.filters.tags]);
 const selectedCreators = ref<string[]>([...audio.filters.creatorIds]);
+const selectedScope = ref<AudioAssetScope | 'all'>(audio.filters.scope ?? 'all');
 const durationRange = ref<[number, number]>(audio.filters.durationRange ?? [0, durationMax]);
 const folderKeys = ref<string[]>(audio.filters.folderId ? [audio.filters.folderId] : ['all']);
 const uploadAnchor = ref<HTMLElement | null>(null);
@@ -467,11 +481,22 @@ const creatorOptions = computed(() => {
   return creators.map((creator) => ({ label: creator, value: creator }));
 });
 
+const scopeOptions = computed(() => [
+  { label: '全部', value: 'all' },
+  { label: '通用级', value: 'common' },
+  { label: '世界级', value: 'world' },
+]);
+
+const canEditSelectedAsset = computed(() => {
+  if (!selectedAsset.value) return false;
+  return audio.canEditAsset(selectedAsset.value);
+});
+
 const columns = computed<DataTableColumns<AudioAsset>>(() => [
   {
     type: 'selection',
     multiple: true,
-    disabled: () => !audio.canManage,
+    disabled: (row: AudioAsset) => !audio.canEditAsset(row),
     fixed: 'left',
   },
   {
@@ -551,7 +576,7 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
               {
                 size: 'tiny',
                 quaternary: true,
-                disabled: !audio.canManage,
+                disabled: !audio.canEditAsset(row),
                 onClick: () => openAssetEditor(row),
               },
               { default: () => '编辑' }
@@ -562,7 +587,7 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
                 size: 'tiny',
                 quaternary: true,
                 type: 'error',
-                disabled: !audio.canManage,
+                disabled: !audio.canDeleteAsset(row),
                 onClick: () => confirmDeleteAsset(row),
               },
               { default: () => '删除' }
@@ -624,6 +649,7 @@ function handleSearch() {
     tags: selectedTags.value,
     creatorIds: selectedCreators.value,
     durationRange: durationFilter,
+    scope: selectedScope.value === 'all' ? undefined : selectedScope.value,
   });
   clearSelection();
 }
@@ -632,12 +658,14 @@ function handleResetFilters() {
   keyword.value = '';
   selectedTags.value = [];
   selectedCreators.value = [];
+  selectedScope.value = 'all';
   durationRange.value = [0, durationMax];
   audio.applyFilters({
     query: '',
     tags: [],
     creatorIds: [],
     durationRange: null,
+    scope: undefined,
   });
   clearSelection();
 }
@@ -694,7 +722,7 @@ function openRenameFolder() {
 }
 
 async function handleSaveFolder() {
-  if (!audio.canManage) {
+  if (!audio.canManage && !audio.canManageCurrentWorld) {
     message.error('没有权限管理文件夹');
     return;
   }
@@ -734,7 +762,7 @@ function confirmDeleteFolder() {
 }
 
 function openAssetEditor(asset: AudioAsset) {
-  if (!audio.canManage) return;
+  if (!audio.canEditAsset(asset)) return;
   assetForm.id = asset.id;
   assetForm.name = asset.name;
   assetForm.description = asset.description || '';
@@ -763,7 +791,7 @@ async function handleSaveAsset() {
 }
 
 function confirmDeleteAsset(asset: AudioAsset) {
-  if (!audio.canManage) return;
+  if (!audio.canDeleteAsset(asset)) return;
   dialog.warning({
     title: '删除素材',
     content: `确定删除“${asset.name}”吗？删除后播放列表将无法引用该素材。`,
@@ -789,13 +817,13 @@ function copyStream(id: string) {
 }
 
 function openBatchMoveModal() {
-  if (!audio.canManage || !selectionCount.value) return;
+  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
   batchMoveTarget.value = currentFolder.value?.id ?? null;
   batchMoveModalVisible.value = true;
 }
 
 async function handleBatchMoveSave() {
-  if (!audio.canManage) return;
+  if (!audio.canManage && !audio.canManageCurrentWorld) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       folderId: batchMoveTarget.value ?? null,
@@ -815,13 +843,13 @@ async function handleBatchMoveSave() {
 }
 
 function openBatchVisibilityModal() {
-  if (!audio.canManage || !selectionCount.value) return;
+  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
   batchVisibilityValue.value = 'public';
   batchVisibilityModalVisible.value = true;
 }
 
 async function handleBatchVisibilitySave() {
-  if (!audio.canManage) return;
+  if (!audio.canManage && !audio.canManageCurrentWorld) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       visibility: batchVisibilityValue.value,
@@ -841,7 +869,7 @@ async function handleBatchVisibilitySave() {
 }
 
 function confirmBatchDelete() {
-  if (!audio.canManage || !selectionCount.value) return;
+  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
   dialog.warning({
     title: '批量删除素材',
     content: `确定删除已选的 ${selectionCount.value} 条素材吗？`,
@@ -871,6 +899,7 @@ watch(
     keyword.value = filters.query ?? '';
     selectedTags.value = [...filters.tags];
     selectedCreators.value = [...filters.creatorIds];
+    selectedScope.value = filters.scope ?? 'all';
     durationRange.value = filters.durationRange ? [...filters.durationRange] as [number, number] : [0, durationMax];
     folderKeys.value = filters.folderId ? [filters.folderId] : ['all'];
   },
@@ -1031,6 +1060,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.audio-library__detail-tags {
+  display: flex;
+  gap: 0.25rem;
 }
 
 .audio-library__detail-subtitle {

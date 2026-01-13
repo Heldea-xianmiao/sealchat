@@ -532,6 +532,9 @@ const sendSmtpTestEmail = async () => {
       <n-form-item label="启用内置小海豹">
         <n-switch v-model:value="model.builtInSealBotEnable" />
       </n-form-item>
+      <n-form-item label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
+        <n-switch v-model:value="model.allowWorldAudioWorkbench" />
+      </n-form-item>
       <n-form-item v-if="model.emailNotification" label="启用邮件提醒" feedback="允许用户配置未读消息邮件提醒（需配置 SMTP）">
         <n-switch v-model:value="model.emailNotification.enabled" />
       </n-form-item>

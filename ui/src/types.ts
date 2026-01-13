@@ -118,6 +118,7 @@ export interface ServerConfig {
     maxDelayMinutes?: number;
   };
   ffmpegAvailable?: boolean;
+  allowWorldAudioWorkbench?: boolean;
 }
 
 export interface UserInfo {
