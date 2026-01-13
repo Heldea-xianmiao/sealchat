@@ -3084,6 +3084,14 @@ export const useChatStore = defineStore({
       };
     },
 
+    async deleteExportTask(taskId: string) {
+      const resp = await api.delete(`api/v1/chat/export/${taskId}`);
+      return resp.data as {
+        task_id: string;
+        file_deleted?: boolean;
+      };
+    },
+
     // IC/OOC 角色配置相关方法
     getChannelIcOocRoleConfig(channelId: string): { icRoleId: string | null; oocRoleId: string | null } {
       if (!channelId) {

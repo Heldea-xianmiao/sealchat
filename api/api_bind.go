@@ -373,6 +373,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/chat/export", ChatExportCreate)
 	v1Auth.Get("/chat/export", ChatExportList)
 	v1Auth.Get("/chat/export/:taskId", ChatExportGet)
+	v1Auth.Delete("/chat/export/:taskId", ChatExportDelete)
 	v1Auth.Post("/chat/export/:taskId/retry", ChatExportRetry)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)

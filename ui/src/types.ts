@@ -88,6 +88,7 @@ export interface ExportTaskItem {
   message?: string;
   upload_url?: string;
   download_url: string;
+  file_missing?: boolean;
 }
 
 export interface ExportTaskListResponse {
