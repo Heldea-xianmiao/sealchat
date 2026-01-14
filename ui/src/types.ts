@@ -99,6 +99,18 @@ export interface ExportTaskListResponse {
   items: ExportTaskItem[];
 }
 
+export interface ServerAudioConfig {
+  storageDir?: string;
+  tempDir?: string;
+  maxUploadSizeMB?: number;
+  allowedMimeTypes?: string[];
+  enableTranscode?: boolean;
+  defaultBitrateKbps?: number;
+  alternateBitrates?: number[];
+  ffmpegPath?: string;
+  allowWorldAudioWorkbench?: boolean;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -118,8 +130,8 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
-  allowWorldAudioWorkbench?: boolean;
 }
 
 export interface UserInfo {

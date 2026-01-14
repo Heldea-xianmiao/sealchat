@@ -198,10 +198,12 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 		}
 		resp := struct {
 			utils.AppConfig
-			FFmpegAvailable bool `json:"ffmpegAvailable"`
+			FFmpegAvailable          bool `json:"ffmpegAvailable"`
+			AllowWorldAudioWorkbench bool `json:"allowWorldAudioWorkbench"`
 		}{
-			AppConfig:       ret,
-			FFmpegAvailable: ffmpegAvailable,
+			AppConfig:                ret,
+			FFmpegAvailable:          ffmpegAvailable,
+			AllowWorldAudioWorkbench: ret.Audio.AllowWorldAudioWorkbench,
 		}
 		return c.Status(http.StatusOK).JSON(resp)
 	})
@@ -428,11 +430,20 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
 
 	v1AuthAdmin.Put("/config", func(ctx *fiber.Ctx) error {
-		var newConfig utils.AppConfig
-		err := ctx.BodyParser(&newConfig)
+		var payload struct {
+			utils.AppConfig
+			AllowWorldAudioWorkbench *bool `json:"allowWorldAudioWorkbench"`
+		}
+		err := ctx.BodyParser(&payload)
 		if err != nil {
 			return err
 		}
+
+		newConfig := payload.AppConfig
+		if payload.AllowWorldAudioWorkbench != nil {
+			newConfig.Audio.AllowWorldAudioWorkbench = *payload.AllowWorldAudioWorkbench
+		}
+
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
 		return nil

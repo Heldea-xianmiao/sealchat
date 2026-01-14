@@ -65,7 +65,7 @@
           </template>
           刷新列表
         </n-button>
-        <n-button size="small" secondary @click="scrollToUpload" v-if="audio.canManage || audio.canManageCurrentWorld">
+        <n-button size="small" secondary @click="scrollToUpload" v-if="audio.canManage">
           <template #icon>
             <n-icon size="16">
               <CloudUploadOutline />
@@ -73,7 +73,7 @@
           </template>
           上传素材
         </n-button>
-        <n-button size="small" type="primary" @click="openCreateFolder" v-if="audio.canManage || audio.canManageCurrentWorld">
+        <n-button size="small" type="primary" @click="openCreateFolder" v-if="audio.canManage">
           <template #icon>
             <n-icon size="16">
               <FolderOpenOutline />
@@ -115,7 +115,7 @@
       <aside class="audio-library__folders">
         <div class="audio-library__folder-header">
           <span>文件夹</span>
-          <div class="audio-library__folder-actions" v-if="audio.canManage || audio.canManageCurrentWorld">
+          <div class="audio-library__folder-actions" v-if="audio.canManage">
             <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
             <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
             <n-button
@@ -722,7 +722,7 @@ function openRenameFolder() {
 }
 
 async function handleSaveFolder() {
-  if (!audio.canManage && !audio.canManageCurrentWorld) {
+  if (!audio.canManage) {
     message.error('没有权限管理文件夹');
     return;
   }
@@ -817,13 +817,13 @@ function copyStream(id: string) {
 }
 
 function openBatchMoveModal() {
-  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
+  if (!audio.canManage || !selectionCount.value) return;
   batchMoveTarget.value = currentFolder.value?.id ?? null;
   batchMoveModalVisible.value = true;
 }
 
 async function handleBatchMoveSave() {
-  if (!audio.canManage && !audio.canManageCurrentWorld) return;
+  if (!audio.canManage) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       folderId: batchMoveTarget.value ?? null,
@@ -843,13 +843,13 @@ async function handleBatchMoveSave() {
 }
 
 function openBatchVisibilityModal() {
-  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
+  if (!audio.canManage || !selectionCount.value) return;
   batchVisibilityValue.value = 'public';
   batchVisibilityModalVisible.value = true;
 }
 
 async function handleBatchVisibilitySave() {
-  if (!audio.canManage && !audio.canManageCurrentWorld) return;
+  if (!audio.canManage) return;
   try {
     const summary = await audio.batchUpdateAssets(checkedRowKeys.value, {
       visibility: batchVisibilityValue.value,
@@ -869,7 +869,7 @@ async function handleBatchVisibilitySave() {
 }
 
 function confirmBatchDelete() {
-  if ((!audio.canManage && !audio.canManageCurrentWorld) || !selectionCount.value) return;
+  if (!audio.canManage || !selectionCount.value) return;
   dialog.warning({
     title: '批量删除素材',
     content: `确定删除已选的 ${selectionCount.value} 条素材吗？`,

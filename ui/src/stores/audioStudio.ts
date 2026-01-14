@@ -321,8 +321,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     canManage(): boolean {
-      const user = useUserStore();
-      return Boolean(user.checkPerm?.('mod_admin'));
+      return this.canManageCurrentWorld;
     },
 
     isSystemAdmin(): boolean {
@@ -334,7 +333,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const user = useUserStore();
       if (user.checkPerm?.('mod_admin')) return true;
       const utils = useUtilsStore();
-      if (!utils.config?.allowWorldAudioWorkbench) return false;
+      if (!utils.config?.audio?.allowWorldAudioWorkbench) return false;
       if (!state.currentWorldId) return false;
       const chat = useChatStore();
       const worldDetail = chat.worldDetailMap?.[state.currentWorldId];

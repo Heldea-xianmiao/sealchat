@@ -1,5 +1,5 @@
 <template>
-  <div class="upload-panel" v-if="audio.canManage || audio.canManageCurrentWorld">
+  <div class="upload-panel" v-if="audio.canManage">
     <header>
       <h4>上传音频</h4>
       <p>支持 OGG/MP3/WAV（建议 OGG/Opus 以降低带宽）</p>
