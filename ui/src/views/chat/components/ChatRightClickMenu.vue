@@ -224,7 +224,14 @@ const canRemoveMessage = computed(() => {
   if (isSelfMessage.value) {
     return true;
   }
-  if (!viewerIsAdmin.value) {
+  const worldId = chat.currentWorldId;
+  const worldDetail = chat.worldDetailMap[worldId];
+  const ownerId = worldDetail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
+  const isWorldAdmin = worldDetail?.memberRole === 'owner' || worldDetail?.memberRole === 'admin' || ownerId === user.info.id;
+  if (!viewerIsAdmin.value && !isWorldAdmin) {
+    return false;
+  }
+  if (ownerId && targetUserId.value === ownerId) {
     return false;
   }
   if (targetIsAdmin.value) {

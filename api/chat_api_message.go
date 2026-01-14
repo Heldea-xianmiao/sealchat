@@ -261,11 +261,13 @@ func apiMessageRemove(ctx *ChatContext, data *struct {
 	operatorID := ctx.User.ID
 	targetUserID := msg.UserID
 	if targetUserID != operatorID {
-		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID)
+		operatorIsAdmin := isChannelAdminUser(channel, channelID, operatorID) ||
+			service.IsWorldAdmin(channel.WorldID, operatorID)
 		if !operatorIsAdmin && !pm.CanWithSystemRole(operatorID, pm.PermModAdmin) {
 			return nil, fmt.Errorf("无权限删除该消息")
 		}
-		if isChannelAdminUser(channel, channelID, targetUserID) {
+		if isChannelAdminUser(channel, channelID, targetUserID) ||
+			service.IsWorldAdmin(channel.WorldID, targetUserID) {
 			return nil, fmt.Errorf("无法删除拥有管理员权限的成员消息")
 		}
 	}
