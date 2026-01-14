@@ -307,6 +307,36 @@ export function matchKeywords(
   return results.slice(0, limit)
 }
 
+// 通用文本拼音匹配（用于成员搜索等场景）
+export function matchText(query: string, text: string): boolean {
+  if (!query || !text) {
+    return !query // 空查询匹配所有
+  }
+
+  const queryLower = query.toLowerCase()
+  const textLower = text.toLowerCase()
+
+  // 直接文本匹配
+  if (textLower.includes(queryLower)) {
+    return true
+  }
+
+  // 拼音匹配
+  if (pinyinModule) {
+    const queryUpper = query.toUpperCase()
+    const initials = getPinyinInitials(text)
+    if (initials && initials.includes(queryUpper)) {
+      return true
+    }
+    const pinyin = getPinyinFull(text)
+    if (pinyin && pinyin.includes(queryLower)) {
+      return true
+    }
+  }
+
+  return false
+}
+
 // 检查拼音库是否已加载
 export function isPinyinLoaded(): boolean {
   return pinyinModule !== null

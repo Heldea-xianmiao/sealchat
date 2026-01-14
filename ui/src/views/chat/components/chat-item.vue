@@ -156,12 +156,22 @@ const parseContent = (payload: any, overrideContent?: string) => {
         // textItems.push(DOMPurify.sanitize(item.toString()));
         // hasImage.value = true;
         break;
-      case "at":
-        if (item.attrs.id == user.info.id) {
-          textItems.push(`<span class="text-blue-500 bg-gray-400 px-1" style="white-space: pre-wrap">@${item.attrs.name}</span>`);
-        } else {
-          textItems.push(`<span class="text-blue-500" style="white-space: pre-wrap">@${item.attrs.name}</span>`);
+      case "at": {
+        const atId = item.attrs.id;
+        const atName = item.attrs.name || '';
+        const isAll = atId === 'all';
+        const isSelf = atId === user.info.id;
+        let className = 'mention-capsule';
+        if (isAll) {
+          className += ' mention-capsule--all';
+        } else if (isSelf) {
+          className += ' mention-capsule--self';
         }
+        // XSS 防护：使用 DOMPurify 转义名称
+        const sanitizedName = DOMPurify.sanitize(atName, { ALLOWED_TAGS: [] });
+        textItems.push(`<span class="${className}">@${sanitizedName}</span>`);
+        break;
+      }
       default: {
         const raw = item.toString();
         if (diceChipHtmlPattern.test(raw)) {
@@ -2148,5 +2158,58 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
   padding: 0;
   background: transparent;
   color: var(--chat-text-secondary);
+}
+
+/* @ mention capsule styles */
+.mention-capsule {
+  display: inline;
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  padding: 0 0.35em;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.mention-capsule:hover {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.mention-capsule--self {
+  background-color: rgba(59, 130, 246, 0.2);
+  font-weight: 600;
+}
+
+.mention-capsule--all {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.mention-capsule--all:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+}
+
+/* Night mode */
+:root[data-display-palette='night'] .mention-capsule {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+:root[data-display-palette='night'] .mention-capsule:hover {
+  background-color: rgba(59, 130, 246, 0.3);
+}
+
+:root[data-display-palette='night'] .mention-capsule--self {
+  background-color: rgba(59, 130, 246, 0.3);
+}
+
+:root[data-display-palette='night'] .mention-capsule--all {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+:root[data-display-palette='night'] .mention-capsule--all:hover {
+  background-color: rgba(239, 68, 68, 0.3);
 }
 </style>

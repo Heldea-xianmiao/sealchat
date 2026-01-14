@@ -2639,6 +2639,28 @@ export const useChatStore = defineStore({
       return resp?.data;
     },
 
+    // 获取可 @ 成员列表
+    async fetchMentionableMembers(channelId: string, icMode?: 'ic' | 'ooc') {
+      if (!channelId || channelId.length > 30) {
+        return { items: [], total: 0, canAtAll: false };
+      }
+      const resp = await api.get<{
+        items: Array<{
+          userId: string;
+          displayName: string;
+          color: string;
+          avatar: string;
+          identityId?: string;
+          identityType: 'ic' | 'ooc' | 'user';
+        }>;
+        total: number;
+        canAtAll: boolean;
+      }>(`api/v1/channels/${channelId}/mentionable-members`, {
+        params: icMode ? { icMode } : undefined,
+      });
+      return resp.data;
+    },
+
     async eventDispatch(e: Event) {
       if (e.type === 'audio-state-updated') {
         const audioPayload = (e as any).audioState as AudioPlaybackStatePayload | undefined;

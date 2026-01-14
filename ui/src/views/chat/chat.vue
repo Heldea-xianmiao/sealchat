@@ -81,7 +81,7 @@ import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
-import { ensurePinyinLoaded, matchKeywords, type KeywordMatchResult } from '@/utils/pinyinMatch';
+import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -6836,8 +6836,12 @@ const formatInlinePreviewText = (value: string) => {
     }
   }
 
+  // 将 <at> 标签转换为 @名字 格式
+  let replaced = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
+    return `@${name || '用户'}`;
+  });
   // 替换图片标记为 [图片]
-  const replaced = value.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
+  replaced = replaced.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
   return normalizePlaceholderWhitespace(replaced);
 };
 
@@ -6908,16 +6912,21 @@ const renderPreviewContent = (value: string) => {
     }
   }
 
+  // 预览模式：将 <at> 标签转换为简单的 @名字 格式
+  let processedValue = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
+    return `@${name || '用户'}`;
+  });
+
   // 处理普通文本和图片标记
   const imageMarkerRegex = /\[\[(?:图片:([^\]]+)|img:id:([^\]]+))\]\]/g;
   let result = '';
   let lastIndex = 0;
 
   let match;
-  while ((match = imageMarkerRegex.exec(value)) !== null) {
+  while ((match = imageMarkerRegex.exec(processedValue)) !== null) {
     // 添加标记前的文本
     if (match.index > lastIndex) {
-      result += renderDicePreviewSegment(value.substring(lastIndex, match.index));
+      result += renderDicePreviewSegment(processedValue.substring(lastIndex, match.index));
     }
 
     // 添加图片
@@ -6941,11 +6950,11 @@ const renderPreviewContent = (value: string) => {
   }
 
   // 添加剩余文本
-  if (lastIndex < value.length) {
-    result += renderDicePreviewSegment(value.substring(lastIndex));
+  if (lastIndex < processedValue.length) {
+    result += renderDicePreviewSegment(processedValue.substring(lastIndex));
   }
 
-  return DOMPurify.sanitize(result || value);
+  return DOMPurify.sanitize(result || processedValue);
 };
 
 const buildPreviewMeta = (value: string) => {
@@ -6969,7 +6978,7 @@ const buildMessageHtml = async (draft: string) => {
   const placeholderMap = new Map<string, string>();
   let index = 0;
   inlineImageMarkerRegexp.lastIndex = 0;
-  const sanitizedDraft = draft.replace(inlineImageMarkerRegexp, (_, markerId) => {
+  let sanitizedDraft = draft.replace(inlineImageMarkerRegexp, (_, markerId) => {
     const record = inlineImages.get(markerId);
     if (record && record.status === 'uploaded' && record.attachmentId) {
       const placeholder = `__INLINE_IMG_${index++}__`;
@@ -6980,6 +6989,16 @@ const buildMessageHtml = async (draft: string) => {
     return '';
   });
   inlineImageMarkerRegexp.lastIndex = 0;
+
+  // 保护 Satori <at> 标签，避免被 contentEscape 转义
+  const atTagRegexp = /<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*\/>/g;
+  let atIndex = 0;
+  sanitizedDraft = sanitizedDraft.replace(atTagRegexp, (match) => {
+    const placeholder = `__SATORI_AT_${atIndex++}__`;
+    placeholderMap.set(placeholder, match);
+    return placeholder;
+  });
+
   let escaped = contentEscape(sanitizedDraft);
   escaped = escaped.replace(/\r\n/g, '\n').replace(/\n/g, '<br />');
   escaped = await replaceUsernames(escaped);
@@ -7743,7 +7762,25 @@ chatEvent.on('message-created', (e?: Event) => {
     }
   } else {
     sound.play();
-    
+
+    // 检测是否被 @ 了（包括 @all）
+    const content = incoming.content || '';
+    const currentUserId = user.info.id;
+    const isMentioned = content.includes(`id="${currentUserId}"`) || content.includes('id="all"');
+
+    if (isMentioned) {
+      // 被 @ 时播放额外提示音或特殊处理
+      import('naive-ui').then(({ useMessage }) => {
+        const message = useMessage();
+        const senderName = incoming.identity?.displayName
+          || (incoming as any).sender_member_name
+          || incoming.member?.nick
+          || incoming.user?.nick
+          || '有人';
+        message.info(`${senderName} @ 了你`);
+      });
+    }
+
     // 如果窗口没有焦点，更新网页标题提示新消息
     if (!chat.isAppFocused && chat.curChannel?.name) {
       import('@/stores/utils').then(({ updateUnreadTitleNotification }) => {
@@ -8739,11 +8776,25 @@ const atRenderLabel = (option: MentionOption) => {
       return <div class="flex items-center space-x-1">
         <span>{(option as any).data.info}</span>
       </div>
-    case 'at':
-      return <div class="flex items-center space-x-1">
-        <AvatarVue size={24} border={false} src={(option as any).data?.avatar} />
-        <span>{option.label}</span>
+    case 'at': {
+      const data = (option as any).data || {};
+      const identityType = data.identityType;
+      const color = data.color || 'inherit';
+      const isAll = data.userId === 'all';
+      return <div class="flex items-center space-x-2">
+        {isAll ? (
+          <span class="at-option-avatar at-option-avatar--all">@</span>
+        ) : (
+          <AvatarVue size={24} border={false} src={data.avatar} />
+        )}
+        <span style={{ color: isAll ? '#ef4444' : color }}>{option.label}</span>
+        {identityType && identityType !== 'all' && (
+          <span class={`at-option-tag at-option-tag--${identityType}`}>
+            {identityType === 'ic' ? '场内' : identityType === 'ooc' ? '场外' : '用户'}
+          </span>
+        )}
       </div>
+    }
   }
 }
 
@@ -8778,15 +8829,41 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
 
   switch (prefix) {
     case '@': {
-      const lst = (await chat.guildMemberList('')).data.map((i: any) => {
-        return {
-          type: 'at',
-          value: i.nick,
-          label: i.nick,
-          data: i,
+      await ensurePinyinLoaded();
+      const channelId = chat.curChannel?.id;
+      if (!channelId) {
+        atOptions.value = [];
+        break;
+      }
+      const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
+      const result = await chat.fetchMentionableMembers(channelId, icMode);
+      let lst: MentionOption[] = [];
+      // @all option
+      if (result.canAtAll) {
+        const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
+        if (allMatches) {
+          lst.push({
+            type: 'at',
+            value: '<at id="all" name="全体成员"/>',
+            label: '全体成员',
+            data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+          });
         }
-      })
-      atOptions.value = lst;
+      }
+      // Filter and map members
+      for (const item of result.items) {
+        if (pattern && !matchText(pattern, item.displayName)) {
+          continue;
+        }
+        const escapedName = item.displayName.replace(/"/g, '&quot;');
+        lst.push({
+          type: 'at',
+          value: `<at id="${item.userId}" name="${escapedName}"/>`,
+          label: item.displayName,
+          data: item,
+        });
+      }
+      atOptions.value = lst.slice(0, 10);
       break;
     }
     case '.': case '/':
@@ -14022,5 +14099,59 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: transparent;
+}
+
+/* @ mention option styles */
+.at-option-avatar {
+  flex-shrink: 0;
+}
+
+.at-option-avatar--all {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: white;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.at-option-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+
+.at-option-tag--ic {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.at-option-tag--ooc {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
+.at-option-tag--user {
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+:global([data-display-palette='night']) .at-option-tag--ic,
+:global(:root[data-display-palette='night']) .at-option-tag--ic {
+  background: rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+}
+
+:global([data-display-palette='night']) .at-option-tag--ooc,
+:global(:root[data-display-palette='night']) .at-option-tag--ooc {
+  background: rgba(168, 85, 247, 0.25);
+  color: #c084fc;
 }
 </style>
