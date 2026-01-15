@@ -10,6 +10,7 @@ export interface AudioAsset {
   bitrate: number;
   storageType: 'local' | 's3';
   objectKey: string;
+  transcodeStatus?: 'pending' | 'ready' | 'failed';
   description?: string;
   tags: string[];
   visibility: 'public' | 'restricted';
@@ -118,6 +119,7 @@ export interface AudioSearchFilters {
 
 export interface UploadTaskState {
   id: string;
+  assetId?: string;
   filename: string;
   size: number;
   progress: number;

@@ -107,6 +107,7 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
   document.addEventListener('keydown', unlockAudio, { once: true });
 }
 let progressTimer: number | null = null;
+let transcodeTimer: number | null = null;
 const SYNC_DEBOUNCE_MS = 300;
 
 function createEmptyTrack(type: AudioTrackType): TrackRuntime {
@@ -143,6 +144,14 @@ function startProgressWatcher(store: ReturnType<typeof useAudioStudioStore>) {
   }, 500);
 }
 
+function startTranscodeWatcher(store: ReturnType<typeof useAudioStudioStore>) {
+  if (typeof window === 'undefined') return;
+  if (transcodeTimer) return;
+  transcodeTimer = window.setInterval(() => {
+    store.refreshTranscodeTasks();
+  }, 3000);
+}
+
 function serializeRuntimeTracks(tracks: Record<AudioTrackType, TrackRuntime>): AudioSceneTrack[] {
   return DEFAULT_TRACK_TYPES.map((type) => {
     const runtime = tracks[type] || createEmptyTrack(type);
@@ -167,6 +176,13 @@ function stopProgressWatcher() {
   if (!progressTimer) return;
   window.clearInterval(progressTimer);
   progressTimer = null;
+}
+
+function stopTranscodeWatcher() {
+  if (typeof window === 'undefined') return;
+  if (!transcodeTimer) return;
+  window.clearInterval(transcodeTimer);
+  transcodeTimer = null;
 }
 
 function buildFolderPathLookup(folders: AudioFolder[]): Record<string, string> {
@@ -1797,6 +1813,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         try {
           task.status = 'uploading';
           task.error = undefined;
+          task.progress = 0;
           const formData = new FormData();
           formData.append('file', file);
           if (options?.scope) {
@@ -1807,13 +1824,23 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           }
           const resp = await api.post('/api/v1/audio/assets/upload', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
-            onUploadProgress: (e) => {
-              if (e.total) {
-                task.progress = Math.round((e.loaded / e.total) * 100);
-              }
-            },
           });
-          task.status = resp.data?.needsTranscode ? 'transcoding' : 'success';
+          const serverStatus = resp.data?.status;
+          const assetId = resp.data?.item?.id;
+          if (assetId) {
+            task.assetId = assetId;
+          }
+          if (serverStatus === 'processing') {
+            task.status = 'transcoding';
+            startTranscodeWatcher(this);
+          } else if (serverStatus === 'failed') {
+            task.status = 'error';
+            task.error = '转码失败';
+          } else if (serverStatus) {
+            task.status = 'success';
+          } else {
+            task.status = resp.data?.needsTranscode ? 'transcoding' : 'success';
+          }
           task.progress = 100;
           return true;
         } catch (err: any) {
@@ -1833,6 +1860,27 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await doUpload();
     },
 
+    async refreshTranscodeTasks() {
+      const tasks = this.uploadTasks.filter((task) => task.status === 'transcoding' && task.assetId);
+      if (!tasks.length) {
+        stopTranscodeWatcher();
+        return;
+      }
+      const results = await Promise.allSettled(tasks.map((task) => this.fetchSingleAsset(task.assetId!)));
+      results.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        const asset = result.value;
+        const task = tasks[index];
+        if (asset.transcodeStatus === 'ready') {
+          task.status = 'success';
+          task.progress = 100;
+        } else if (asset.transcodeStatus === 'failed') {
+          task.status = 'error';
+          task.error = '转码失败';
+        }
+      });
+    },
+
     removeUploadTask(taskId: string) {
       this.uploadTasks = this.uploadTasks.filter((task) => task.id !== taskId);
     },
@@ -1843,6 +1891,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     clearAllUploadTasks() {
       this.uploadTasks = [];
+      stopTranscodeWatcher();
     },
 
     retryFailedUploadTask(taskId: string, file: File, options?: { scope?: AudioAssetScope; worldId?: string }) {

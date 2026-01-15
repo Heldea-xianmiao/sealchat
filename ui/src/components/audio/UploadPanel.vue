@@ -48,13 +48,6 @@
             </span>
           </div>
         </div>
-        <n-progress
-          v-if="task.status !== 'error'"
-          :percentage="task.progress"
-          :status="getProgressStatus(task.status)"
-          :show-indicator="task.status === 'uploading'"
-          :processing="task.status === 'uploading' || task.status === 'transcoding'"
-        />
         <p v-if="task.error" class="upload-task__error">{{ task.error }}</p>
         <div class="upload-task__actions" v-if="task.status === 'success' || task.status === 'error'">
           <n-button text size="tiny" @click="removeTask(task.id)">移除</n-button>
@@ -66,7 +59,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { NRadioGroup, NRadioButton, NProgress, NButton, NTag } from 'naive-ui';
+import { NRadioGroup, NRadioButton, NButton, NTag } from 'naive-ui';
 import { useMessage } from 'naive-ui';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import type { AudioAssetScope, UploadTaskState } from '@/types/audio';
@@ -121,19 +114,6 @@ function getStatusType(status: UploadTaskState['status']): 'default' | 'info' | 
       return 'success';
     case 'error':
       return 'error';
-    default:
-      return 'default';
-  }
-}
-
-function getProgressStatus(status: UploadTaskState['status']): 'default' | 'success' | 'error' | 'warning' {
-  switch (status) {
-    case 'success':
-      return 'success';
-    case 'error':
-      return 'error';
-    case 'transcoding':
-      return 'warning';
     default:
       return 'default';
   }

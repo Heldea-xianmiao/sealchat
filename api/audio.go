@@ -157,9 +157,16 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 		}
 	}
 	needsTranscode := asset.TranscodeStatus == model.AudioTranscodePending
+	status := "success"
+	if asset.TranscodeStatus == model.AudioTranscodePending {
+		status = "processing"
+	} else if asset.TranscodeStatus == model.AudioTranscodeFailed {
+		status = "failed"
+	}
 	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"item":           asset,
 		"needsTranscode": needsTranscode,
+		"status":         status,
 	})
 }
 

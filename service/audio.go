@@ -382,6 +382,21 @@ func (svc *audioService) persistTempFile(tempPath, originalName, mimeType string
 			log.Printf("[audio] 上传对象存储失败，使用本地存储: %v", err)
 		}
 	}
+	if svc.cfg.EnableTranscode && svc.ffmpegPath != "" {
+		objectKey := filepath.ToSlash(filepath.Join("original", fmt.Sprintf("%s%s", asset.ID, pickExtension(mimeType, tempPath))))
+		size, err := svc.storage.moveFromTemp(tempPath, objectKey)
+		if err != nil {
+			return nil, err
+		}
+		asset.StorageType = model.StorageLocal
+		asset.ObjectKey = objectKey
+		asset.Size = size
+		asset.DurationSeconds, _ = svc.probeDuration(objectKey)
+		asset.BitrateKbps = svc.cfg.DefaultBitrateKbps
+		asset.Variants = nil
+		asset.TranscodeStatus = model.AudioTranscodePending
+		return asset, nil
+	}
 	return svc.persistLocalAsset(asset, tempPath, mimeType)
 }
 
@@ -456,6 +471,49 @@ type variantResult struct {
 	Primary         model.AudioAssetVariant
 	Extras          []model.AudioAssetVariant
 	TranscodeStatus model.AudioTranscodeStatus
+}
+
+func (svc *audioService) scheduleTranscode(assetID, sourceKey string) {
+	if svc == nil || svc.ffmpegPath == "" {
+		return
+	}
+	go func() {
+		if err := svc.transcodeAsset(assetID, sourceKey); err != nil {
+			log.Printf("[audio] transcode failed for %s: %v", assetID, err)
+		}
+	}()
+}
+
+func (svc *audioService) transcodeAsset(assetID, sourceKey string) error {
+	full, err := svc.storage.fullPath(sourceKey)
+	if err != nil {
+		return err
+	}
+	result, err := svc.generateVariants(full, assetID, "")
+	if err != nil {
+		return model.GetDB().Model(&model.AudioAsset{}).
+			Where("id = ?", assetID).
+			Updates(map[string]interface{}{
+				"transcode_status": model.AudioTranscodeFailed,
+				"updated_at":       time.Now(),
+			}).Error
+	}
+	updates := map[string]interface{}{
+		"object_key":       result.Primary.ObjectKey,
+		"bitrate_kbps":     result.Primary.BitrateKbps,
+		"duration":         result.Primary.Duration,
+		"size":             result.Primary.Size,
+		"variants":         model.JSONList[model.AudioAssetVariant](result.Extras),
+		"transcode_status": result.TranscodeStatus,
+		"updated_at":       time.Now(),
+	}
+	if err := model.GetDB().Model(&model.AudioAsset{}).Where("id = ?", assetID).Updates(updates).Error; err != nil {
+		return err
+	}
+	if result.TranscodeStatus == model.AudioTranscodeReady {
+		svc.removeAssetObject(model.StorageLocal, sourceKey)
+	}
+	return nil
 }
 
 func (svc *audioService) generateVariants(tempPath, assetID, mimeType string) (*variantResult, error) {

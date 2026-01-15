@@ -115,6 +115,11 @@ func AudioCreateAssetFromUpload(file *multipart.FileHeader, opts AudioUploadOpti
 	if err := model.GetDB().Create(asset).Error; err != nil {
 		return nil, err
 	}
+	if asset.TranscodeStatus == model.AudioTranscodePending {
+		if svc := GetAudioService(); svc != nil {
+			svc.scheduleTranscode(asset.ID, asset.ObjectKey)
+		}
+	}
 	return asset, nil
 }
 
