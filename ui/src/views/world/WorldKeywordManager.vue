@@ -90,7 +90,8 @@ const worldDetail = computed(() => {
 const canEdit = computed(() => {
   const detail = worldDetail.value
   const role = detail?.memberRole
-  return role === 'owner' || role === 'admin'
+  const allowMemberEdit = detail?.world?.allowMemberEditKeywords ?? detail?.allowMemberEditKeywords ?? false
+  return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 
 const formModel = reactive({

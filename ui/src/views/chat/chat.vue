@@ -222,7 +222,8 @@ const canManageWorldKeywords = computed(() => {
   }
   const detail = chat.worldDetailMap[worldId]
   const role = detail?.memberRole
-  return role === 'owner' || role === 'admin'
+  const allowMemberEdit = detail?.world?.allowMemberEditKeywords ?? detail?.allowMemberEditKeywords ?? false
+  return role === 'owner' || role === 'admin' || (allowMemberEdit && role === 'member')
 })
 const displaySettingsVisible = ref(false);
 const compactInlineLayout = computed(() => display.layout === 'compact' && !display.showAvatar);
