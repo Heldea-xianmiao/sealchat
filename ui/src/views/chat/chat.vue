@@ -12519,6 +12519,7 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
+  align-self: stretch;
 }
 
 .chat-input-send-inline .n-button {
@@ -12531,6 +12532,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
+  height: 100%;
+  max-height: 88px;
+  min-height: 44px;
 }
 
 .send-action-btn {
@@ -12561,8 +12565,11 @@ onBeforeUnmount(() => {
 }
 
 .edit-action-btn {
-  width: 40px !important;
-  height: 22px !important;
+  width: 44px !important;
+  height: auto !important;
+  flex: 1 1 0;
+  min-height: 20px;
+  max-height: 44px;
   border-radius: 0 !important;
   padding: 0 !important;
   transition: background-color 0.2s ease, border-color 0.2s ease;
@@ -12660,9 +12667,14 @@ onBeforeUnmount(() => {
     border-radius: 8px !important;
   }
 
+  .edit-actions-group {
+    max-height: 80px;
+    min-height: 40px;
+  }
+
   .edit-action-btn {
-    width: 36px !important;
-    height: 20px !important;
+    width: 40px !important;
+    max-height: 40px;
   }
 }
 
