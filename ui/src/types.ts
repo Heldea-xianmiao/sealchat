@@ -132,6 +132,15 @@ export interface ServerConfig {
   };
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
+  loginBackground?: {
+    attachmentId?: string;
+    mode?: 'cover' | 'contain' | 'tile' | 'center';
+    opacity?: number;
+    blur?: number;
+    brightness?: number;
+    overlayColor?: string;
+    overlayOpacity?: number;
+  };
 }
 
 export interface UserInfo {
