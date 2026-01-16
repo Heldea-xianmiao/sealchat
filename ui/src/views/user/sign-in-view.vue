@@ -4,7 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FormInst, FormRules } from 'naive-ui';
 import { useMessage } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
-import { useUtilsStore } from '@/stores/utils';
+import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 
@@ -44,6 +44,11 @@ const turnstileLoading = ref(false);
 const userStore = useUserStore();
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
+
+const signInTitle = computed(() => {
+  const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
+  return title && title.length > 0 ? title : DEFAULT_PAGE_TITLE;
+});
 
 const captchaMode = computed(() => config.value?.captcha?.signin?.mode ?? config.value?.captcha?.mode ?? 'off');
 const captchaImageUrl = computed(() => {
@@ -282,7 +287,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex h-full w-full justify-center items-center">
     <div class="w-[50%] flex items-center justify-center flex-col" style="min-width: 20rem;">
-      <h2 class="font-bold text-xl mb-8">摸鱼中心</h2>
+      <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
         <n-form-item path="account" label="用户名/昵称">
