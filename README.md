@@ -74,7 +74,7 @@ docker run -d --name sealchat --restart unless-stopped \
 
 ### 二进制部署
 
-1. 从发行页下载或 `go build ./...` 编译，运行 `./sealchat_server`（Windows 下为 `.exe`）。
+1. 从发行页下载或 `go build ./...` 编译，运行 `./sealchat_server`（Windows 下为 `.exe`）。发行包内附 `config.yaml.example` 与 `config.docker.yaml.example`，可按需复制为 `config.yaml`。
 2. 首次启动会生成 `config.yaml` 与 `data/` 目录，按照示例修改域名、端口、数据库、附件/音频/导出目录。
 3. 浏览器访问 `http://<domain>:3212/`，注册首个账号（自动成为管理员并创建默认世界）。
 4. 参考 [`docs/product-introduction.md`](docs/product-introduction.md) 或 `deploy_zh.md` 完成世界、频道、权限与资产配置。

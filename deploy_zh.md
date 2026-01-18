@@ -184,6 +184,7 @@ Windows下为zip格式。
 - Linux/macOS: sealchat-server
 
 同时发行包会包含 `bin/<平台目录>/cwebp` 与 `bin/<平台目录>/gif2webp`（以及 `LICENSE`），用于图片压缩/转换；请保持它们与主程序同目录，不要删掉或改名。
+发行包还会包含 `config.yaml.example` 与 `config.docker.yaml.example`，按需复制为 `config.yaml` 后再修改。
 
 
 ## 3. 运行程序

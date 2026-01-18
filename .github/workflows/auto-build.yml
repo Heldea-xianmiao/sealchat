@@ -127,6 +127,8 @@ jobs:
           mkdir -p "package/bin/${WEBP_DIR}"
           cp -a "bin/${WEBP_DIR}/." "package/bin/${WEBP_DIR}/"
           cp bin/LICENSE package/LICENSE
+          cp config.yaml.example package/
+          cp config.docker.yaml.example package/
 
       - name: Upload
         uses: actions/upload-artifact@v4
