@@ -92,6 +92,27 @@ docker run -d --name sealchat --restart unless-stopped \
 - `go test ./...`：执行后端单元测试（导出/骰子等模块含示例测试）。
 - `./sealchat_server -i` / `./sealchat_server --uninstall`：在 Windows 上注册/卸载系统服务。
 
+### 配置版本管理
+SealChat 支持配置文件数据库持久化与版本历史管理，最多保留 10 个历史版本。
+
+```bash
+# 列出配置历史版本
+./sealchat_server --config-list
+
+# 查看指定版本配置详情（敏感字段已遮罩）
+./sealchat_server --config-show 3
+
+# 回滚到指定版本
+./sealchat_server --config-rollback 2
+
+# 导出指定版本为 YAML 文件
+./sealchat_server --config-export 1 --output config.backup.yaml
+```
+
+配置同步逻辑：
+- 配置文件存在时：读取并同步到数据库
+- 配置文件丢失时：从数据库恢复并重建配置文件
+
 ## 目录导览
 | 目录 | 说明 |
 | --- | --- |

@@ -442,3 +442,57 @@ PostgreSQL因为开发者比较常用，是第二优先级支持的数据库。
 MySQL的支持可能不如前两者完善。
 
 如果在使用过程中遇到任何问题，请及时向我们反馈，我们会尽快解决。
+
+## 5. 配置版本管理
+
+SealChat 支持配置文件数据库持久化与版本历史管理，便于配置恢复和变更追溯。
+
+### 5.1 功能特性
+
+- **自动同步**：每次启动时自动将配置文件同步到数据库
+- **版本历史**：保留最近 10 个配置版本，超出自动清理
+- **灾难恢复**：配置文件丢失时自动从数据库恢复
+- **敏感字段保护**：CLI 查看时自动遮罩密码、密钥等敏感信息
+
+### 5.2 CLI 命令
+
+```bash
+# 列出所有配置历史版本
+./sealchat-server --config-list
+
+# 查看指定版本的配置详情（敏感字段显示为 ******）
+./sealchat-server --config-show 3
+
+# 回滚到指定版本（会创建新版本记录）
+./sealchat-server --config-rollback 2
+
+# 导出指定版本为 YAML 文件
+./sealchat-server --config-export 1 --output config.backup.yaml
+```
+
+### 5.3 配置同步逻辑
+
+启动时的双路径逻辑：
+
+1. **配置文件存在**：读取 `config.yaml` → 同步到数据库（若内容有变化则创建新版本）
+2. **配置文件丢失**：从数据库读取最新配置 → 写入 `config.yaml` 恢复
+
+### 5.4 版本来源标识
+
+每个版本记录包含来源标识：
+
+| 来源 | 说明 |
+| --- | --- |
+| `file` | 从配置文件同步 |
+| `init` | 初始安装 |
+| `api` | 通过管理 API 修改 |
+| `rollback` | 回滚操作 |
+
+### 5.5 环境变量
+
+CLI 命令支持通过环境变量指定数据库连接（优先级高于配置文件）：
+
+```bash
+export SEALCHAT_DSN="postgresql://user:pass@localhost:5432/sealchat"
+./sealchat-server --config-list
+```
