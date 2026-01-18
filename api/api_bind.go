@@ -2,6 +2,7 @@ package api
 
 import (
 	_ "embed"
+	"encoding/json"
 	"html"
 	"io/fs"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/spf13/afero"
 
+	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
 	"sealchat/utils"
@@ -26,6 +28,33 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+
+// SyncConfigToDB 将配置同步到数据库
+func SyncConfigToDB(config *utils.AppConfig, source string) {
+	if config == nil {
+		return
+	}
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		log.Printf("[配置] 序列化配置失败: %v", err)
+		return
+	}
+
+	note := ""
+	switch source {
+	case "file":
+		note = "从配置文件同步"
+	case "init":
+		note = "初始安装"
+	case "api":
+		note = "通过 API 修改"
+	}
+
+	if err := model.SaveConfigVersion(string(configJSON), source, note); err != nil {
+		log.Printf("[配置] 保存配置版本失败: %v", err)
+	}
+}
 
 type listenMode int
 
@@ -450,6 +479,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
+
+		// 同步到数据库
+		SyncConfigToDB(appConfig, "api")
+
 		return nil
 	})
 

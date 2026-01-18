@@ -27,9 +27,14 @@ var embedDirStatic embed.FS
 
 func main() {
 	var opts struct {
-		Install   bool `short:"i" long:"install" description:"安装为系统服务"`
-		Uninstall bool `long:"uninstall" description:"删除系统服务"`
-		Download  bool `short:"d" long:"download" description:"从github下载最新的压缩包"`
+		Install        bool  `short:"i" long:"install" description:"安装为系统服务"`
+		Uninstall      bool  `long:"uninstall" description:"删除系统服务"`
+		Download       bool  `short:"d" long:"download" description:"从github下载最新的压缩包"`
+		ConfigList     bool  `long:"config-list" description:"列出配置历史版本"`
+		ConfigShow     int64 `long:"config-show" description:"显示指定版本配置详情"`
+		ConfigRollback int64 `long:"config-rollback" description:"回滚到指定配置版本"`
+		ConfigExport   int64 `long:"config-export" description:"导出指定版本配置到文件"`
+		Output         string `long:"output" description:"导出配置的输出文件路径"`
 	}
 	_, err := flags.ParseArgs(&opts, os.Args)
 	if err != nil {
@@ -54,8 +59,35 @@ func main() {
 		return
 	}
 
+	// 配置管理命令需要先初始化数据库
+	if opts.ConfigList || opts.ConfigShow > 0 || opts.ConfigRollback > 0 || opts.ConfigExport > 0 {
+		lo.Must0(os.MkdirAll("./data", 0755))
+		// 优先从配置文件读取 DSN，否则使用默认值
+		dsn := utils.GetDSNForCLI()
+		if err := model.DBInitMinimal(dsn); err != nil {
+			log.Fatalf("初始化数据库失败: %v", err)
+		}
+
+		if opts.ConfigList {
+			handleConfigList()
+			return
+		}
+		if opts.ConfigShow > 0 {
+			handleConfigShow(opts.ConfigShow)
+			return
+		}
+		if opts.ConfigRollback > 0 {
+			handleConfigRollback(opts.ConfigRollback)
+			return
+		}
+		if opts.ConfigExport > 0 {
+			handleConfigExport(opts.ConfigExport, opts.Output)
+			return
+		}
+	}
+
 	lo.Must0(os.MkdirAll("./data", 0755))
-	config := utils.ReadConfig()
+	config := initConfigWithDB()
 	utils.EnsureDataDirs(config)
 
 	if err := utils.VerifyBundledWebPToolsWithLog(log.Printf); err != nil {
