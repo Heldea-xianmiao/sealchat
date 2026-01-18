@@ -10,6 +10,7 @@ import {
   updateCollection as apiUpdateCollection,
   updateItem as apiUpdateItem,
   uploadItems as apiUploadItems,
+  addEmojiToFavorites as apiAddEmojiToFavorites,
   type GalleryCollectionPayload,
   type GalleryItemUploadPayload
 } from '@/models/gallery';
@@ -49,6 +50,8 @@ interface GalleryState {
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
 const DEFAULT_EMOJI_REMARK_VISIBLE = true;
+
+export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
 
 interface EmojiPreferencePayload {
   emojiCollectionId: string | null;
@@ -190,6 +193,39 @@ export const useGalleryStore = defineStore('gallery', {
       this.persistEmojiPreference(userId);
       if (collectionId) {
         void this.loadItems(collectionId);
+      }
+    },
+
+    async ensureEmojiCollection(ownerId: string): Promise<string | null> {
+      if (this.emojiCollectionId) {
+        const collection = this.getCollections(ownerId).find(c => c.id === this.emojiCollectionId);
+        if (collection) {
+          await this.loadItems(this.emojiCollectionId);
+          return collection.id;
+        }
+      }
+
+      const collections = await this.loadCollections(ownerId, true);
+      const existing = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
+
+      if (existing) {
+        this.linkEmojiCollection(existing.id, ownerId);
+        await this.loadItems(existing.id);
+        return existing.id;
+      }
+
+      return null;
+    },
+
+    async addEmoji(attachmentId: string, ownerId: string): Promise<void> {
+      const resp = await apiAddEmojiToFavorites(attachmentId);
+      const item = resp.data.item;
+      // Refresh emoji collection data
+      const collections = await this.loadCollections(ownerId, true);
+      const emojiCol = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
+      if (emojiCol) {
+        this.linkEmojiCollection(emojiCol.id, ownerId);
+        this.upsertItems(emojiCol.id, [item]);
       }
     },
 

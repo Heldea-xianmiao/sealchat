@@ -55,7 +55,6 @@ import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
-import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
@@ -828,13 +827,8 @@ chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
 chatEvent.on('open-display-settings', handleOpenDisplaySettings);
 
 const emojiLoading = ref(false)
-const uploadImages = computedAsync(async () => {
-  if (user.emojiCount) {
-    const resp = await user.emojiList();
-    return resp.data.items;
-  }
-  return [];
-}, [], emojiLoading);
+// 统一使用 Gallery Store 的表情收藏数据
+const emojiItems = computed<GalleryItem[]>(() => gallery.emojiItems);
 
 const EMOJI_THUMB_SIZE = 80;
 const emojiAttachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
@@ -871,18 +865,12 @@ const resolveEmojiAttachmentUrl = (attachmentId: string) => {
   return `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
 };
 
-const getEmojiItemSrc = (item: UserEmojiModel) => {
-  const id = item.attachmentId || item.id;
+const getEmojiItemSrc = (item: GalleryItem) => {
+  const id = item.attachmentId;
   return resolveEmojiAttachmentUrl(id);
 };
 
-const hasUserEmoji = computed(() => (uploadImages.value?.length ?? 0) > 0);
-const galleryEmojiItems = computed<GalleryItem[]>(() => {
-  if (!gallery.emojiCollectionId) return [];
-  return gallery.getItemsByCollection(gallery.emojiCollectionId);
-});
-const galleryEmojiName = computed(() => gallery.emojiCollection?.name ?? '');
-const hasGalleryEmoji = computed(() => galleryEmojiItems.value.length > 0);
+const hasEmojiItems = computed(() => emojiItems.value.length > 0);
 
 const emojiPopoverShow = ref(false);
 const emojiTriggerButtonRef = ref<HTMLElement | null>(null);
@@ -1001,21 +989,13 @@ const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
   });
 };
 
-const filteredUserEmojis = computed(() => {
+const filteredEmojiItems = computed(() => {
   const query = emojiSearchQuery.value.trim().toLowerCase();
-  const items = uploadImages.value || [];
+  const items = emojiItems.value;
   const filtered = !query ? items : items.filter((item, idx) => {
     const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
     return remark.toLowerCase().includes(query);
   });
-  return sortByUsage(filtered);
-});
-
-const filteredGalleryEmojis = computed(() => {
-  const query = emojiSearchQuery.value.trim().toLowerCase();
-  const filtered = !query ? galleryEmojiItems.value : galleryEmojiItems.value.filter(item =>
-    item.remark?.toLowerCase().includes(query)
-  );
   return sortByUsage(filtered);
 });
 
@@ -1623,21 +1603,25 @@ const handleEmojiTriggerClick = () => {
 
 
 const buildEmojiRemarkMap = () => {
-  const allEmojis = [
-    ...(uploadImages.value || []).map(item => ({
-      remark: item.remark?.trim(),
-      attachmentId: item.attachmentId || item.id
-    })),
-    ...allGalleryItems.value.map(item => ({
-      remark: item.remark?.trim(),
-      attachmentId: item.attachmentId
-    }))
-  ].filter(e => e.remark && e.attachmentId);
-
+  // 优先使用表情收藏的备注映射，采用"先到先得"策略避免覆盖
   const remarkMap = new Map<string, string>();
-  allEmojis.forEach(e => {
-    if (e.remark) remarkMap.set(e.remark, e.attachmentId);
-  });
+
+  // 先添加表情收藏（优先级最高）
+  for (const item of emojiItems.value) {
+    const remark = item.remark?.trim();
+    if (remark && item.attachmentId && !remarkMap.has(remark)) {
+      remarkMap.set(remark, item.attachmentId);
+    }
+  }
+
+  // 再添加其他画廊条目（不覆盖已存在的）
+  for (const item of allGalleryItems.value) {
+    const remark = item.remark?.trim();
+    if (remark && item.attachmentId && !remarkMap.has(remark)) {
+      remarkMap.set(remark, item.attachmentId);
+    }
+  }
+
   return remarkMap;
 };
 
@@ -8962,13 +8946,13 @@ const sendImageMessage = async (attachmentId: string) => {
   return true;
 };
 
-const sendEmoji = throttle(async (i: UserEmojiModel) => {
+const sendEmoji = throttle(async (item: GalleryItem) => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
     return;
   }
-  if (await sendImageMessage(i.attachmentId)) {
-    recordEmojiUsage(i.id);
+  if (await sendImageMessage(item.attachmentId)) {
+    recordEmojiUsage(item.id);
     emojiPopoverShow.value = false;
   }
 }, 1000);
@@ -9157,19 +9141,19 @@ const selectedEmojiIds = ref<string[]>([]);
 const emojiRemarkModalVisible = ref(false);
 const emojiRemarkInput = ref('');
 const emojiRemarkSaving = ref(false);
-const editingEmoji = ref<UserEmojiModel | null>(null);
+const editingEmojiItem = ref<GalleryItem | null>(null);
 const emojiRemarkPattern = /^[\p{L}\p{N}_]{1,64}$/u;
 
-const resolveEmojiRemark = (item: UserEmojiModel, idx: number) => (item.remark?.trim() || `收藏${idx + 1}`);
+const resolveEmojiRemark = (item: GalleryItem, idx: number) => (item.remark?.trim() || `收藏${idx + 1}`);
 
-const openEmojiRemarkEditor = (item: UserEmojiModel) => {
-  editingEmoji.value = item;
+const openEmojiRemarkEditor = (item: GalleryItem) => {
+  editingEmojiItem.value = item;
   emojiRemarkInput.value = item.remark?.trim() || '';
   emojiRemarkModalVisible.value = true;
 };
 
 const submitEmojiRemark = async () => {
-  if (!editingEmoji.value) {
+  if (!editingEmojiItem.value) {
     return false;
   }
   const remark = emojiRemarkInput.value.trim();
@@ -9183,8 +9167,8 @@ const submitEmojiRemark = async () => {
   }
   emojiRemarkSaving.value = true;
   try {
-    await user.emojiUpdate(editingEmoji.value.id, { remark });
-    editingEmoji.value.remark = remark;
+    const collectionId = editingEmojiItem.value.collectionId;
+    await gallery.updateItem(collectionId, editingEmojiItem.value.id, { remark });
     message.success('备注已更新');
     emojiRemarkModalVisible.value = false;
     return true;
@@ -9217,8 +9201,13 @@ const emojiSelectedDelete = async () => {
     message.info('没有选中的表情');
     return;
   }
+  const collectionId = gallery.emojiCollectionId;
+  if (!collectionId) {
+    message.error('未找到表情收藏分类');
+    return;
+  }
   try {
-    await user.emojiDelete(selectedEmojiIds.value);
+    await gallery.deleteItems(collectionId, selectedEmojiIds.value);
     message.success('已删除所选表情');
     selectedEmojiIds.value = [];
   } catch (error: any) {
@@ -9858,7 +9847,7 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
 
-                        <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
+                        <div v-if="hasEmojiItems" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
@@ -9867,23 +9856,25 @@ onBeforeUnmount(() => {
                           />
                         </div>
 
-                        <div v-if="!hasUserEmoji && !hasGalleryEmoji" class="emoji-panel__empty">
+                        <div v-if="!hasEmojiItems" class="emoji-panel__empty">
                           当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
                         </div>
 
                         <div v-else class="emoji-panel__content">
-                        <template v-if="true">
-                          <template v-if="hasUserEmoji && !emojiSearchQuery">
-                            <template v-if="isManagingEmoji">
+                          <template v-if="isManagingEmoji">
+                            <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                              没有匹配的表情
+                            </div>
+                            <template v-else>
                               <n-checkbox-group v-model:value="selectedEmojiIds">
                                 <div class="emoji-grid">
-                                  <div class="emoji-manage-item" v-for="(item, idx) in uploadImages" :key="item.id">
+                                  <div class="emoji-manage-item" v-for="(item, idx) in filteredEmojiItems" :key="item.id">
                                     <div class="emoji-manage-item__content">
                                       <n-checkbox :value="item.id">
                                         <div class="emoji-item">
-                                          <img :src="getEmojiItemSrc(item)" alt="表情" />
-                                          <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">
-                                            {{ resolveEmojiRemark(item, idx) }}
+                                          <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                          <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">
+                                            {{ item.remark || `收藏${idx + 1}` }}
                                           </div>
                                         </div>
                                       </n-checkbox>
@@ -9892,49 +9883,38 @@ onBeforeUnmount(() => {
                                   </div>
                                 </div>
                               </n-checkbox-group>
+                            </template>
 
-                              <div class="emoji-panel__actions">
-                                <n-button type="info" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
-                                  删除选中
-                                </n-button>
-                                <n-button type="default" size="small" @click="exitEmojiManage">
-                                  退出管理
-                                </n-button>
-                              </div>
-                            </template>
-                            <template v-else>
-                              <div class="emoji-grid">
-                                <div class="emoji-item" v-for="(item, idx) in filteredUserEmojis" :key="item.id" @click="sendEmoji(item)">
-                                  <img :src="getEmojiItemSrc(item)" alt="表情" />
-                                  <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
-                                  <div class="emoji-item__actions">
-                                    <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
-                                  </div >
-                                </div>
-                              </div>
-                            </template>
+                            <div class="emoji-panel__actions">
+                              <n-button type="error" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
+                                删除选中
+                              </n-button>
+                              <n-button type="default" size="small" @click="exitEmojiManage">
+                                退出管理
+                              </n-button>
+                            </div>
                           </template>
-
-                          <template v-if="!isManagingEmoji && (hasGalleryEmoji || emojiSearchQuery)">
-                            <div class="emoji-section__title">联动分类：{{ galleryEmojiName || '未命名分类' }}</div>
-                            <div v-if="filteredGalleryEmojis.length === 0" class="emoji-panel__empty">
+                          <template v-else>
+                            <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
                               没有匹配的表情
                             </div>
                             <div v-else class="emoji-grid">
                               <div
                                 class="emoji-item"
-                                v-for="item in filteredGalleryEmojis"
+                                v-for="(item, idx) in filteredEmojiItems"
                                 :key="item.id"
                                 draggable="true"
                                 @dragstart="handleGalleryEmojiDragStart(item, $event)"
-                                @click="handleGalleryEmojiClick(item)"
+                                @click="sendEmoji(item)"
                               >
-                                <img :src="getGalleryItemThumb(item)" alt="表情" />
-                                <div class="emoji-caption">{{ item.remark || '未命名表情' }}</div>
+                                <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
+                                <div class="emoji-item__actions">
+                                  <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                                </div>
                               </div>
                             </div>
                           </template>
-                        </template>
                         </div>
                       </div>
                     </n-popover>

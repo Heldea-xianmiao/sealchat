@@ -8,6 +8,7 @@ export interface GalleryCollectionPayload {
   ownerId: string;
   name: string;
   order?: number;
+  collectionType?: string;
 }
 
 export interface GalleryItemUploadPayload {
@@ -68,4 +69,8 @@ export function searchGallery(params: GallerySearchRequest) {
     ...params,
   };
   return api.get<GallerySearchResponse>(`${prefix}/search`, { params: normalized });
+}
+
+export function addEmojiToFavorites(attachmentId: string, remark?: string) {
+  return api.post<{ item: GalleryItem }>('api/v1/user-emoji-add', { attachmentId, remark });
 }

@@ -296,6 +296,7 @@ export interface DiceMacro {
 export interface GalleryCollection extends ModelDataBase {
   ownerType: 'user' | 'channel';
   ownerId: string;
+  collectionType?: string;
   name: string;
   order: number;
   quotaUsed: number;

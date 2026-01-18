@@ -7,6 +7,7 @@ import { computed } from 'vue';
 import Element from '@satorijs/element'
 import { useDialog, useMessage, useThemeVars } from 'naive-ui';
 import { useUserStore } from '@/stores/user';
+import { useGalleryStore } from '@/stores/gallery';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { useDisplayStore } from '@/stores/display';
@@ -21,6 +22,7 @@ const themeVars = useThemeVars()
 const display = useDisplayStore()
 const { t } = useI18n();
 const user = useUserStore()
+const gallery = useGalleryStore()
 
 const contextMenuClass = computed(() => (display.palette === 'night' ? 'chat-menu--night' : 'chat-menu--day'))
 const contextMenuTheme = computed(() => (display.palette === 'night' ? 'default dark' : 'default'))
@@ -396,11 +398,14 @@ const addToMyEmoji = async () => {
     if (item.type == "img") {
       const id = item.attrs.src.replace('id:', '');
       try {
-        await user.emojiAdd(id);
+        await gallery.addEmoji(id, user.info.id);
         message.success('收藏成功');
       } catch (e: any) {
-        if (e.name === "ConstraintError") {
+        const errMsg = e?.response?.data?.message || e?.message || '收藏失败';
+        if (errMsg.includes('已存在') || e.name === "ConstraintError") {
           message.error('该表情已经存在于收藏了');
+        } else {
+          message.error(errMsg);
         }
       }
     }
