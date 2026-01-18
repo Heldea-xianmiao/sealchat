@@ -7667,10 +7667,23 @@ const isMe = (item: Message) => {
 const scrollToBottom = () => {
   // virtualListRef.value?.scrollToBottom();
   nextTick(() => {
-    const elLst = messagesListRef.value;
-    if (elLst) {
+    requestAnimationFrame(() => {
+      const elLst = messagesListRef.value;
+      if (!elLst) {
+        return;
+      }
       elLst.scrollTop = elLst.scrollHeight;
-    }
+      requestAnimationFrame(() => {
+        const retry = messagesListRef.value;
+        if (!retry) {
+          return;
+        }
+        const offset = retry.scrollHeight - (retry.clientHeight + retry.scrollTop);
+        if (offset > 1) {
+          retry.scrollTop = retry.scrollHeight;
+        }
+      });
+    });
   });
 }
 
