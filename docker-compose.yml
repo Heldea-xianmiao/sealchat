@@ -17,6 +17,8 @@ services:
       - ./data:/app/data                      # 数据库、临时文件、导出等
       - ./sealchat-data:/app/sealchat-data    # 上传的附件和音频文件
       - ./static:/app/static                  # 静态资源
+      # 配置文件
+      - ./config.yaml:/app/config.yaml
     environment:
       - TZ=Asia/Shanghai
     healthcheck:

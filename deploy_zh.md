@@ -50,7 +50,7 @@ SealChat 推荐使用以下操作系统：
 # 拉取最新镜像
 docker pull ghcr.io/kagangtuya-star/sealchat:latest
 
-# 创建配置文件 (可选)
+# 创建配置文件（推荐，便于持久化）
 cp config.docker.yaml.example config.yaml
 
 # 启动服务
@@ -77,6 +77,7 @@ docker run -d --name sealchat --restart unless-stopped \
   -v $(pwd)/sealchat/data:/app/data \
   -v $(pwd)/sealchat/sealchat-data:/app/sealchat-data \
   -v $(pwd)/sealchat/static:/app/static \
+  -v $(pwd)/sealchat/config.yaml:/app/config.yaml \
   -e TZ=Asia/Shanghai \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```

@@ -44,7 +44,7 @@ SealChat 支持将**附件/图片**与**音频**分别存入 S3（或兼容协�
 # 1. 拉取最新镜像
 docker pull ghcr.io/kagangtuya-star/sealchat:latest
 
-# 2. 创建配置文件 (可选，首次运行会自动生成)
+# 2. 创建配置文件（推荐，便于持久化）
 cp config.docker.yaml.example config.yaml
 
 # 3. 使用 Docker Compose 启动
@@ -65,6 +65,7 @@ docker run -d --name sealchat --restart unless-stopped \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/sealchat-data:/app/sealchat-data \
   -v $(pwd)/static:/app/static \
+  -v $(pwd)/config.yaml:/app/config.yaml \
   -e TZ=Asia/Shanghai \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```
