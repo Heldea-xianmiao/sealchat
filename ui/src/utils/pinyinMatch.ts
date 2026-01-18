@@ -282,6 +282,12 @@ function matchSingleKeyword(query: string, item: WorldKeywordItem): KeywordMatch
   return null
 }
 
+// 清理查询字符串中的标点符号（处理输入法自动补全引号等情况）
+function sanitizeQuery(query: string): string {
+  // 移除中英文标点符号，保留字母、数字、中文及空格
+  return query.replace(/["""'''\(\)（）\[\]【】\{\}《》<>,.，。!！?？;；:：、·`~@#$%^&*+=|\\\/\-_]/g, '')
+}
+
 // 执行匹配
 export function matchKeywords(
   query: string,
@@ -289,6 +295,12 @@ export function matchKeywords(
   limit: number = 5
 ): KeywordMatchResult[] {
   if (!query || !keywords?.length) {
+    return []
+  }
+
+  // 清理标点符号
+  query = sanitizeQuery(query)
+  if (!query) {
     return []
   }
 
