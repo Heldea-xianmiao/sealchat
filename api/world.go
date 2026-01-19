@@ -344,8 +344,8 @@ func WorldSectionsHandler(c *fiber.Ctx) error {
 	for _, section := range sections {
 		switch strings.TrimSpace(section) {
 		case "channels":
-			var channels []*model.ChannelModel
-			if err := model.GetDB().Where("world_id = ? AND status = ?", worldID, "active").Order("sort_order DESC, created_at ASC").Find(&channels).Error; err == nil {
+			channels, err := service.ChannelList(user.ID, worldID)
+			if err == nil {
 				resp["channels"] = channels
 			}
 		case "members":
