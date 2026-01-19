@@ -306,8 +306,8 @@ const signUp = async () => {
   if (ret) {
     message.error(ret);
   } else {
-    message.success('注册成功，即将返回首页');
-    router.replace({ name: 'home' });
+    message.success('注册成功，即将前往世界大厅');
+    router.replace({ name: 'world-lobby' });
   }
 };
 
