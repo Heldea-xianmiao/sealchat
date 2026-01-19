@@ -154,6 +154,13 @@ onMounted(() => {
   }
 })
 
+// 监听世界切换，确保加载世界详情（用于系统默认世界警告等）
+watch(() => chat.currentWorldId, async (newWorldId) => {
+  if (newWorldId) {
+    await chat.worldDetail(newWorldId);
+  }
+}, { immediate: true });
+
 const speak = () => {
   if (synth.status.value === 'pause') {
     console.log('resume')
@@ -182,6 +189,14 @@ const canShowArchive = (channel?: SChannel) => {
   const role = detail?.memberRole;
   return role === 'owner' || role === 'admin';
 };
+
+// 检测当前世界是否是系统默认世界
+const isSystemDefaultWorld = computed(() => {
+  const worldId = chat.currentWorldId;
+  if (!worldId) return false;
+  const detail = chat.worldDetailMap[worldId];
+  return detail?.world?.isSystemDefault === true;
+});
 
 const ensureChannelManagePermission = async (channelId: string) => {
   if (!channelId) return false;
@@ -468,6 +483,18 @@ const handleOpenWorldGlossary = () => {
         </n-button>
       </div>
     </div>
+    <!-- 系统默认世界警告 -->
+    <n-alert
+      v-if="isSystemDefaultWorld"
+      type="warning"
+      :closable="false"
+      class="mx-2 mb-2"
+    >
+      <template #header>
+        <span class="font-bold">⚠️ 测试世界</span>
+      </template>
+      这是系统默认世界，仅供体验与测试。正常使用请前往「世界大厅」创建或加入新世界，否则会遇到各种异常问题。
+    </n-alert>
     <n-tabs type="segment" v-model:value="chat.sidebarTab" tab-class="sc-sidebar-fill" pane-class="sc-sidebar-fill">
       <n-tab-pane name="channels" tab="频道">
         <template #tab>

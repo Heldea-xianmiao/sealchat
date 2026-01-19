@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	ErrWorldNotFound           = errors.New("world not found")
-	ErrWorldPermission         = errors.New("world permission denied")
-	ErrWorldInviteInvalid      = errors.New("world invite invalid")
-	ErrWorldMemberInvalid      = errors.New("world member invalid")
-	ErrWorldOwnerImmutable     = errors.New("world owner immutable")
-	ErrWorldDescriptionTooLong = errors.New("世界简介不能超过30字")
+	ErrWorldNotFound             = errors.New("world not found")
+	ErrWorldPermission           = errors.New("world permission denied")
+	ErrWorldInviteInvalid        = errors.New("world invite invalid")
+	ErrWorldMemberInvalid        = errors.New("world member invalid")
+	ErrWorldOwnerImmutable       = errors.New("world owner immutable")
+	ErrWorldDescriptionTooLong   = errors.New("世界简介不能超过30字")
+	ErrWorldSystemDefaultProtect = errors.New("系统默认世界不可删除")
 )
 
 const worldDescriptionMaxLength = 30
@@ -52,8 +53,8 @@ func normalizeWorldDescription(desc string) (string, error) {
 func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
 	db := model.GetDB()
 	var world model.WorldModel
-	if err := db.Where("status = ?", "active").
-		Order("CASE WHEN owner_id = '' OR owner_id IS NULL THEN 1 ELSE 0 END").
+	// 优先查找显式标记的系统默认世界（按创建时间排序确保确定性）
+	if err := db.Where("is_system_default = ? AND status = ?", true, "active").
 		Order("created_at asc").
 		Limit(1).
 		Find(&world).Error; err != nil {
@@ -62,11 +63,13 @@ func GetOrCreateDefaultWorld() (*model.WorldModel, error) {
 	if world.ID != "" {
 		return &world, nil
 	}
+	// 如果不存在系统默认世界，创建一个新的
 	w := &model.WorldModel{
-		Name:        "公共世界",
-		Description: "系统自动创建的默认世界",
-		Visibility:  model.WorldVisibilityPublic,
-		Status:      "active",
+		Name:            "公共世界",
+		Description:     "系统自动创建的默认世界",
+		Visibility:      model.WorldVisibilityPublic,
+		IsSystemDefault: true,
+		Status:          "active",
 	}
 	if err := db.Create(w).Error; err != nil {
 		return nil, err
@@ -284,10 +287,23 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 }
 
 func WorldDelete(worldID, actorID string) error {
+	db := model.GetDB()
+	// 先检查世界是否存在
+	var world model.WorldModel
+	if err := db.Where("id = ?", worldID).Limit(1).Find(&world).Error; err != nil {
+		return err
+	}
+	if world.ID == "" {
+		return ErrWorldNotFound
+	}
+	// 检查是否为系统默认世界
+	if world.IsSystemDefault {
+		return ErrWorldSystemDefaultProtect
+	}
+	// 最后检查权限
 	if !IsWorldOwner(worldID, actorID) {
 		return ErrWorldPermission
 	}
-	db := model.GetDB()
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.WorldModel{}).
 			Where("id = ?", worldID).
@@ -581,6 +597,22 @@ func syncWorldRolesForNewChannel(worldID, channelID string) {
 				continue
 			}
 			_ = ensureChannelRoleLink(uid, channelID, "spectator")
+		}
+	}
+	// 为公开频道同步 member 角色
+	var channel model.ChannelModel
+	if err := model.GetDB().Where("id = ?", channelID).Limit(1).Find(&channel).Error; err != nil {
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(channel.PermType)) == "public" {
+		memberIDs, err := listWorldUserIDsByRoles(worldID, model.WorldRoleMember)
+		if err == nil {
+			for _, uid := range memberIDs {
+				if _, err := model.MemberGetByUserIDAndChannelIDBase(uid, channelID, "", true); err != nil {
+					continue
+				}
+				_ = ensureChannelRoleLink(uid, channelID, "member")
+			}
 		}
 	}
 }
