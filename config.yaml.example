@@ -54,10 +54,11 @@
       - audio/webm
       - audio/aac
       - audio/flac
-	    enableTranscode: true
-	    defaultBitrateKbps: 96
-	    alternateBitrates: [] # 已废弃：当前仅保留一份转码产物
-	    ffmpegPath: "" # 可填写 ffmpeg 路径；ffprobe 与 ffmpeg 同目录可自动用于时长探测
+    enableTranscode: true
+    defaultBitrateKbps: 96
+    alternateBitrates: [] # 已废弃：当前仅保留一份转码产物
+    ffmpegPath: "" # 可填写 ffmpeg 路径；ffprobe 与 ffmpeg 同目录可自动用于时长探测
+    allowNonAdminCreateWorld: true # 是否允许非平台管理员创建新世界
 
   export:
     storageDir: ./data/exports
