@@ -44,6 +44,11 @@ const router = createRouter({
       component: UserPasswordResetView
     },
     {
+      path: '/user/password-recovery',
+      name: 'password-recovery',
+      component: () => import('@/views/user/password-recovery-view.vue')
+    },
+    {
       path: '/about',
       name: 'about',
       // route level code-splitting

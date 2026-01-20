@@ -14,6 +14,7 @@ declare module 'vue' {
     Avatar: typeof import('./src/components/avatar.vue')['default']
     AvatarEditor: typeof import('./src/components/AvatarEditor.vue')['default']
     AvatarSetupPrompt: typeof import('./src/components/AvatarSetupPrompt.vue')['default']
+    EmailVerifyInput: typeof import('./src/components/EmailVerifyInput.vue')['default']
     FFmpegMissingAlert: typeof import('./src/components/audio/FFmpegMissingAlert.vue')['default']
     GalleryButton: typeof import('./src/components/gallery/GalleryButton.vue')['default']
     GalleryCollectionTree: typeof import('./src/components/gallery/GalleryCollectionTree.vue')['default']

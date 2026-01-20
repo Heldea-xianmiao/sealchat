@@ -79,15 +79,17 @@ type CaptchaTargetConfig struct {
 type CaptchaScene string
 
 const (
-	CaptchaSceneSignup CaptchaScene = "signup"
-	CaptchaSceneSignin CaptchaScene = "signin"
+	CaptchaSceneSignup        CaptchaScene = "signup"
+	CaptchaSceneSignin        CaptchaScene = "signin"
+	CaptchaScenePasswordReset CaptchaScene = "passwordReset"
 )
 
 type CaptchaConfig struct {
-	Mode      CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Turnstile TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
-	Signup    CaptchaTargetConfig `json:"signup" yaml:"signup"`
-	Signin    CaptchaTargetConfig `json:"signin" yaml:"signin"`
+	Mode          CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Turnstile     TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
+	Signup        CaptchaTargetConfig `json:"signup" yaml:"signup"`
+	Signin        CaptchaTargetConfig `json:"signin" yaml:"signin"`
+	PasswordReset CaptchaTargetConfig `json:"passwordReset" yaml:"passwordReset"`
 }
 
 type StorageConfig struct {
@@ -156,6 +158,15 @@ type UpdateCheckConfig struct {
 	GithubToken string `json:"-" yaml:"githubToken"`
 }
 
+// EmailAuthConfig 邮箱认证配置（SMTP 配置复用 emailNotification.smtp）
+type EmailAuthConfig struct {
+	Enabled        bool `json:"enabled" yaml:"enabled"`
+	CodeLength     int  `json:"-" yaml:"codeLength"`
+	CodeTTLSeconds int  `json:"-" yaml:"codeTTLSeconds"`
+	MaxAttempts    int  `json:"-" yaml:"maxAttempts"`
+	RateLimitPerIP int  `json:"-" yaml:"rateLimitPerIP"`
+}
+
 // BackupConfig SQLite 备份配置
 type BackupConfig struct {
 	Enabled        bool   `json:"enabled" yaml:"enabled"`
@@ -199,6 +210,7 @@ type AppConfig struct {
 	SQLite                    SQLiteConfig            `json:"sqlite" yaml:"sqlite"`
 	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
 	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
+	EmailAuth                 EmailAuthConfig         `json:"emailAuth" yaml:"emailAuth"`
 	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
 	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
@@ -328,6 +340,13 @@ func ReadConfig() *AppConfig {
 				FromName: "SealChat",
 			},
 		},
+		EmailAuth: EmailAuthConfig{
+			Enabled:        false,
+			CodeLength:     6,
+			CodeTTLSeconds: 300,
+			MaxAttempts:    5,
+			RateLimitPerIP: 10,
+		},
 		UpdateCheck: UpdateCheckConfig{
 			Enabled:     true,
 			IntervalSec: 6 * 60 * 60,
@@ -408,6 +427,7 @@ func ReadConfig() *AppConfig {
 	applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
+	applyEmailAuthDefaults(&config.EmailAuth)
 	applyUpdateCheckDefaults(&config.UpdateCheck)
 	applyBackupDefaults(&config.Backup)
 
@@ -496,6 +516,24 @@ func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {
 	}
 }
 
+func applyEmailAuthDefaults(cfg *EmailAuthConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.CodeLength <= 0 {
+		cfg.CodeLength = 6
+	}
+	if cfg.CodeTTLSeconds <= 0 {
+		cfg.CodeTTLSeconds = 300
+	}
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 5
+	}
+	if cfg.RateLimitPerIP <= 0 {
+		cfg.RateLimitPerIP = 10
+	}
+}
+
 func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
 	if cfg == nil {
 		return
@@ -532,6 +570,7 @@ func (cfg *CaptchaConfig) normalize() {
 	}
 	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
 	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile)
+	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
 }
 
 func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig) {
@@ -560,6 +599,8 @@ func (cfg *CaptchaConfig) Target(scene CaptchaScene) CaptchaTargetConfig {
 	switch scene {
 	case CaptchaSceneSignin:
 		return cfg.Signin
+	case CaptchaScenePasswordReset:
+		return cfg.PasswordReset
 	default:
 		return cfg.Signup
 	}
@@ -569,7 +610,7 @@ func (cfg *CaptchaConfig) HasLocalEnabled() bool {
 	if cfg == nil {
 		return false
 	}
-	return cfg.Signup.Mode == CaptchaModeLocal || cfg.Signin.Mode == CaptchaModeLocal
+	return cfg.Signup.Mode == CaptchaModeLocal || cfg.Signin.Mode == CaptchaModeLocal || cfg.PasswordReset.Mode == CaptchaModeLocal
 }
 
 func WriteConfig(config *AppConfig) {

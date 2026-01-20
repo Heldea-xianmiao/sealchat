@@ -215,6 +215,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/captcha/:id.png", CaptchaImage)
 	v1.Get("/captcha/:id/reload", CaptchaReload)
 
+	// Email auth routes (public)
+	v1.Post("/email-auth/signup-code", EmailAuthSignupCodeSend)
+	v1.Post("/email-auth/signup", EmailAuthSignupWithCode)
+	v1.Post("/password-reset/verify", EmailAuthPasswordResetVerify)
+	v1.Post("/password-reset/request", EmailAuthPasswordResetRequest)
+	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
+
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := sanitizeConfigForClient(appConfig)
 		u := getCurUser(c)
@@ -256,6 +263,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/user-emoji-list", UserEmojiList)
 	v1Auth.Post("/user-emoji-delete", UserEmojiDelete)
 	v1Auth.Patch("/user-emoji/:id", UserEmojiUpdate)
+
+	// Email auth routes (authenticated)
+	v1Auth.Post("/email-auth/bind-code", EmailAuthBindCodeSend)
+	v1Auth.Post("/email-auth/bind-confirm", EmailAuthBindConfirm)
 
 	v1Auth.Get("/gallery/collections", GalleryCollectionsList)
 	v1Auth.Post("/gallery/collections", GalleryCollectionCreate)

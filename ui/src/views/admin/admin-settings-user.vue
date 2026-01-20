@@ -227,6 +227,27 @@ const columns = ref([
     },
   },
   {
+    title: '邮箱',
+    key: 'email',
+    width: 180,
+    ellipsis: true,
+    render: (row: UserInfo) => {
+      if (!row.email) {
+        return <span class="text-gray-400">-</span>;
+      }
+      return (
+        <div class="flex items-center gap-1">
+          <span class="truncate">{row.email}</span>
+          {row.emailVerified ? (
+            <n-tag type="success" size="small">已验证</n-tag>
+          ) : (
+            <n-tag type="warning" size="small">未验证</n-tag>
+          )}
+        </div>
+      );
+    }
+  },
+  {
     title: '状态',
     key: 'disabled',
     width: 80,
@@ -313,7 +334,7 @@ const columns = ref([
         :pagination="false" 
         :bordered="false"
         :max-height="400"
-        :scroll-x="900"
+        :scroll-x="1100"
         size="small"
       />
     </div>

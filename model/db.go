@@ -140,6 +140,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})
 	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{}, &StickyNoteFolderModel{})
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
+	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&UpdateCheckState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 

@@ -29,6 +29,8 @@ const form = reactive({
   password: '',
   password2: '',
   nickname: '',
+  email: '',
+  emailCode: '',
 });
 
 const captchaId = ref('');
@@ -57,6 +59,73 @@ const usernameError = computed(() => {
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
+const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
+
+const emailCodeSending = ref(false);
+const emailCodeCountdown = ref(0);
+let emailCodeTimer: ReturnType<typeof setInterval> | null = null;
+const captchaVerified = ref(false); // 标记验证码已通过验证
+
+const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const emailError = computed(() => {
+  if (!emailAuthEnabled.value || !form.email.trim()) return '';
+  return emailPattern.test(form.email.trim()) ? '' : '请输入有效的邮箱地址';
+});
+
+const sendEmailCode = async () => {
+  if (emailCodeSending.value || emailCodeCountdown.value > 0) return;
+
+  const email = form.email.trim().toLowerCase();
+  if (!email || emailError.value) {
+    message.error('请输入有效的邮箱地址');
+    return;
+  }
+
+  // 只有在验证码未验证过时才需要验证
+  if (!captchaVerified.value) {
+    if (captchaMode.value === 'local' && (!captchaId.value || !captchaInput.value.trim())) {
+      message.error('请先填写验证码');
+      return;
+    }
+    if (captchaMode.value === 'turnstile' && !turnstileToken.value) {
+      message.error('请先完成人机验证');
+      return;
+    }
+  }
+
+  emailCodeSending.value = true;
+  try {
+    await userStore.sendSignupEmailCode({
+      email,
+      captchaId: captchaVerified.value ? '' : captchaId.value,
+      captchaValue: captchaVerified.value ? '' : captchaInput.value.trim(),
+      turnstileToken: captchaVerified.value ? '' : turnstileToken.value,
+    });
+    message.success('验证码已发送到您的邮箱');
+    captchaVerified.value = true; // 标记验证码已通过
+    emailCodeCountdown.value = 60;
+    emailCodeTimer = setInterval(() => {
+      emailCodeCountdown.value--;
+      if (emailCodeCountdown.value <= 0) {
+        clearInterval(emailCodeTimer!);
+        emailCodeTimer = null;
+      }
+    }, 1000);
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || '发送失败');
+    // 发送失败时刷新验证码
+    if (!captchaVerified.value) {
+      if (captchaMode.value === 'local') {
+        fetchCaptcha();
+      } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
+        window.turnstile.reset(turnstileWidgetId.value);
+        turnstileToken.value = '';
+      }
+    }
+  } finally {
+    emailCodeSending.value = false;
+  }
+};
 
 // Login background
 const loginBgConfig = computed(() => config.value?.loginBackground);
@@ -270,6 +339,38 @@ const signUp = async () => {
 
   form.username = form.username.trim();
 
+  // 邮箱注册流程
+  if (emailAuthEnabled.value) {
+    if (emailError.value) {
+      message.error(emailError.value);
+      return;
+    }
+    if (!form.email.trim()) {
+      message.error('请输入邮箱地址');
+      return;
+    }
+    if (!form.emailCode.trim()) {
+      message.error('请输入邮箱验证码');
+      return;
+    }
+
+    try {
+      await userStore.signUpWithEmail({
+        username: form.username,
+        password: form.password,
+        nickname: form.nickname || form.username,
+        email: form.email.trim().toLowerCase(),
+        code: form.emailCode.trim(),
+      });
+      message.success('注册成功，即将前往世界大厅');
+      router.replace({ name: 'world-lobby' });
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '注册失败');
+    }
+    return;
+  }
+
+  // 原有注册流程
   if (captchaMode.value === 'local') {
     if (!captchaId.value) {
       await fetchCaptcha();
@@ -335,6 +436,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   destroyTurnstile();
+  if (emailCodeTimer) {
+    clearInterval(emailCodeTimer);
+    emailCodeTimer = null;
+  }
 });
 </script>
 
@@ -384,7 +489,72 @@ onBeforeUnmount(() => {
               type="password" placeholder="密码" aria-label="密码" />
           </div>
 
-          <div class="w-full mt-4" v-if="captchaMode === 'local'">
+          <!-- 邮箱注册区域 -->
+          <template v-if="emailAuthEnabled">
+            <div class="w-full mt-4">
+              <label class="block text-xs text-gray-500 dark:text-gray-300">邮箱地址</label>
+              <input v-model="form.email"
+                class="block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                type="email" placeholder="邮箱地址" aria-label="邮箱地址" />
+              <p v-if="emailError" class="mt-1 text-xs text-red-500 dark:text-red-400">{{ emailError }}</p>
+            </div>
+
+            <!-- 基础验证码（发送邮箱验证码前需要，验证通过后隐藏） -->
+            <div class="w-full mt-4" v-if="captchaMode === 'local' && !captchaVerified">
+              <label class="block text-xs text-gray-500 dark:text-gray-300">图形验证码</label>
+              <div class="flex items-center gap-3 mt-2">
+                <input v-model="captchaInput"
+                  class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                  type="text" placeholder="请输入图形验证码" aria-label="图形验证码"
+                />
+                <div class="flex flex-col items-center gap-1">
+                  <div class="w-28 h-12 bg-gray-100 dark:bg-gray-700 flex items-center justify-center rounded cursor-pointer"
+                    @click.prevent="reloadCaptchaImage" title="点击刷新">
+                    <img v-if="captchaImageUrl" :src="captchaImageUrl" alt="captcha" class="max-h-full" />
+                    <span v-else class="text-xs text-gray-500">加载中</span>
+                  </div>
+                  <button type="button" @click.prevent="reloadCaptchaImage"
+                    class="text-xs text-blue-500" :disabled="captchaLoading">
+                    {{ captchaLoading ? '刷新中' : '刷新' }}
+                  </button>
+                </div>
+              </div>
+              <p v-if="captchaError" class="mt-1 text-xs text-red-500">{{ captchaError }}</p>
+            </div>
+
+            <div class="w-full mt-4" v-else-if="captchaMode === 'turnstile' && !captchaVerified">
+              <label class="block text-xs text-gray-500 dark:text-gray-300">人机验证</label>
+              <div class="mt-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800">
+                <div ref="turnstileContainer" class="flex items-center justify-center min-h-[90px] py-2"></div>
+              </div>
+              <div class="flex justify-end mt-2">
+                <button type="button" class="text-xs text-blue-500" :disabled="turnstileLoading"
+                  @click.prevent="renderTurnstileWidget">
+                  {{ turnstileLoading ? '加载中' : '刷新' }}
+                </button>
+              </div>
+              <p v-if="turnstileError" class="mt-1 text-xs text-red-500">{{ turnstileError }}</p>
+            </div>
+
+            <div class="w-full mt-4">
+              <label class="block text-xs text-gray-500 dark:text-gray-300">邮箱验证码</label>
+              <div class="flex items-center gap-3 mt-2">
+                <input v-model="form.emailCode"
+                  class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                  type="text" placeholder="请输入邮箱验证码" maxlength="6" aria-label="邮箱验证码"
+                />
+                <button type="button" @click.prevent="sendEmailCode"
+                  class="shrink-0 px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-lg hover:bg-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :disabled="emailCodeSending || emailCodeCountdown > 0">
+                  {{ emailCodeSending ? '发送中...' : (emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : '获取验证码') }}
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 原有验证码区域（非邮箱注册模式） -->
+          <template v-else>
+            <div class="w-full mt-4" v-if="captchaMode === 'local'">
             <label class="block text-xs text-gray-500 dark:text-gray-300">验证码</label>
             <div class="flex items-center gap-3 mt-2">
               <input v-model="captchaInput"
@@ -419,6 +589,7 @@ onBeforeUnmount(() => {
             </div>
             <p v-if="turnstileError" class="mt-1 text-xs text-red-500">{{ turnstileError }}</p>
           </div>
+          </template>
 
           <!-- <div class="w-full mt-4">
             <input v-model="form.password2"

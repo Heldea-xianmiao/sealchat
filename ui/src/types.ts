@@ -72,6 +72,7 @@ export interface CaptchaTargetConfig {
 export interface CaptchaConfig {
   signup?: CaptchaTargetConfig;
   signin?: CaptchaTargetConfig;
+  passwordReset?: CaptchaTargetConfig;
   mode?: 'off' | 'local' | 'turnstile';
   turnstile?: TurnstileConfig;
 }
@@ -144,6 +145,9 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  emailAuth?: {
+    enabled: boolean;
+  };
   backup?: BackupConfig;
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
@@ -171,6 +175,9 @@ export interface UserInfo {
   roleIds?: string[];
   disabled: boolean;
   is_bot?: boolean;
+  email?: string;
+  emailVerified?: boolean;
+  emailVerifiedAt?: string;
 }
 
 export interface TalkMessage {

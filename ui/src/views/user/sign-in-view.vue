@@ -90,6 +90,7 @@ const loginOverlayStyle = computed(() => {
 });
 
 const captchaMode = computed(() => config.value?.captcha?.signin?.mode ?? config.value?.captcha?.mode ?? 'off');
+const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) {
     return '';
@@ -371,9 +372,12 @@ onBeforeUnmount(() => {
         <n-row :gutter="[0, 24]">
           <n-col :span="24">
             <div class=" flex justify-between">
-              <router-link :to="{ name: 'user-signup' }">
-                <n-button type="text" v-if="config?.registerOpen">注册</n-button>
-              </router-link>
+              <div class="flex items-center gap-2">
+                <router-link :to="{ name: 'user-signup' }">
+                  <n-button type="text" v-if="config?.registerOpen">注册</n-button>
+                </router-link>
+                <n-button v-if="emailAuthEnabled" type="text" @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>
+              </div>
 
               <n-button :disabled="model.account === ''" round type="primary" @click="handleValidateButtonClick">
                 登录
