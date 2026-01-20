@@ -268,6 +268,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/email-auth/bind-code", EmailAuthBindCodeSend)
 	v1Auth.Post("/email-auth/bind-confirm", EmailAuthBindConfirm)
 
+	// User preferences
+	v1Auth.Get("/user/preferences", UserPreferencesGet)
+	v1Auth.Post("/user/preferences", UserPreferencesUpsert)
+
 	v1Auth.Get("/gallery/collections", GalleryCollectionsList)
 	v1Auth.Post("/gallery/collections", GalleryCollectionCreate)
 	v1Auth.Patch("/gallery/collections/:id", GalleryCollectionUpdate)

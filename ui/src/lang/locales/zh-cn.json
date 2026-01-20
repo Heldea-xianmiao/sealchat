@@ -81,5 +81,12 @@
     "action": "现在设置",
     "skip": "稍后再说",
     "badge": "点击设置头像"
+  },
+  "emailBindPrompt": {
+    "title": "绑定邮箱",
+    "description": "绑定邮箱可用于找回密码，保障账号安全。",
+    "action": "去绑定",
+    "dismiss": "不再提醒",
+    "later": "稍后"
   }
 }

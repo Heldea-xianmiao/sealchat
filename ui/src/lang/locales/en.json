@@ -71,5 +71,12 @@
     "action": "Set Up Now",
     "skip": "Maybe Later",
     "badge": "Click to set avatar"
+  },
+  "emailBindPrompt": {
+    "title": "Bind Email",
+    "description": "Bind your email for password recovery and account security.",
+    "action": "Bind Now",
+    "dismiss": "Don't remind me",
+    "later": "Later"
   }
 }

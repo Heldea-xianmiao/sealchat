@@ -7,12 +7,22 @@ import { useWindowSize } from '@vueuse/core'
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useRoute, useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
+import { useEmailBindReminder, EmailBindPrompt } from '@/composables/useEmailBindReminder';
 
 const { width } = useWindowSize()
 const chat = useChatStore();
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
+const { showPrompt: showEmailPrompt, dismiss: dismissEmailPrompt } = useEmailBindReminder();
+
+const handleEmailBind = () => {
+  router.push({ name: 'profile' });
+};
+
+const handleEmailDismiss = async () => {
+  await dismissEmailPrompt();
+};
 
 const active = ref(false)
 const isSidebarCollapsed = ref(false)
@@ -211,6 +221,13 @@ watch(
         </n-drawer>
       </n-layout>
     </n-layout>
+
+    <EmailBindPrompt
+      v-model:show="showEmailPrompt"
+      @bind="handleEmailBind"
+      @dismiss="handleEmailDismiss"
+      @skip="() => {}"
+    />
   </main>
 </template>
 
