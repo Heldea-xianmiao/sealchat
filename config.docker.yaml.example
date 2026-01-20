@@ -39,6 +39,11 @@ captcha:
     turnstile:
       siteKey: ""
       secretKey: ""
+  passwordReset:
+    mode: local                              # 密码重置验证码
+    turnstile:
+      siteKey: ""
+      secretKey: ""
 
 # SQLite 优化配置 (使用 SQLite 时生效)
 sqlite:
