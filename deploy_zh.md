@@ -335,6 +335,37 @@ domain: "[2001:db8::1]:3212"
 
 注意：IPv6 地址必须使用中括号，否则会解析失败；服务地址保存时会自动补全中括号。
 
+### 邮箱相关配置（邮件通知 / 邮箱认证）
+
+SealChat 的邮件通知与邮箱认证共用同一套 SMTP 配置，位置在 `emailNotification.smtp`。即使只启用邮箱认证，也需要完整填写 SMTP 字段。
+
+关键字段与开关（节选自 `config.yaml.example`）：
+
+```yaml
+emailNotification:
+  enabled: false              # 未读邮件提醒开关
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: your@email.com
+    password: ""              # 留空，改用环境变量 SEALCHAT_SMTP_PASSWORD
+    fromAddress: noreply@example.com
+    fromName: SealChat
+    useTLS: true
+    skipVerify: false
+
+emailAuth:
+  enabled: true               # 注册验证 / 密码重置开关
+  codeLength: 6
+  codeTTLSeconds: 300
+  maxAttempts: 5
+  rateLimitPerIP: 5
+```
+
+说明：
+- 只需要邮箱认证时，可保持 `emailNotification.enabled: false`，但 SMTP 仍需配置。
+- 邮件通知与邮箱认证的验证码发送频率、有效期等由 `emailAuth` 段控制。
+
 ## 4. 对象存储（S3 兼容）
 
 SealChat 支持将附件/图片与音频存入 S3（或兼容协议的对象存储，如 MinIO、腾讯 COS 等）。相关配置在 `config.yaml` 的 `storage` 段，建议直接参考并复制 `config.yaml.example` / `config.docker.yaml.example` 中的示例，再按实际替换。

@@ -36,6 +36,16 @@ SealChat 支持将**附件/图片**与**音频**分别存入 S3（或兼容协�
 
 更完整的 S3/COS 配置示例与常见问题请参考 `deploy_zh.md` 的“对象存储（S3 兼容）”章节。
 
+## 未读信息邮件通知与邮箱登录认证
+
+SealChat 的**未读信息邮件通知**与**邮箱认证（邮件注册验证/邮件密码重置）**共用 `config.yaml` 的 SMTP 配置。
+
+- 配置入口：`emailNotification.smtp`（即使只启用邮箱认证，也需要完整 SMTP 配置）。
+- 功能开关：`emailNotification.enabled` 控制未读信息提醒；`emailAuth.enabled` 控制邮件注册验证/密码重置。
+
+配置示例与常见问题请参考 `deploy_zh.md` 的“未读信息邮件通知与邮箱登录认证”章节。
+示例（节选自 `config.yaml.example`）：
+
 ## 快速开始
 
 ### Docker 部署（推荐）
