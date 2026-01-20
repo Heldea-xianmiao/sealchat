@@ -203,7 +203,7 @@ func UserAuthenticate(username, password string) (*UserModel, error) {
 	return &user, nil
 }
 
-// 登录认证（用户名或昵称）
+// 登录认证（用户名/昵称/邮箱）
 func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 	var user UserModel
 	if err := db.Where("username = ?", account).First(&user).Error; err == nil {
@@ -213,6 +213,18 @@ func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 		return &user, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
+	}
+
+	if strings.Contains(account, "@") {
+		email := strings.ToLower(account)
+		if err := db.Where("email = ?", email).First(&user).Error; err == nil {
+			if err := verifyUserPassword(&user, password); err != nil {
+				return nil, err
+			}
+			return &user, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 	}
 
 	var users []UserModel

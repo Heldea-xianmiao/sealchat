@@ -99,7 +99,7 @@ const captchaImageUrl = computed(() => {
 });
 
 const rules: FormRules = {
-  account: [{ required: true, message: '请输入用户名/昵称' }],
+  account: [{ required: true, message: '请输入用户名/昵称/邮箱' }],
   password: [{ required: true, message: '请输入密码' }],
 };
 
@@ -264,7 +264,7 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
 
     const account = model.value.account.trim();
     if (!account) {
-      message.error('请输入用户名/昵称');
+      message.error('请输入用户名/昵称/邮箱');
       return;
     }
 
@@ -338,9 +338,9 @@ onBeforeUnmount(() => {
       <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
-        <n-form-item path="account" label="用户名/昵称">
-          <n-input v-model:value="model.account" @keydown.enter.prevent />
-        </n-form-item>
+      <n-form-item path="account" label="用户名/昵称/邮箱">
+        <n-input v-model:value="model.account" placeholder="用户名/昵称/邮箱" @keydown.enter.prevent />
+      </n-form-item>
 
         <n-form-item path="password" label="密码">
           <n-input v-model:value="model.password" type="password" @keydown.enter.prevent />
