@@ -2624,7 +2624,7 @@ export const useChatStore = defineStore({
       backgroundAttachmentId?: string;
       backgroundSettings?: string;
     }) {
-      const resp = await api.post<{ message: string }>(`api/v1/channel-info-edit`, updates, { params: { id } });
+      const resp = await api.post<{ message: string }>(`api/v1/channel-background-edit`, updates, { params: { id } });
       if (this.curChannel?.id === id) {
         const channelResp = await this.channelInfoGet(id);
         if (channelResp?.item) {
