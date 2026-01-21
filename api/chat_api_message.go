@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"regexp"
@@ -825,6 +826,40 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 
 	content := data.Content
+
+	// BOT 消息的 Satori 内容规范化
+	if ctx.User.IsBot {
+		if strings.Contains(content, "data:image/") {
+			// 将 Base64 图片转换为附件
+			satoriResult, satoriErr := service.NormalizeSatoriContent(content, ctx.User.ID, channelId, service.SatoriAttachmentConfig{
+				ImageSizeLimit:       appConfig.ImageSizeLimit * 1024,
+				ImageCompress:        appConfig.ImageCompress,
+				ImageCompressQuality: appConfig.ImageCompressQuality,
+				TempDir:              appConfig.Storage.Local.TempDir,
+				MaxImagesPerMessage:  10,
+			})
+			if satoriErr != nil {
+				log.Printf("[BOT] Satori 内容规范化失败: %v", satoriErr)
+			} else if satoriResult != nil {
+				content = satoriResult.Content
+				if len(satoriResult.Errors) > 0 {
+					log.Printf("[BOT] Satori 图片处理部分失败 (成功:%d 跳过:%d): %v",
+						satoriResult.ProcessedCount, satoriResult.SkippedCount, satoriResult.Errors)
+				}
+			}
+		} else {
+			// 纯文本消息：检查是否包含 Satori 标签
+			if protocol.ContainsSatoriTags(content) {
+				// 包含 Satori 标签，通过 parse -> ToString 确保 XML 转义一致性
+				if root := protocol.ElementParse(content); root != nil {
+					content = root.ToString()
+				}
+			}
+			// 不包含 Satori 标签的纯文本，保持原样
+			// 前端的 @satorijs/element toString() 会进行必要的 HTML 转义
+		}
+	}
+
 	member, err := model.MemberGetByUserIDAndChannelID(ctx.User.ID, data.ChannelID, ctx.User.Nickname)
 	if err != nil {
 		return nil, err
@@ -1017,6 +1052,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		messageData.Content = content
 		messageData.User = userData
 		messageData.Member = member.ToProtocolType()
+		messageData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(ctx.User.ID, data.ChannelID, channel.WorldID)}
 		messageData.ClientID = data.ClientID
 		if quote.ID != "" {
 			qData := quote.ToProtocolType2(channelData)
@@ -1026,6 +1062,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			}
 			if quote.Member != nil {
 				qData.Member = quote.Member.ToProtocolType()
+				qData.Member.Roles = []string{service.ResolveMemberRoleForProtocol(quote.Member.UserID, quote.Member.ChannelID, "")}
 			}
 			if quote.WhisperTarget != nil {
 				qData.WhisperTo = quote.WhisperTarget.ToProtocolType()

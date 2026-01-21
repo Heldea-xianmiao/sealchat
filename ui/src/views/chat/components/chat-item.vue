@@ -112,6 +112,8 @@ const parseContent = (payload: any, overrideContent?: string) => {
         if (item.attrs.src) {
           item.attrs.src = resolveAttachmentUrl(item.attrs.src);
         }
+        // 添加 lazy loading 优化性能
+        item.attrs.loading = 'lazy';
         textItems.push(DOMPurify.sanitize(item.toString()));
         hasImage.value = true;
         break;

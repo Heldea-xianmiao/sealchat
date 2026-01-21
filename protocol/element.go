@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/xml"
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -36,11 +37,15 @@ func (el *Element) ToString() string {
 		case "root":
 			break
 		case "text":
-			sb.WriteString(el.Attrs["content"].(string))
+			if content, ok := el.Attrs["content"].(string); ok {
+				sb.WriteString(html.EscapeString(content))
+			} else if el.Attrs["content"] != nil {
+				sb.WriteString(html.EscapeString(fmt.Sprint(el.Attrs["content"])))
+			}
 		default:
 			sb.WriteString(fmt.Sprintf("<%s", el.Type))
 			for k, v := range el.Attrs {
-				sb.WriteString(fmt.Sprintf(" %s=\"%s\"", k, v))
+				sb.WriteString(fmt.Sprintf(" %s=\"%s\"", k, html.EscapeString(fmt.Sprint(v))))
 			}
 			sb.WriteString(">")
 		}
@@ -116,4 +121,29 @@ func ElementParse(text string) *Element {
 	}
 
 	return elStack[0]
+}
+
+// satoriTags 是 Satori 协议支持的标签列表
+var satoriTags = []string{
+	"at", "sharp", "a", "img", "audio", "video", "file",
+	"b", "strong", "i", "em", "u", "ins", "s", "del", "spl", "code", "sup", "sub",
+	"br", "p", "message", "quote", "author", "button",
+}
+
+// ContainsSatoriTags 检查内容是否包含 Satori 协议标签
+func ContainsSatoriTags(content string) bool {
+	for _, tag := range satoriTags {
+		// 检查开始标签 <tag> 或 <tag ...> 或自闭合 <tag/>
+		if strings.Contains(content, "<"+tag+">") ||
+			strings.Contains(content, "<"+tag+" ") ||
+			strings.Contains(content, "<"+tag+"/>") {
+			return true
+		}
+	}
+	return false
+}
+
+// EscapeText 对纯文本进行 HTML 转义
+func EscapeText(content string) string {
+	return html.EscapeString(content)
 }
