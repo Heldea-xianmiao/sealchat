@@ -14,11 +14,14 @@ const cardStore = useCharacterCardStore();
 const displayStore = useDisplayStore();
 const chatStore = useChatStore();
 
+const boundCardId = computed(() => {
+  if (!props.identityId) return '';
+  return cardStore.getBoundCardId(props.identityId) || '';
+});
+
 const card = computed(() => {
-  if (!props.identityId) return null;
-  const cardId = cardStore.getBoundCardId(props.identityId);
-  if (!cardId) return null;
-  return cardStore.getCardById(cardId);
+  if (!boundCardId.value) return null;
+  return cardStore.getCardById(boundCardId.value);
 });
 
 const template = computed(() => {
@@ -27,8 +30,22 @@ const template = computed(() => {
 });
 
 const renderedContent = computed(() => {
-  if (!card.value || !card.value.attrs) return '';
-  return renderCardTemplate(template.value, card.value.attrs);
+  const channelId = chatStore.curChannel?.id || '';
+  let attrs: Record<string, any> | undefined;
+  if (channelId && boundCardId.value) {
+    const activeIdentityId = chatStore.getActiveIdentityId(channelId);
+    if (activeIdentityId && props.identityId && activeIdentityId === props.identityId) {
+      attrs = cardStore.activeCards[channelId]?.attrs;
+    } else {
+      const activeId = cardStore.getActiveCardId(channelId);
+      if (activeId && activeId === boundCardId.value) {
+        attrs = cardStore.activeCards[channelId]?.attrs;
+      }
+    }
+  }
+  attrs = attrs || card.value?.attrs;
+  if (!attrs) return '';
+  return renderCardTemplate(template.value, attrs);
 });
 
 const isVisible = computed(() => {
@@ -38,9 +55,9 @@ const isVisible = computed(() => {
 const badgeStyle = computed(() => {
   if (!props.identityColor) return {};
   return {
-    backgroundColor: `${props.identityColor}15`,
+    backgroundColor: `${props.identityColor}12`,
     color: props.identityColor,
-    borderColor: `${props.identityColor}40`,
+    borderColor: `${props.identityColor}33`,
   };
 });
 </script>
@@ -59,10 +76,10 @@ const badgeStyle = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.3em;
-  font-size: 0.75em;
+  font-size: 0.68em;
   line-height: 1.2;
-  padding: 0.1em 0.4em;
-  border-radius: 4px;
+  padding: 0.08em 0.36em;
+  border-radius: 6px;
   border: 1px solid rgba(128, 128, 128, 0.2);
   margin-left: 0.5em;
   vertical-align: middle;

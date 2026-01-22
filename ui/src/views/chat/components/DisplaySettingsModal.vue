@@ -513,20 +513,6 @@ const handleOpenTutorialHub = () => {
       <section class="display-settings__section">
         <header>
           <div>
-            <p class="section-title">人物卡徽章</p>
-            <p class="section-desc">在消息发送者名称后显示角色属性（如 HP/SAN）</p>
-          </div>
-        </header>
-        <n-switch v-model:value="draft.characterCardBadgeEnabled">
-          <template #checked>已启用</template>
-          <template #unchecked>已关闭</template>
-        </n-switch>
-        <p class="control-desc control-desc--hint">徽章模板可在世界设置中自定义，格式如 "HP {hp}/{hpmax} SAN {san}"</p>
-      </section>
-
-      <section class="display-settings__section">
-        <header>
-          <div>
             <p class="section-title">排版（字号 / 行距 / 字距）</p>
             <p class="section-desc">控制阅读密度，满足不同屏幕与视力偏好</p>
           </div>

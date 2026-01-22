@@ -113,20 +113,25 @@ const splitEntryEnabled = computed(() => route.path !== '/embed');
 
 let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const ST_REFRESH_DELAY = 1000;
-const ST_COMMAND_RE = /^([./。,，！!#\\/])?st(\\s|$)/i;
+const CARD_REFRESH_COMMAND_RE = /^([./。,，！!#\\/])?(st|sc|en|buff|ss|ds|cast|ri)(?=\\s|$|[^a-zA-Z])/i;
 
-const hasStCommand = (content: string) => {
+const hasCardRefreshCommand = (content: string) => {
   const plain = (content || '').replace(/<[^>]*>/g, '').trim();
   if (!plain) return false;
   const lines = plain.split(/\\r?\\n/);
-  return lines.some(line => ST_COMMAND_RE.test(line.trim()));
+  return lines.some(line => CARD_REFRESH_COMMAND_RE.test(line.trim()));
 };
 
 const scheduleCharacterSheetRefresh = () => {
-  if (characterSheetStore.activeWindowIds.length === 0) return;
   if (stRefreshTimer) clearTimeout(stRefreshTimer);
   stRefreshTimer = setTimeout(() => {
-    void characterSheetStore.refreshAllWindows();
+    const channelId = chat.curChannel?.id;
+    if (channelId) {
+      void characterCardStore.getActiveCard(channelId);
+    }
+    if (characterSheetStore.activeWindowIds.length > 0) {
+      void characterSheetStore.refreshAllWindows();
+    }
   }, ST_REFRESH_DELAY);
 };
 
@@ -7833,7 +7838,7 @@ chatEvent.on('message-created', (e?: Event) => {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
-  if (hasStCommand(incoming.content || '')) {
+  if (hasCardRefreshCommand(incoming.content || '')) {
     scheduleCharacterSheetRefresh();
   }
   const isSelf = incoming.user?.id === user.info.id;

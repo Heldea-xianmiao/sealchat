@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NSelect, NPopconfirm, NTag, useMessage } from 'naive-ui';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NSelect, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
 import { Plus, Trash, Edit, Link, Unlink, Eye } from '@vicons/tabler';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useChatStore } from '@/stores/chat';
+import { useDisplayStore } from '@/stores/display';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import type { CharacterCard, ChannelIdentity } from '@/types';
 
 const props = defineProps<{
@@ -21,6 +23,7 @@ const message = useMessage();
 const cardStore = useCharacterCardStore();
 const sheetStore = useCharacterSheetStore();
 const chatStore = useChatStore();
+const displayStore = useDisplayStore();
 
 const resolvedChannelId = computed(() => props.channelId || chatStore.curChannel?.id || '');
 
@@ -31,6 +34,45 @@ const identities = computed<ChannelIdentity[]>(() => {
   if (!id) return [];
   return chatStore.channelIdentities[id] || [];
 });
+
+const badgeEnabled = computed({
+  get: () => displayStore.settings.characterCardBadgeEnabled,
+  set: (value: boolean) => {
+    displayStore.updateSettings({ characterCardBadgeEnabled: value });
+  },
+});
+
+const badgeTemplate = ref('');
+const currentWorldId = computed(() => chatStore.currentWorldId || '');
+
+const syncBadgeTemplate = () => {
+  const worldId = currentWorldId.value;
+  if (!worldId) {
+    badgeTemplate.value = DEFAULT_CARD_TEMPLATE;
+    return;
+  }
+  const stored = displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId];
+  badgeTemplate.value = stored ?? getWorldCardTemplate(worldId);
+};
+
+const persistBadgeTemplate = () => {
+  const worldId = currentWorldId.value;
+  if (!worldId) return;
+  const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
+  badgeTemplate.value = normalized;
+  setWorldCardTemplate(worldId, normalized);
+  displayStore.updateSettings({
+    characterCardBadgeTemplateByWorld: {
+      ...displayStore.settings.characterCardBadgeTemplateByWorld,
+      [worldId]: normalized,
+    },
+  });
+};
+
+const resetBadgeTemplate = () => {
+  badgeTemplate.value = DEFAULT_CARD_TEMPLATE;
+  persistBadgeTemplate();
+};
 
 watch(() => props.visible, async (val) => {
   if (val && resolvedChannelId.value) {
@@ -43,6 +85,16 @@ watch(resolvedChannelId, async (newId) => {
     await cardStore.loadCards(newId);
   }
 });
+
+watch(
+  [() => props.visible, currentWorldId],
+  ([visible]) => {
+    if (visible) {
+      syncBadgeTemplate();
+    }
+  },
+  { immediate: true },
+);
 
 const handleClose = () => {
   emit('update:visible', false);
@@ -366,6 +418,34 @@ const openPreview = async (card: CharacterCard) => {
         </div>
       </template>
 
+      <div class="character-card-settings">
+        <div class="settings-row">
+          <div>
+            <p class="settings-title">聊天角色徽章</p>
+            <p class="settings-desc">开启后且可读到人物卡数据时，在昵称后显示简洁属性</p>
+          </div>
+          <n-switch v-model:value="badgeEnabled">
+            <template #checked>已启用</template>
+            <template #unchecked>已关闭</template>
+          </n-switch>
+        </div>
+        <div class="settings-row settings-row--template">
+          <div>
+            <p class="settings-title">徽章模板</p>
+            <p class="settings-desc">使用 {属性名} 占位，例如：HP{生命值} SAN{理智} 闪避{闪避}</p>
+          </div>
+          <div class="settings-template-input">
+            <n-input
+              v-model:value="badgeTemplate"
+              size="small"
+              placeholder="HP{生命值} SAN{理智} 闪避{闪避}"
+              @blur="persistBadgeTemplate"
+            />
+            <n-button size="small" quaternary @click="resetBadgeTemplate">恢复默认</n-button>
+          </div>
+        </div>
+      </div>
+
       <div class="character-card-list">
         <n-empty v-if="channelCards.length === 0" description="暂无人物卡" />
         <n-card
@@ -513,6 +593,43 @@ const openPreview = async (card: CharacterCard) => {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.character-card-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.25rem 0 1rem;
+  border-bottom: 1px solid var(--sc-border-color);
+  margin-bottom: 1rem;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-row--template {
+  align-items: flex-start;
+}
+
+.settings-title {
+  font-weight: 500;
+  margin-bottom: 0.1rem;
+}
+
+.settings-desc {
+  color: var(--sc-text-secondary);
+  font-size: 0.8rem;
+}
+
+.settings-template-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 210px;
 }
 
 .character-card-item {

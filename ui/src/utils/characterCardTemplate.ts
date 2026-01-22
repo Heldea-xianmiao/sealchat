@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify';
 
-export const DEFAULT_CARD_TEMPLATE = 'HP {hp}/{hpmax} SAN {san}';
+export const DEFAULT_CARD_TEMPLATE = 'HP{生命值} SAN{理智} 闪避{闪避}';
 
 const TEMPLATE_STORAGE_KEY_PREFIX = 'sealchat_card_template_';
 
@@ -36,13 +36,15 @@ export function setWorldCardTemplate(worldId: string, template: string) {
 export function renderCardTemplate(template: string, data: Record<string, any>): string {
   if (!template || !data) return '';
 
-  let html = template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key) => {
+  let html = template.replace(/\{([^{}]+)\}/g, (_match, rawKey) => {
+    const key = String(rawKey).trim();
+    if (!key) return '';
     const val = data[key];
     return val !== undefined && val !== null ? String(val) : '';
   });
 
   // Remove any remaining unmatched placeholders
-  html = html.replace(/\{[a-zA-Z0-9_]+\}/g, '');
+  html = html.replace(/\{[^{}]+\}/g, '');
 
   return DOMPurify.sanitize(html.trim(), {
     ALLOWED_TAGS: ['span', 'b', 'i', 'strong', 'em'],
