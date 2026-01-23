@@ -19,6 +19,7 @@ interface RenderOptions {
   imageClass?: string;
   linkClass?: string;
   attachmentResolver?: (value: string) => string;
+  textRenderer?: (text: string) => string;
 }
 
 const DAY_TEXT_LUMINANCE_THRESHOLD = 0.9;
@@ -119,7 +120,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
   // 处理文本节点
   if (node.text !== undefined) {
-    let text = escapeHtml(node.text);
+    let text = options.textRenderer
+      ? options.textRenderer(node.text)
+      : escapeHtml(node.text);
 
     // 应用文本标记
     if (node.marks && node.marks.length > 0) {

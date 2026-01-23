@@ -17,14 +17,15 @@ var (
 
 // WorldKeywordInput 用于创建或更新关键词。
 type WorldKeywordInput struct {
-	Keyword     string   `json:"keyword"`
-	Category    string   `json:"category"`
-	Aliases     []string `json:"aliases"`
-	MatchMode   string   `json:"matchMode"`
-	Description string   `json:"description"`
-	Display     string   `json:"display"`
-	SortOrder   *int     `json:"sortOrder"`
-	Enabled     *bool    `json:"isEnabled"`
+	Keyword           string   `json:"keyword"`
+	Category          string   `json:"category"`
+	Aliases           []string `json:"aliases"`
+	MatchMode         string   `json:"matchMode"`
+	Description       string   `json:"description"`
+	DescriptionFormat string   `json:"descriptionFormat"`
+	Display           string   `json:"display"`
+	SortOrder         *int     `json:"sortOrder"`
+	Enabled           *bool    `json:"isEnabled"`
 }
 
 // WorldKeywordReorderItem 批量更新排序时的单项。
@@ -120,6 +121,12 @@ func normalizeWorldKeywordInput(input *WorldKeywordInput) error {
 		input.Display = string(model.WorldKeywordDisplayInherit)
 	default:
 		input.Display = string(model.WorldKeywordDisplayInherit)
+	}
+	switch strings.ToLower(strings.TrimSpace(input.DescriptionFormat)) {
+	case string(model.WorldKeywordDescRich):
+		input.DescriptionFormat = string(model.WorldKeywordDescRich)
+	default:
+		input.DescriptionFormat = string(model.WorldKeywordDescPlain)
 	}
 	input.Category = strings.TrimSpace(input.Category)
 	return nil
@@ -234,17 +241,18 @@ func WorldKeywordCreate(worldID, actorID string, input WorldKeywordInput) (*mode
 		sortOrder = maxSort + 1
 	}
 	item := &model.WorldKeywordModel{
-		WorldID:     worldID,
-		Keyword:     input.Keyword,
-		Category:    input.Category,
-		Aliases:     model.JSONList[string](input.Aliases),
-		MatchMode:   model.WorldKeywordMatchMode(input.MatchMode),
-		Description: strings.TrimSpace(input.Description),
-		Display:     model.WorldKeywordDisplayStyle(input.Display),
-		SortOrder:   sortOrder,
-		IsEnabled:   input.Enabled == nil || *input.Enabled,
-		CreatedBy:   actorID,
-		UpdatedBy:   actorID,
+		WorldID:           worldID,
+		Keyword:           input.Keyword,
+		Category:          input.Category,
+		Aliases:           model.JSONList[string](input.Aliases),
+		MatchMode:         model.WorldKeywordMatchMode(input.MatchMode),
+		Description:       strings.TrimSpace(input.Description),
+		DescriptionFormat: model.WorldKeywordDescFormat(input.DescriptionFormat),
+		Display:           model.WorldKeywordDisplayStyle(input.Display),
+		SortOrder:         sortOrder,
+		IsEnabled:         input.Enabled == nil || *input.Enabled,
+		CreatedBy:         actorID,
+		UpdatedBy:         actorID,
 	}
 	item.Normalize()
 	if err := model.GetDB().Create(item).Error; err != nil {
@@ -270,13 +278,14 @@ func WorldKeywordUpdate(worldID, keywordID, actorID string, input WorldKeywordIn
 		return nil, err
 	}
 	updates := map[string]interface{}{
-		"keyword":     input.Keyword,
-		"category":    input.Category,
-		"aliases":     model.JSONList[string](input.Aliases),
-		"match_mode":  model.WorldKeywordMatchMode(input.MatchMode),
-		"description": strings.TrimSpace(input.Description),
-		"display":     model.WorldKeywordDisplayStyle(input.Display),
-		"updated_by":  actorID,
+		"keyword":            input.Keyword,
+		"category":           input.Category,
+		"aliases":            model.JSONList[string](input.Aliases),
+		"match_mode":         model.WorldKeywordMatchMode(input.MatchMode),
+		"description":        strings.TrimSpace(input.Description),
+		"description_format": model.WorldKeywordDescFormat(input.DescriptionFormat),
+		"display":            model.WorldKeywordDisplayStyle(input.Display),
+		"updated_by":         actorID,
 	}
 	if input.Enabled != nil {
 		updates["is_enabled"] = *input.Enabled

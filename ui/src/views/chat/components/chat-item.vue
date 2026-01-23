@@ -663,6 +663,7 @@ const keywordTooltipResolver = (keywordId: string) => {
   return {
     title: keyword.keyword,
     description: keyword.description,
+    descriptionFormat: keyword.descriptionFormat,
   }
 }
 

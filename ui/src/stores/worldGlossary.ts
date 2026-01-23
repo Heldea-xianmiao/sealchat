@@ -39,6 +39,7 @@ export interface CompiledKeywordSpan {
   matchMode: 'plain' | 'regex'
   display: 'standard' | 'minimal' | 'inherit'
   description: string
+  descriptionFormat?: 'plain' | 'rich'
 }
 
 interface ImportStats {
@@ -84,11 +85,17 @@ const clampDescription = (value?: string | null, maxLength?: number) => {
 
 const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => {
   const maxLen = getKeywordMaxLength()
+  const descriptionFormat = item.descriptionFormat === 'rich' ? 'rich' : 'plain'
   return {
     ...item,
     keyword: clampText(item.keyword, maxLen),
     aliases: (item.aliases || []).map((alias) => clampText(alias, maxLen)),
-    description: item.description ? clampDescription(item.description, maxLen) : '',
+    description: item.description
+      ? descriptionFormat === 'rich'
+        ? item.description
+        : clampDescription(item.description, maxLen)
+      : '',
+    descriptionFormat,
   }
 }
 
@@ -182,6 +189,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
                 matchMode: item.matchMode,
                 display,
                 description: item.description,
+                descriptionFormat: item.descriptionFormat,
               })
             } catch (error) {
               console.warn('invalid keyword pattern', item.keyword, error)
@@ -290,6 +298,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
           aliases: current.aliases,
           matchMode: current.matchMode,
           description: current.description,
+          descriptionFormat: current.descriptionFormat,
           display: current.display,
           isEnabled: enabled,
         }
@@ -321,6 +330,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
           aliases: current.aliases,
           matchMode: current.matchMode,
           description: current.description,
+          descriptionFormat: current.descriptionFormat,
           display,
           isEnabled: current.isEnabled,
         }

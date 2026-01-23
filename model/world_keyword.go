@@ -21,6 +21,13 @@ const (
 	WorldKeywordDisplayInherit  WorldKeywordDisplayStyle = "inherit"
 )
 
+type WorldKeywordDescFormat string
+
+const (
+	WorldKeywordDescPlain WorldKeywordDescFormat = "plain"
+	WorldKeywordDescRich  WorldKeywordDescFormat = "rich"
+)
+
 // WorldKeywordModel 存储世界术语配置。
 type WorldKeywordModel struct {
 	StringPKBaseModel
@@ -30,6 +37,7 @@ type WorldKeywordModel struct {
 	Aliases     JSONList[string]         `json:"aliases" gorm:"type:json"`
 	MatchMode   WorldKeywordMatchMode    `json:"matchMode" gorm:"size:16;default:'plain'"`
 	Description string                   `json:"description" gorm:"type:text"`
+	DescriptionFormat WorldKeywordDescFormat `json:"descriptionFormat" gorm:"size:16;default:'plain'"`
 	Display     WorldKeywordDisplayStyle `json:"display" gorm:"size:24;default:'inherit'"`
 	SortOrder   int                      `json:"sortOrder" gorm:"default:0;index:idx_world_keyword_sort"`
 	IsEnabled   bool                     `json:"isEnabled" gorm:"default:true"`
@@ -49,5 +57,8 @@ func (m *WorldKeywordModel) Normalize() {
 	}
 	if m.Display == "" {
 		m.Display = WorldKeywordDisplayInherit
+	}
+	if m.DescriptionFormat == "" {
+		m.DescriptionFormat = WorldKeywordDescPlain
 	}
 }

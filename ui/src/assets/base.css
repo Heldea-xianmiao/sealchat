@@ -82,6 +82,102 @@ html[data-display-palette='night'] .keyword-highlight--underline:hover {
   margin-bottom: 0;
 }
 
+/* Rich text content styles */
+.keyword-tooltip__body--rich {
+  white-space: normal;
+}
+
+.keyword-tooltip__body--rich p {
+  margin: 0 0 0.5em 0;
+}
+
+.keyword-tooltip__body--rich p:last-child {
+  margin-bottom: 0;
+}
+
+.keyword-tooltip__body--rich strong {
+  font-weight: 600;
+}
+
+.keyword-tooltip__body--rich em {
+  font-style: italic;
+}
+
+.keyword-tooltip__body--rich u {
+  text-decoration: underline;
+}
+
+.keyword-tooltip__body--rich s {
+  text-decoration: line-through;
+}
+
+.keyword-tooltip__body--rich code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.keyword-tooltip__body--rich pre {
+  background: rgba(0, 0, 0, 0.04);
+  padding: 0.5em;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.keyword-tooltip__body--rich pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.keyword-tooltip__body--rich ul,
+.keyword-tooltip__body--rich ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.keyword-tooltip__body--rich li {
+  margin-bottom: 0.25em;
+}
+
+.keyword-tooltip__body--rich blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  border-left: 3px solid rgba(0, 0, 0, 0.15);
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.keyword-tooltip__body--rich img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.keyword-tooltip__body--rich mark {
+  background-color: #fef08a;
+  padding: 0 0.1em;
+  border-radius: 2px;
+}
+
+/* Night mode for rich text */
+:root[data-display-palette='night'] .keyword-tooltip__body--rich code {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root[data-display-palette='night'] .keyword-tooltip__body--rich pre {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:root[data-display-palette='night'] .keyword-tooltip__body--rich blockquote {
+  border-left-color: rgba(255, 255, 255, 0.2);
+  color: rgba(248, 250, 252, 0.7);
+}
+
+:root[data-display-palette='night'] .keyword-tooltip__body--rich mark {
+  background-color: rgba(253, 224, 71, 0.3);
+}
+
 /* Minimal scrollbar for auth forms */
 .sc-form-scroll {
   overflow-y: auto;
