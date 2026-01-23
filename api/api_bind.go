@@ -259,6 +259,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
+	v1Auth.Get("/user-lookup", UserLookup)
 	v1Auth.Post("/user-emoji-add", UserEmojiAdd)
 	v1Auth.Get("/user-emoji-list", UserEmojiList)
 	v1Auth.Post("/user-emoji-delete", UserEmojiDelete)
@@ -484,6 +485,8 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Post("/admin/image-migration/execute", ImageMigrationExecute)
 	v1AuthAdmin.Get("/admin/s3-migration/preview", S3MigrationPreview)
 	v1AuthAdmin.Post("/admin/s3-migration/execute", S3MigrationExecute)
+	v1AuthAdmin.Get("/admin/audio-folder-migration/preview", AudioFolderMigrationPreview)
+	v1AuthAdmin.Post("/admin/audio-folder-migration/execute", AudioFolderMigrationExecute)
 
 	// Email notification admin test
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)

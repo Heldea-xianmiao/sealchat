@@ -333,6 +333,26 @@ func UserGetEx(id string) (*UserModel, error) {
 	return &user, nil
 }
 
+// UserGetByUsername 通过用户名获取用户信息
+func UserGetByUsername(username string) (*UserModel, error) {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return nil, fmt.Errorf("用户名不能为空")
+	}
+	var user UserModel
+	result := db.Where("username = ?", trimmed).Limit(1).Find(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("用户不存在")
+		}
+		return nil, fmt.Errorf("获取用户信息失败: %v", result.Error)
+	}
+	if user.ID == "" {
+		return nil, fmt.Errorf("用户不存在")
+	}
+	return &user, nil
+}
+
 func UserGet(id string) *UserModel {
 	r, _ := UserGetEx(id)
 	return r

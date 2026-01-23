@@ -53,3 +53,37 @@ func ImageMigrationExecute(c *fiber.Ctx) error {
 		"dryRun":  req.DryRun,
 	})
 }
+
+// AudioFolderMigrationPreview returns statistics about audio folder migration
+func AudioFolderMigrationPreview(c *fiber.Ctx) error {
+	stats, err := service.GetAudioFolderMigrationPreview()
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusInternalServerError, err, "获取迁移预览失败")
+	}
+	return c.JSON(fiber.Map{
+		"stats": stats,
+	})
+}
+
+type AudioFolderMigrationExecuteRequest struct {
+	DryRun bool `json:"dryRun"`
+}
+
+// AudioFolderMigrationExecute performs audio folder and asset scope migration
+func AudioFolderMigrationExecute(c *fiber.Ctx) error {
+	var req AudioFolderMigrationExecuteRequest
+	if err := c.BodyParser(&req); err != nil {
+		req.DryRun = false
+	}
+
+	stats, results, err := service.MigrateAudioFoldersToCommon(req.DryRun)
+	if err != nil {
+		return wrapErrorStatus(c, http.StatusInternalServerError, err, "执行迁移失败")
+	}
+
+	return c.JSON(fiber.Map{
+		"stats":   stats,
+		"results": results,
+		"dryRun":  req.DryRun,
+	})
+}
