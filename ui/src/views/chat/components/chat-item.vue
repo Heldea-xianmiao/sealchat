@@ -1330,15 +1330,6 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
 
 const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
 
-watch(
-  () => props.item?.id,
-  (messageId) => {
-    if (messageId) {
-      void chat.fetchMessageReactions(messageId);
-    }
-  },
-  { immediate: true }
-);
 
 </script>
 

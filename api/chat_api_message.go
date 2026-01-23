@@ -1454,6 +1454,8 @@ func apiMessageList(ctx *ChatContext, data *struct {
 				for _, item := range items {
 					if list, ok := reactionMap[item.ID]; ok {
 						item.Reactions = list
+					} else {
+						item.Reactions = []model.MessageReactionListItem{}
 					}
 				}
 			}
