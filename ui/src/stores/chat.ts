@@ -54,7 +54,7 @@ interface ChatState {
   // 频道未读: id - 数量
   unreadCountMap: { [key: string]: number },
 
-  whisperTarget: User | null,
+  whisperTargets: User[],
 
   messageMenu: {
     show: boolean
@@ -346,7 +346,7 @@ export const useChatStore = defineStore({
     // 太遮挡视线，先关闭了
     atOptionsOn: false,
 
-    whisperTarget: null,
+    whisperTargets: [],
 
     messageMenu: {
       show: false,
@@ -1259,7 +1259,7 @@ export const useChatStore = defineStore({
           }
           this.curMember = resp.data.member;
           this.curChannelUsers = [];
-          this.whisperTarget = null;
+          this.whisperTargets = [];
           writeScopedLocalStorage('lastChannel', id);
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
@@ -1331,7 +1331,7 @@ export const useChatStore = defineStore({
         return true;
       }
       this.curChannelUsers = resp2.data.data;
-      this.whisperTarget = null;
+      this.whisperTargets = [];
 
       if (isStale()) {
         return true;
@@ -2436,9 +2436,14 @@ export const useChatStore = defineStore({
       if (quote_id) {
         payload.quote_id = quote_id;
       }
-      const whisperId = whisper_to ?? this.whisperTarget?.id;
-      if (whisperId) {
-        payload.whisper_to = whisperId;
+      const whisperIds = [
+        whisper_to,
+        ...this.whisperTargets.map((target) => target?.id),
+      ].filter(Boolean) as string[];
+      const uniqueWhisperIds = Array.from(new Set(whisperIds));
+      if (uniqueWhisperIds.length > 0) {
+        payload.whisper_to_ids = uniqueWhisperIds;
+        payload.whisper_to = uniqueWhisperIds[0];
       }
       if (clientId) {
         payload.client_id = clientId;
@@ -2485,8 +2490,8 @@ export const useChatStore = defineStore({
           payload.ic_mode = extra.icMode;
         }
         let whisperTargetId: string | null | undefined = extra?.whisperTo;
-        if (!whisperTargetId && this.whisperTarget?.id) {
-          whisperTargetId = this.whisperTarget.id;
+        if (!whisperTargetId && this.whisperTargets[0]?.id) {
+          whisperTargetId = this.whisperTargets[0].id;
         }
         if (!whisperTargetId && extra?.messageId && this.editing?.messageId === extra.messageId && this.editing?.whisperTargetId) {
           whisperTargetId = this.editing.whisperTargetId;
@@ -2525,12 +2530,25 @@ export const useChatStore = defineStore({
       }
     },
 
-    setWhisperTarget(target?: User | null) {
-      this.whisperTarget = target ?? null;
+    toggleWhisperTarget(target: User) {
+      const index = this.whisperTargets.findIndex((item) => item.id === target.id);
+      if (index > -1) {
+        this.whisperTargets.splice(index, 1);
+        return;
+      }
+      this.whisperTargets.push(target);
     },
 
-    clearWhisperTarget() {
-      this.whisperTarget = null;
+    removeWhisperTarget(target: User) {
+      this.whisperTargets = this.whisperTargets.filter((item) => item.id !== target.id);
+    },
+
+    clearWhisperTargets() {
+      this.whisperTargets = [];
+    },
+
+    confirmWhisperTargets() {
+      // 保留已选目标，仅关闭面板
     },
 
     startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null }) {

@@ -111,6 +111,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
+	db.AutoMigrate(&MessageWhisperRecipientModel{})
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&MessageArchiveLogModel{})

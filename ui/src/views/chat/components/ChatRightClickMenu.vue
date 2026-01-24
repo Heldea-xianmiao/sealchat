@@ -76,9 +76,23 @@ const resolveWhisperTargetId = (msg?: any): string | null => {
   if (!msg) {
     return null;
   }
+  const metaIds = msg?.whisperMeta?.targetUserIds;
+  if (Array.isArray(metaIds) && metaIds.length > 0) {
+    return String(metaIds[0]);
+  }
   const metaId = msg?.whisperMeta?.targetUserId;
   if (metaId) {
     return metaId;
+  }
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    const first = list[0];
+    if (typeof first === 'string') {
+      return first;
+    }
+    if (first && typeof first === 'object' && first.id) {
+      return first.id;
+    }
   }
   const camel = msg?.whisperTo;
   if (typeof camel === 'string') {
@@ -468,7 +482,9 @@ const clickWhisper = () => {
     discriminator: targetAuthor.discriminator || '',
     is_bot: !!targetAuthor.is_bot,
   };
-  chat.setWhisperTarget(targetUser);
+  chat.clearWhisperTargets();
+  chat.toggleWhisperTarget(targetUser);
+  chat.confirmWhisperTargets();
   chat.messageMenu.show = false;
 };
 

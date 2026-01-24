@@ -141,7 +141,9 @@ func ChannelGetFirstUnreadInfo(channelId, userId string, options *FirstUnreadFil
 	var firstUnread MessageModel
 	q := db.Where("channel_id = ? AND created_at > ? AND user_id <> ?", channelId, lastReadTime, userId).
 		Where("is_deleted = ?", false).
-		Where("(is_whisper = ? OR user_id = ? OR whisper_to = ?)", false, userId, userId)
+		Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+		))`, false, userId, userId, userId)
 
 	includeArchived := false
 	icFilter := ""

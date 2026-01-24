@@ -11,11 +11,13 @@ export interface WhisperMeta {
   targetUserId?: string;
   targetUserNick?: string;
   targetUserName?: string;
+  targetUserIds?: string[];
 }
 
 declare module '@satorijs/protocol' {
   interface Message {
     whisperMeta?: WhisperMeta;
+    whisperToIds?: User[];
     senderRoleId?: string;
     isDeleted?: boolean;
     deletedAt?: number;
@@ -49,6 +51,7 @@ export interface SatoriMessage {
   sender_role_id?: string;
   isWhisper?: boolean;
   whisperTo?: User | null;
+  whisperToIds?: User[];
 }
 
 export interface MessageReaction {

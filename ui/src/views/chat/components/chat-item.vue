@@ -414,6 +414,29 @@ const resolveChannelIdentityColor = (identityId?: string) => {
   return channelIdentityMap.value.get(String(identityId))?.color || '';
 };
 
+const resolveWhisperTargets = (item: any) => {
+  const list = item?.whisperToIds || item?.whisper_to_ids || item?.whisperTargets || item?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    return list.map((entry: any) => {
+      if (typeof entry === 'string') {
+        const name = resolveChannelUserDisplayName(entry) || entry;
+        return { id: entry, name };
+      }
+      const id = entry?.id || '';
+      const name = entry?.nick || entry?.name || resolveChannelUserDisplayName(id) || entry?.username || id || '未知成员';
+      return { id, name };
+    });
+  }
+  const metaIds = item?.whisperMeta?.targetUserIds;
+  if (Array.isArray(metaIds) && metaIds.length > 0) {
+    return metaIds.map((id: string) => ({
+      id,
+      name: resolveChannelUserDisplayName(id) || id || '未知成员',
+    }));
+  }
+  return [];
+};
+
 const quoteInlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
 
 const buildQuoteSummary = (quote?: any) => {
@@ -468,19 +491,37 @@ const buildQuoteSummary = (quote?: any) => {
 const buildWhisperLabel = (item?: any) => {
   if (!item?.isWhisper) return '';
   const senderName = getMemberDisplayName(item);
-  const targetName = getTargetDisplayName(item);
-  const senderLabel = `@${senderName}`;
-  const targetLabel = `@${targetName}`;
   const senderUserId = item?.user?.id || item?.whisperMeta?.senderUserId;
+  const senderLabel = `@${senderName}`;
+  const targets = resolveWhisperTargets(item);
+  const targetNames = targets.map((target: any) => target?.name).filter(Boolean);
+  if (targetNames.length > 0) {
+    if (senderUserId === user.info.id) {
+      return t('whisper.sentTo', { targets: targetNames.join('、') });
+    }
+    const otherRecipients = targets.filter((target: any) => {
+      const targetId = target?.id;
+      if (!targetId) return false;
+      return targetId !== user.info.id && targetId !== senderUserId;
+    });
+    if (otherRecipients.length > 0) {
+      const otherNames = otherRecipients.map((target: any) => target?.name).filter(Boolean).join('、');
+      return t('whisper.fromMultiple', { sender: senderLabel, otherUsers: otherNames });
+    }
+    return t('whisper.from', { sender: senderLabel });
+  }
+
+  const targetName = getTargetDisplayName(item);
+  const targetLabel = `@${targetName}`;
   const targetUserId = item?.whisperTo?.id || item?.whisperMeta?.targetUserId;
   if (senderUserId === user.info.id) {
-    return t('whisper.sendTo', { target: targetLabel });
+    return t('whisper.sentTo', { targets: targetLabel });
   }
   if (targetUserId === user.info.id) {
     return t('whisper.from', { sender: senderLabel });
   }
   if (targetName && targetName !== '未知成员') {
-    return t('whisper.sendTo', { target: targetLabel });
+    return t('whisper.sentTo', { targets: targetLabel });
   }
   return t('whisper.generic');
 };

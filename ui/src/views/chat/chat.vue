@@ -3740,6 +3740,12 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
     msg.whisperTo = msg.whisper_to;
   }
+  if (msg.whisperToIds === undefined && msg.whisper_to_ids !== undefined) {
+    msg.whisperToIds = msg.whisper_to_ids;
+  }
+  if (msg.whisperToIds === undefined && msg.whisper_targets !== undefined) {
+    msg.whisperToIds = msg.whisper_targets;
+  }
   if (msg.whisperMeta === undefined && msg.whisper_meta !== undefined) {
     msg.whisperMeta = msg.whisper_meta;
   }
@@ -3797,6 +3803,19 @@ const normalizeMessageShape = (msg: any): Message => {
     });
     if (!meta.targetUserId && msg.whisper_to) {
       meta.targetUserId = msg.whisper_to;
+    }
+    if (!meta.targetUserIds) {
+      const candidateList = msg.whisperToIds || msg.whisper_to_ids || msg.whisper_targets;
+      if (Array.isArray(candidateList)) {
+        const ids = candidateList.map((entry: any) => {
+          if (!entry) return '';
+          if (typeof entry === 'string') return entry;
+          return entry.id || '';
+        }).filter((id: string) => id);
+        if (ids.length > 0) {
+          meta.targetUserIds = ids;
+        }
+      }
     }
     if (!meta.senderUserId && msg.user?.id) {
       meta.senderUserId = msg.user.id;
@@ -5618,7 +5637,7 @@ const resetTypingPreview = () => {
 	typingPreviewRowRefs.clear();
 };
 
-const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.id || null;
+const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTargets[0]?.id || null;
 
 const sendTypingUpdate = throttle(
 	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
@@ -6427,6 +6446,7 @@ const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
+const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
 
 interface WhisperCandidate {
   raw: any;
@@ -6434,18 +6454,8 @@ interface WhisperCandidate {
   avatar: string;
   displayName: string;
   secondaryName: string;
+  color: string;
 }
-
-const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
-  .filter((i: any) => i?.id && i.id !== user.info.id)
-  .map((candidate: any) => ({
-    raw: candidate,
-    id: candidate.id,
-    avatar: candidate.avatar || '',
-    displayName: candidateDisplayName(candidate),
-    secondaryName: candidateSecondaryName(candidate),
-  }))
-);
 
 const candidateDisplayName = (candidate: any) => candidate?.nick || candidate?.name || candidate?.username || '未知成员';
 const candidateSecondaryName = (candidate: any) => {
@@ -6456,6 +6466,47 @@ const candidateSecondaryName = (candidate: any) => {
   }
   return '';
 };
+
+const resolveWhisperCandidateColor = (candidate: any) => {
+  const id = candidate?.id;
+  if (id) {
+    const mapped = whisperCandidateColorMap.value.get(String(id));
+    if (mapped) {
+      return mapped;
+    }
+  }
+  const fallback = candidate?.nick_color || candidate?.nickColor || candidate?.color || '';
+  return normalizeHexColor(fallback) || '';
+};
+
+const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
+  const id = target?.id;
+  if (id) {
+    const mapped = whisperCandidateColorMap.value.get(String(id));
+    if (mapped) {
+      return mapped;
+    }
+  }
+  const fallback = target?.color || target?.nick_color || target?.nickColor || '';
+  return normalizeHexColor(fallback) || '';
+};
+
+const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
+  const color = resolveWhisperTargetColor(target);
+  return color ? { color } : undefined;
+};
+
+const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
+  .filter((i: any) => i?.id && i.id !== user.info.id)
+  .map((candidate: any) => ({
+    raw: candidate,
+    id: candidate.id,
+    avatar: candidate.avatar || '',
+    displayName: candidateDisplayName(candidate),
+    secondaryName: candidateSecondaryName(candidate),
+    color: resolveWhisperCandidateColor(candidate),
+  }))
+);
 
 const filteredWhisperCandidates = computed(() => {
   const keyword = whisperQuery.value.trim().toLowerCase();
@@ -6473,9 +6524,22 @@ const filteredWhisperCandidates = computed(() => {
 });
 
 const canOpenWhisperPanel = computed(() => whisperCandidates.value.length > 0);
-const whisperMode = computed(() => !!chat.whisperTarget);
-const whisperTargetDisplay = computed(() => chat.whisperTarget?.nick || chat.whisperTarget?.name || '未知成员');
-const whisperPlaceholderText = computed(() => t('inputBox.whisperPlaceholder', { target: `@${whisperTargetDisplay.value}` }));
+const whisperTargets = computed(() => chat.whisperTargets);
+const isWhisperTarget = (u: { id?: string } | null | undefined) => (
+  Boolean(u?.id) && whisperTargets.value.some((item) => item.id === u?.id)
+);
+const whisperMode = computed(() => whisperTargets.value.length > 0);
+const whisperPlaceholderText = computed(() => {
+  if (!whisperMode.value) {
+    return '';
+  }
+  if (whisperTargets.value.length === 1) {
+    const target = whisperTargets.value[0];
+    const name = target?.nick || target?.name || '未知成员';
+    return t('inputBox.whisperPlaceholder', { target: `@${name}` });
+  }
+  return t('inputBox.whisperPlaceholderMultiple', { count: whisperTargets.value.length });
+});
 
 const ensureInputFocus = () => {
   nextTick(() => {
@@ -6553,9 +6617,23 @@ const resolveMessageWhisperTargetId = (msg?: any): string | null => {
   if (!msg) {
     return null;
   }
+  const metaIds = msg?.whisperMeta?.targetUserIds;
+  if (Array.isArray(metaIds) && metaIds.length > 0) {
+    return String(metaIds[0]);
+  }
   const metaId = msg?.whisperMeta?.targetUserId;
   if (metaId) {
     return metaId;
+  }
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    const first = list[0];
+    if (typeof first === 'string') {
+      return first;
+    }
+    if (first && typeof first === 'object' && first.id) {
+      return first.id;
+    }
   }
   const camel = msg?.whisperTo;
   if (typeof camel === 'string') {
@@ -6676,7 +6754,7 @@ const beginEdit = (target?: Message) => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   chat.curReplyTo = null;
-  chat.clearWhisperTarget();
+  chat.clearWhisperTargets();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
@@ -6785,6 +6863,7 @@ function openWhisperPanel(source: 'slash' | 'manual') {
   whisperPickerSource.value = source;
   whisperPanelVisible.value = true;
   whisperSelectionIndex.value = 0;
+  void loadWhisperCandidateColors();
   if (source === 'manual') {
     whisperQuery.value = '';
     nextTick(() => {
@@ -6800,7 +6879,33 @@ function closeWhisperPanel() {
   whisperPickerSource.value = null;
 }
 
-const applyWhisperTarget = (candidate: WhisperCandidate) => {
+const loadWhisperCandidateColors = async () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId || channelId.length >= 30) {
+    whisperCandidateColorMap.value = new Map();
+    return;
+  }
+  try {
+    const resp = await chat.fetchMentionableMembers(channelId);
+    const items = resp?.items || [];
+    const nextMap = new Map<string, string>();
+    for (const item of items) {
+      const userId = item?.userId;
+      if (!userId || nextMap.has(String(userId))) {
+        continue;
+      }
+      const color = normalizeHexColor(item?.color || '') || '';
+      if (color) {
+        nextMap.set(String(userId), color);
+      }
+    }
+    whisperCandidateColorMap.value = nextMap;
+  } catch (error) {
+    console.warn('获取悄悄话候选成员颜色失败', error);
+  }
+};
+
+const onWhisperTargetToggle = (candidate: WhisperCandidate) => {
   if (!candidate?.id) {
     return;
   }
@@ -6813,7 +6918,12 @@ const applyWhisperTarget = (candidate: WhisperCandidate) => {
     discriminator: raw.discriminator || '',
     is_bot: !!raw.is_bot,
   };
-  chat.setWhisperTarget(targetUser);
+  (targetUser as any).color = candidate.color || '';
+  chat.toggleWhisperTarget(targetUser);
+};
+
+const confirmWhisperSelection = () => {
+  chat.confirmWhisperTargets();
   const source = whisperPickerSource.value;
   closeWhisperPanel();
   if (source === 'slash') {
@@ -6859,7 +6969,7 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Enter' || event.key === 'Tab') {
     const selected = list[whisperSelectionIndex.value];
     if (selected) {
-      applyWhisperTarget(selected);
+      onWhisperTargetToggle(selected);
     }
     event.preventDefault();
     return true;
@@ -6884,8 +6994,8 @@ const startWhisperSelection = () => {
   openWhisperPanel('manual');
 };
 
-const clearWhisperTarget = () => {
-  chat.clearWhisperTarget();
+const clearWhisperTargets = () => {
+  chat.clearWhisperTargets();
   ensureInputFocus();
 };
 
@@ -7370,7 +7480,7 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
       draft = convertMessageContentToDraft(chat.editing.draft);
     }
     chat.curReplyTo = null;
-    chat.clearWhisperTarget();
+    chat.clearWhisperTargets();
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
@@ -7502,10 +7612,11 @@ const send = throttle(async () => {
     (tmpMsg as any).channel = chat.curChannel;
   }
 
-  const whisperTargetForSend = chat.whisperTarget;
-  if (whisperTargetForSend) {
+  const whisperTargetsForSend = chat.whisperTargets.slice();
+  if (whisperTargetsForSend.length > 0) {
     (tmpMsg as any).isWhisper = true;
-    (tmpMsg as any).whisperTo = whisperTargetForSend;
+    (tmpMsg as any).whisperTo = whisperTargetsForSend[0];
+    (tmpMsg as any).whisperToIds = whisperTargetsForSend;
   }
 
 	(tmpMsg as any).failed = false;
@@ -7528,7 +7639,7 @@ const send = throttle(async () => {
 		const newMsg = await chat.messageCreate(
 			finalContent,
 			replyTo?.id,
-			whisperTargetForSend?.id,
+			whisperTargetsForSend[0]?.id,
 			clientId,
 			identityIdOverride,
 		);
@@ -7635,6 +7746,19 @@ watch(canOpenWhisperPanel, (canOpen) => {
   }
 });
 
+watch(
+  () => chat.curChannel?.id,
+  (channelId, previous) => {
+    if (channelId === previous) {
+      return;
+    }
+    whisperCandidateColorMap.value = new Map();
+    if (whisperPanelVisible.value) {
+      void loadWhisperCandidateColors();
+    }
+  },
+);
+
 watch([
   inputPreviewEnabled,
   inputMode,
@@ -7664,13 +7788,12 @@ watch(
   },
 );
 
-watch(() => chat.whisperTarget?.id, (targetId, prevId) => {
-  if (chat.whisperTarget && targetId) {
-    closeWhisperPanel();
-    ensureInputFocus();
-  }
-  if (targetId === prevId) {
+watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds, prevIds) => {
+  if (targetIds === prevIds) {
     return;
+  }
+  if (targetIds && whisperCandidateColorMap.value.size === 0) {
+    void loadWhisperCandidateColors();
   }
   stopTypingPreviewNow();
   emitTypingPreview();
@@ -8897,10 +9020,10 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === 'Backspace' && chat.whisperTarget) {
+  if (e.key === 'Backspace' && chat.whisperTargets.length > 0) {
     const selection = getInputSelection();
     if (selection.start === 0 && selection.end === 0 && textToSend.value.length === 0) {
-      clearWhisperTarget();
+      clearWhisperTargets();
       e.preventDefault();
       return;
     }
@@ -9912,39 +10035,65 @@ onBeforeUnmount(() => {
         <n-button @click="chat.curReplyTo = null">取消</n-button>
       </div>
 
-      <div
-        ref="inputContainerRef"
-        class="chat-input-container flex flex-col w-full relative"
-        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
-        @pointerdown="handleInputBorderPointerDown"
-      >
+      <div class="chat-input-wrapper flex flex-col w-full relative">
         <transition name="fade">
-          <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop>
+          <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop @pointerdown.stop>
             <div class="whisper-panel__title">{{ t('inputBox.whisperPanelTitle') }}</div>
             <n-input v-if="whisperPickerSource === 'manual'" ref="whisperSearchInputRef"
               v-model:value="whisperQuery" size="small" :placeholder="t('inputBox.whisperSearchPlaceholder')" clearable
               @keydown="handleWhisperKeydown" />
             <div class="whisper-panel__list" @keydown="handleWhisperKeydown">
               <div v-for="(candidate, idx) in filteredWhisperCandidates" :key="candidate.id"
-                class="whisper-panel__item" :class="{ 'is-active': idx === whisperSelectionIndex }"
+                class="whisper-panel__item"
+                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate.raw) }"
                 @mousedown.prevent @mouseenter="whisperSelectionIndex = idx"
-                @click="applyWhisperTarget(candidate)">
+                @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
                 <div class="whisper-panel__meta">
-                  <div class="whisper-panel__name">{{ candidate.displayName }}</div>
+                  <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
                   <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
                 </div>
+                <n-checkbox
+                  class="whisper-panel__checkbox"
+                  :checked="isWhisperTarget(candidate.raw)"
+                  @click.stop
+                />
               </div>
               <div v-if="!filteredWhisperCandidates.length" class="whisper-panel__empty">{{ t('inputBox.whisperEmpty') }}</div>
             </div>
+            <div class="whisper-panel__footer">
+              <n-button size="small" @click="closeWhisperPanel">{{ t('inputBox.whisperCancel') }}</n-button>
+              <n-button
+                type="primary"
+                size="small"
+                :disabled="whisperTargets.length === 0"
+                @click="confirmWhisperSelection"
+              >
+                {{ t('inputBox.whisperConfirm') }} ({{ whisperTargets.length }})
+              </n-button>
+            </div>
           </div>
         </transition>
-
-          <div v-if="whisperMode" class="whisper-pill-wrapper">
-            <div class="whisper-pill" @mousedown.prevent>
-              <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
-              <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
-            </div>
+        <div
+          ref="inputContainerRef"
+          class="chat-input-container flex flex-col w-full relative"
+          :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
+          @pointerdown="handleInputBorderPointerDown"
+        >
+          <div v-if="whisperTargets.length" class="whisper-pills">
+            <span class="whisper-pill-prefix">{{ t('inputBox.whisperPillPrefix') }}</span>
+            <n-tag
+              v-for="target in whisperTargets"
+              :key="target.id"
+              class="whisper-pill-tag"
+              type="info"
+              size="small"
+              closable
+              :style="getWhisperTargetStyle(target)"
+              @close.stop="chat.removeWhisperTarget(target)"
+            >
+              {{ target.nick || target.name }}
+            </n-tag>
           </div>
           <div class="chat-input-area relative flex-1">
             <div
@@ -10507,6 +10656,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+  </div>
   </div>
 
   <RightClickMenu />
@@ -12578,6 +12728,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.chat-input-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
 .chat-input-container {
   width: 100%;
   background-color: transparent;
@@ -13298,6 +13457,39 @@ onBeforeUnmount(() => {
   text-align: center;
   font-size: 0.85rem;
   color: #9ca3af;
+}
+
+.whisper-panel__checkbox {
+  margin-left: auto;
+}
+
+.whisper-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px 0;
+  border-top: 1px solid var(--sc-border-mute);
+  margin-top: 0.6rem;
+}
+
+.whisper-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--sc-bg-elevated);
+  border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.whisper-pill-prefix {
+  font-size: 12px;
+  color: var(--sc-text-secondary);
+  margin-right: 4px;
+}
+
+.whisper-pill-tag {
+  max-width: 100px;
 }
 
 .identity-switcher-cell {

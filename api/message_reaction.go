@@ -191,7 +191,7 @@ func resolveReactionMessage(user *model.UserModel, messageID string) (*model.Mes
 		return nil, nil, 0, "", err
 	}
 
-	if msg.IsWhisper && msg.UserID != user.ID && msg.WhisperTo != user.ID {
+	if msg.IsWhisper && msg.UserID != user.ID && msg.WhisperTo != user.ID && !model.HasWhisperRecipient(msg.ID, user.ID) {
 		return nil, nil, http.StatusForbidden, "没有访问该悄悄话的权限", nil
 	}
 
@@ -234,12 +234,22 @@ func broadcastMessageReaction(channel *model.ChannelModel, msg *model.MessageMod
 	}
 
 	if msg.IsWhisper {
-		recipients := make([]string, 0, 2)
-		if msg.UserID != "" {
-			recipients = append(recipients, msg.UserID)
+		recipients := make([]string, 0, 4)
+		seen := map[string]struct{}{}
+		addRecipient := func(id string) {
+			if id == "" {
+				return
+			}
+			if _, ok := seen[id]; ok {
+				return
+			}
+			seen[id] = struct{}{}
+			recipients = append(recipients, id)
 		}
-		if msg.WhisperTo != "" && msg.WhisperTo != msg.UserID {
-			recipients = append(recipients, msg.WhisperTo)
+		addRecipient(msg.UserID)
+		addRecipient(msg.WhisperTo)
+		for _, id := range model.GetWhisperRecipientIDs(msg.ID) {
+			addRecipient(id)
 		}
 		broadcast.BroadcastEventInChannelToUsers(msg.ChannelID, recipients, event)
 		broadcast.BroadcastEventInChannelForBot(msg.ChannelID, event)

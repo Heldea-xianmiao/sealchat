@@ -20,6 +20,9 @@
     "whisperEmpty": "該当するメンバーはいません",
     "whisperPillPrefix": "宛先:",
     "whisperPlaceholder": "{target} にささやきを送信...",
+    "whisperPlaceholderMultiple": "{count}人にささやく...",
+    "whisperConfirm": "確認",
+    "whisperCancel": "キャンセル",
     "whisperNoOnline": "このチャンネルにはオンラインのメンバーがいません"
   },
   "connectState": {
@@ -62,7 +65,9 @@
     "selfNotAllowed": "自分にささやきを送ることはできません",
     "userUnknown": "メンバーを特定できません",
     "sendTo": "[ささやき] {target} へ",
+    "sentTo": "[ささやき] {targets}へ",
     "from": "[ささやき] {sender} から",
+    "fromMultiple": "[ささやき] {sender}から、{otherUsers}も受信",
     "generic": "[ささやき] プライベートメッセージ"
   },
   "avatarPrompt": {

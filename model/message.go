@@ -55,9 +55,10 @@ type MessageModel struct {
 	Member *MemberModel  `json:"member"`         // 嵌套 Member 结构体
 	Quote  *MessageModel `json:"quote" gorm:"-"` // 嵌套 Message 结构体
 	// WhisperTarget 为前端展示提供冗余
-	WhisperTarget *UserModel            `json:"whisper_target" gorm:"-"`
-	WhisperMeta   *protocol.WhisperMeta `json:"whisper_meta,omitempty" gorm:"-"`
-	Reactions     []MessageReactionListItem `json:"reactions" gorm:"-"`
+	WhisperTarget  *UserModel              `json:"whisper_target" gorm:"-"`
+	WhisperTargets []*UserModel            `json:"whisper_targets" gorm:"-"`
+	WhisperMeta    *protocol.WhisperMeta   `json:"whisper_meta,omitempty" gorm:"-"`
+	Reactions      []MessageReactionListItem `json:"reactions" gorm:"-"`
 }
 
 func (*MessageModel) TableName() string {
@@ -108,6 +109,15 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 			return nil
 		}(),
 	}
+	if len(m.WhisperTargets) > 0 {
+		msg.WhisperToIds = make([]*protocol.User, 0, len(m.WhisperTargets))
+		for _, target := range m.WhisperTargets {
+			if target == nil {
+				continue
+			}
+			msg.WhisperToIds = append(msg.WhisperToIds, target.ToProtocolType())
+		}
+	}
 	if m.SenderIdentityID != "" || m.SenderIdentityColor != "" || m.SenderIdentityAvatarID != "" || m.SenderIdentityName != "" {
 		msg.Identity = &protocol.MessageIdentity{
 			ID:               m.SenderIdentityID,
@@ -140,6 +150,23 @@ func (m *MessageModel) buildWhisperMeta() *protocol.WhisperMeta {
 		TargetUserID:     m.WhisperTo,
 		TargetUserNick:   m.WhisperTargetUserNick,
 		TargetUserName:   m.WhisperTargetUserName,
+	}
+	if len(m.WhisperTargets) > 0 {
+		targetIDs := make([]string, 0, len(m.WhisperTargets))
+		seen := map[string]struct{}{}
+		for _, target := range m.WhisperTargets {
+			if target == nil || target.ID == "" {
+				continue
+			}
+			if _, ok := seen[target.ID]; ok {
+				continue
+			}
+			seen[target.ID] = struct{}{}
+			targetIDs = append(targetIDs, target.ID)
+		}
+		if len(targetIDs) > 0 {
+			meta.TargetUserIds = targetIDs
+		}
 	}
 	if meta.SenderMemberID == "" {
 		meta.SenderMemberID = m.MemberID

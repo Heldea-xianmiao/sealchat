@@ -118,6 +118,7 @@ type Message struct {
 	IcMode        string           `json:"icMode"`
 	IsWhisper     bool             `json:"isWhisper"`
 	WhisperTo     *User            `json:"whisperTo"`
+	WhisperToIds  []*User          `json:"whisperToIds,omitempty"`
 	IsEdited         bool             `json:"isEdited"`
 	EditCount        int              `json:"editCount"`
 	EditedByUserId   string           `json:"editedByUserId,omitempty"`
@@ -234,6 +235,7 @@ type WhisperMeta struct {
 	TargetUserID     string `json:"targetUserId,omitempty"`
 	TargetUserNick   string `json:"targetUserNick,omitempty"`
 	TargetUserName   string `json:"targetUserName,omitempty"`
+	TargetUserIds    []string `json:"targetUserIds,omitempty"`
 }
 
 type MessageReorder struct {

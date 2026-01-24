@@ -20,6 +20,9 @@
     "whisperEmpty": "No matching members",
     "whisperPillPrefix": "To:",
     "whisperPlaceholder": "Whisper to {target}...",
+    "whisperPlaceholderMultiple": "Whisper to {count} people...",
+    "whisperConfirm": "Confirm",
+    "whisperCancel": "Cancel",
     "whisperNoOnline": "No members are online in this channel"
   },
   "connectState": {
@@ -62,7 +65,9 @@
     "selfNotAllowed": "You can't whisper to yourself",
     "userUnknown": "Unable to identify this member",
     "sendTo": "[Whisper] to {target}",
+    "sentTo": "[Whisper] to {targets}",
     "from": "[Whisper] from {sender}",
+    "fromMultiple": "[Whisper] from {sender}, {otherUsers} also received",
     "generic": "[Whisper] private message"
   },
   "avatarPrompt": {
