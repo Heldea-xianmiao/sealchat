@@ -3890,6 +3890,12 @@ const messageRowRefs = new Map<string, HTMLElement>();
 const SEARCH_JUMP_WINDOWS_MS = [30, 120, 360, 1440, 10080].map((minutes) => minutes * 60 * 1000);
 const searchJumping = ref(false);
 
+interface SearchJumpWindow {
+  messages: Message[];
+  cursorBefore?: string | null;
+  fromTime?: number;
+}
+
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
 
@@ -3977,6 +3983,47 @@ const loadSearchJumpWindow = async (from: number, to: number, limit: number) => 
   };
 };
 
+const buildAnchorWindowMessages = (messages: Message[], targetId: string) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return null;
+  }
+  const sorted = messages.slice().sort(compareByDisplayOrder);
+  const targetIndex = sorted.findIndex((msg) => msg.id === targetId);
+  if (targetIndex < 0) {
+    return null;
+  }
+  const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
+  const end = Math.min(sorted.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
+  return sorted.slice(start, end);
+};
+
+const applyHistoricalWindowFromMessages = (
+  messages: Message[],
+  payload: { messageId: string },
+  options: { cursorBefore?: string | null; fromTime?: number } = {},
+) => {
+  const windowMessages = buildAnchorWindowMessages(messages, payload.messageId);
+  if (!windowMessages) {
+    return false;
+  }
+  resetWindowState('history');
+  rows.value = windowMessages;
+  sortRowsByDisplayOrder();
+  if (options.cursorBefore !== undefined) {
+    applyCursorUpdate({ before: options.cursorBefore ?? '' });
+  }
+  computeAfterCursorFromRows();
+  messageWindow.hasReachedStart = false;
+  if (options.fromTime !== undefined) {
+    messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && options.fromTime === 0;
+  }
+  messageWindow.hasReachedLatest = false;
+  updateAnchorMessage(payload.messageId);
+  showButton.value = true;
+  lockHistoryView();
+  return true;
+};
+
 const mountHistoricalWindowWithSpan = async (
   payload: { messageId: string; createdAt?: number },
   spanMs: number,
@@ -4008,22 +4055,10 @@ const mountHistoricalWindowWithSpan = async (
     if (!containsTarget) {
       return false;
     }
-    const targetIndex = normalized.findIndex((msg) => msg.id === payload.messageId);
-    const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
-    const end = Math.min(normalized.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
-    const windowMessages = normalized.slice(start, end);
-    resetWindowState('history');
-    rows.value = windowMessages;
-    sortRowsByDisplayOrder();
-    applyCursorUpdate({ before: resp?.next ?? '' });
-    computeAfterCursorFromRows();
-    messageWindow.hasReachedStart = false;
-    messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && from === 0;
-    messageWindow.hasReachedLatest = false;
-    updateAnchorMessage(payload.messageId);
-    showButton.value = true;
-    lockHistoryView();
-    return true;
+    return applyHistoricalWindowFromMessages(normalized, payload, {
+      cursorBefore: resp?.next ?? '',
+      fromTime: from,
+    });
   } catch (error) {
     console.warn('加载历史视图失败', error);
     return false;
@@ -4045,44 +4080,50 @@ const loadMessagesWithinWindow = async (
   spanMs: number,
 ) => {
   if (!chat.curChannel?.id || !payload.createdAt || spanMs <= 0) {
-    return false;
+    return null;
   }
   const center = Number(payload.createdAt);
   if (!Number.isFinite(center)) {
-    return false;
+    return null;
   }
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
     let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
     if (!normalized.length) {
-      return false;
+      return null;
     }
-    mergeIncomingMessages(normalized, resp ? { before: resp.next ?? '' } : undefined);
-    if (messageExistsLocally(payload.messageId)) {
-      return true;
-    }
-    if (normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+    let containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (!containsTarget && normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
       const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
-      if (!retry.normalized.length) {
-        return false;
+      resp = retry.resp;
+      normalized = retry.normalized;
+      if (!normalized.length) {
+        return null;
       }
-      mergeIncomingMessages(retry.normalized, retry.resp ? { before: retry.resp.next ?? '' } : undefined);
+      containsTarget = normalized.some((msg) => msg.id === payload.messageId);
     }
-    return messageExistsLocally(payload.messageId);
+    if (!containsTarget) {
+      return null;
+    }
+    return {
+      messages: normalized,
+      cursorBefore: resp?.next ?? '',
+      fromTime: from,
+    };
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
-    return false;
+    return null;
   }
 };
 
 const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   if (!chat.curChannel?.id || payload.displayOrder === undefined) {
-    return false;
+    return null;
   }
   const order = Number(payload.displayOrder);
   if (!Number.isFinite(order)) {
-    return false;
+    return null;
   }
   const cursorOrder = order + 1e-6;
   const cursorTime = Math.max(0, Math.floor(Number(payload.createdAt ?? Date.now())));
@@ -4096,13 +4137,11 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     });
     let incoming = normalizeMessageList(firstResp?.data || []);
     if (!incoming.length) {
-      return false;
+      return null;
     }
-    mergeIncomingMessages(incoming, firstResp ? { before: firstResp.next ?? '' } : undefined);
-    if (messageExistsLocally(payload.messageId)) {
-      return true;
-    }
-    if (incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+    let containsTarget = incoming.some((msg) => msg.id === payload.messageId);
+    let cursorBefore = firstResp?.next ?? '';
+    if (!containsTarget && incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
       const retryResp = await chat.messageList(chat.curChannel.id, cursor, {
         includeArchived: true,
         includeOoc: true,
@@ -4111,22 +4150,29 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
       });
       incoming = normalizeMessageList(retryResp?.data || []);
       if (!incoming.length) {
-        return false;
+        return null;
       }
-      mergeIncomingMessages(incoming, retryResp ? { before: retryResp.next ?? '' } : undefined);
+      containsTarget = incoming.some((msg) => msg.id === payload.messageId);
+      cursorBefore = retryResp?.next ?? '';
     }
-    return messageExistsLocally(payload.messageId);
+    if (!containsTarget) {
+      return null;
+    }
+    return {
+      messages: incoming,
+      cursorBefore,
+    };
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
-    return false;
+    return null;
   }
 };
 
 const locateMessageForJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   for (const span of SEARCH_JUMP_WINDOWS_MS) {
-    const found = await loadMessagesWithinWindow(payload, span);
-    if (found) {
-      return true;
+    const window = await loadMessagesWithinWindow(payload, span);
+    if (window) {
+      return window;
     }
   }
   return loadMessagesByCursor(payload);
@@ -4150,8 +4196,17 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     const located = await locateMessageForJump(payload);
     if (!located) {
       message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+      return false;
     }
-    return located;
+    const applied = applyHistoricalWindowFromMessages(located.messages, payload, {
+      cursorBefore: located.cursorBefore,
+      fromTime: located.fromTime,
+    });
+    if (!applied) {
+      message.warning('仍未定位到该消息，稍后再试');
+      return false;
+    }
+    return true;
   } finally {
     loadingMsg?.destroy?.();
     searchJumping.value = false;
