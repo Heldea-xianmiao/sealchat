@@ -11,15 +11,18 @@ export interface WhisperMeta {
   targetUserId?: string;
   targetUserNick?: string;
   targetUserName?: string;
+  targetUserIds?: string[];
 }
 
 declare module '@satorijs/protocol' {
   interface Message {
     whisperMeta?: WhisperMeta;
+    whisperToIds?: User[];
     senderRoleId?: string;
     isDeleted?: boolean;
     deletedAt?: number;
     deletedBy?: string;
+    reactions?: MessageReaction[];
   }
   interface Channel {
     defaultDiceExpr?: string;
@@ -48,6 +51,22 @@ export interface SatoriMessage {
   sender_role_id?: string;
   isWhisper?: boolean;
   whisperTo?: User | null;
+  whisperToIds?: User[];
+}
+
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  meReacted: boolean;
+}
+
+export interface MessageReactionEvent {
+  messageId: string;
+  emoji: string;
+  count: number;
+  action: 'add' | 'remove';
+  userId: string;
+  timestamp: number;
 }
 
 export interface LogUploadConfig {
@@ -72,6 +91,7 @@ export interface CaptchaTargetConfig {
 export interface CaptchaConfig {
   signup?: CaptchaTargetConfig;
   signin?: CaptchaTargetConfig;
+  passwordReset?: CaptchaTargetConfig;
   mode?: 'off' | 'local' | 'turnstile';
   turnstile?: TurnstileConfig;
 }
@@ -109,6 +129,20 @@ export interface ServerAudioConfig {
   alternateBitrates?: number[];
   ffmpegPath?: string;
   allowWorldAudioWorkbench?: boolean;
+  allowNonAdminCreateWorld?: boolean;
+}
+
+export interface BackupConfig {
+  enabled: boolean;
+  intervalHours: number;
+  retentionCount: number;
+  path: string;
+}
+
+export interface BackupInfo {
+  filename: string;
+  size: number;
+  createdAt: number;
 }
 
 export interface ServerConfig {
@@ -130,6 +164,10 @@ export interface ServerConfig {
     minDelayMinutes?: number;
     maxDelayMinutes?: number;
   };
+  emailAuth?: {
+    enabled: boolean;
+  };
+  backup?: BackupConfig;
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
   loginBackground?: {
@@ -156,6 +194,9 @@ export interface UserInfo {
   roleIds?: string[];
   disabled: boolean;
   is_bot?: boolean;
+  email?: string;
+  emailVerified?: boolean;
+  emailVerifiedAt?: string;
 }
 
 export interface TalkMessage {
@@ -282,6 +323,7 @@ export interface DiceMacro {
 export interface GalleryCollection extends ModelDataBase {
   ownerType: 'user' | 'channel';
   ownerId: string;
+  collectionType?: string;
   name: string;
   order: number;
   quotaUsed: number;
@@ -360,9 +402,21 @@ export interface ChannelIdentity {
   displayName: string;
   color: string;
   avatarAttachmentId: string;
+  characterCardId?: string;
   isDefault: boolean;
   sortOrder: number;
   folderIds?: string[];
+}
+
+export interface CharacterCard {
+  id: string;
+  userId: string;
+  channelId: string;
+  name: string;
+  sheetType: string;
+  attrs: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ChannelIdentityFolder {

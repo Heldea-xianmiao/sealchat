@@ -6,10 +6,13 @@ import { useUtilsStore } from '@/stores/utils'
 import { useDialog, useMessage } from 'naive-ui'
 import { triggerBlobDownload } from '@/utils/download'
 import { clampTextWithImageTokens } from '@/utils/attachmentMarkdown'
+import { isTipTapJson, tiptapJsonToPlainText } from '@/utils/tiptap-render'
+import { convertPlainWithImagesToTiptap, convertTiptapToPlainWithImages } from '@/utils/keywordFormatConverter'
 import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
 import { useBreakpoints } from '@vueuse/core'
 import { ImageOutline } from '@vicons/ionicons5'
 import KeywordDescriptionEditor from './KeywordDescriptionEditor.vue'
+import KeywordRichEditor from './KeywordRichEditor.vue'
 
 const DEFAULT_KEYWORD_MAX_LENGTH = 2000
 type KeywordDisplayStyle = 'standard' | 'minimal' | 'inherit'
@@ -39,6 +42,19 @@ const filterValue = computed({
   set: (value: string) => glossary.setSearchQuery(value),
 })
 
+const getDescriptionPlainText = (item: WorldKeywordItem) => {
+  if (!item?.description) return ''
+  if (item.descriptionFormat === 'rich' && isTipTapJson(item.description)) {
+    return tiptapJsonToPlainText(item.description)
+  }
+  return item.description
+}
+
+const getDescriptionPreview = (item: WorldKeywordItem) => {
+  const text = getDescriptionPlainText(item)
+  return text ? clampText(text) : ''
+}
+
 const filteredKeywords = computed(() => {
   let items = keywordItems.value
   
@@ -51,7 +67,8 @@ const filteredKeywords = computed(() => {
   const q = filterValue.value.trim().toLowerCase()
   if (!q) return items
   return items.filter((item) => {
-    const haystack = [item.keyword, ...(item.aliases || []), item.description || ''].join(' ').toLowerCase()
+    const description = getDescriptionPlainText(item)
+    const haystack = [item.keyword, ...(item.aliases || []), description].join(' ').toLowerCase()
     return haystack.includes(q)
   })
 })
@@ -100,12 +117,40 @@ const formModel = reactive({
   aliases: '',
   matchMode: 'plain' as 'plain' | 'regex',
   description: '',
+  descriptionFormat: 'plain' as 'plain' | 'rich',
   display: 'inherit' as KeywordDisplayStyle,
   isEnabled: true,
 })
 
 // Description editor ref
 const descriptionEditorRef = ref<InstanceType<typeof KeywordDescriptionEditor> | null>(null)
+const richEditorRef = ref<InstanceType<typeof KeywordRichEditor> | null>(null)
+
+// Computed for rich mode toggle
+const handleModeSwitch = (toRich: boolean) => {
+  const current = formModel.description || ''
+  if (toRich) {
+    if (!isTipTapJson(current)) {
+      const json = convertPlainWithImagesToTiptap(current)
+      formModel.description = JSON.stringify(json)
+    }
+    formModel.descriptionFormat = 'rich'
+    return
+  }
+  if (isTipTapJson(current)) {
+    formModel.description = convertTiptapToPlainWithImages(current)
+  }
+  formModel.descriptionFormat = 'plain'
+}
+
+const isRichMode = computed({
+  get: () => formModel.descriptionFormat === 'rich',
+  set: (value: boolean) => {
+    const target = value ? 'rich' : 'plain'
+    if (formModel.descriptionFormat === target) return
+    handleModeSwitch(value)
+  },
+})
 
 const categoryFilter = ref('')
 const categoryOptions = ref<string[]>([])
@@ -127,6 +172,11 @@ const bulkCategoryModalVisible = ref(false)
 const bulkTargetCategory = ref('')
 const bulkDisplayModalVisible = ref(false)
 const bulkTargetDisplay = ref<KeywordDisplayStyle>('inherit')
+
+// Drag and drop state
+const dragSourceId = ref<string | null>(null)
+const dragTargetId = ref<string | null>(null)
+const isReordering = ref(false)
 
 const importText = reactive({ content: '' })
 
@@ -174,9 +224,21 @@ const normalizePayloadEntry = (entry: any): WorldKeywordPayload | null => {
     payload.aliases = aliases
   }
   const description = entry.description ?? entry.desc
+  const descriptionFormat = entry.descriptionFormat === 'rich' ? 'rich' : entry.descriptionFormat === 'plain' ? 'plain' : undefined
   if (description) {
-    const text = clampDescription(String(description).trim())
-    if (text) payload.description = text
+    if (descriptionFormat === 'rich') {
+      const raw = String(description).trim()
+      if (raw) {
+        payload.description = raw
+        payload.descriptionFormat = 'rich'
+      }
+    } else {
+      const text = clampDescription(String(description).trim())
+      if (text) payload.description = text
+      if (descriptionFormat === 'plain') {
+        payload.descriptionFormat = 'plain'
+      }
+    }
   }
   if (entry.matchMode === 'regex' || entry.matchMode === 'plain') {
     payload.matchMode = entry.matchMode
@@ -252,12 +314,77 @@ const parseStructuredImport = (raw: string): WorldKeywordPayload[] => {
     .filter((item): item is WorldKeywordPayload => Boolean(item))
 }
 
+// Drag and drop handlers
+function handleDragStart(e: DragEvent, item: WorldKeywordItem) {
+  if (!canEdit.value) return
+  dragSourceId.value = item.id
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', item.id)
+  }
+}
+
+function handleDragEnter(item: WorldKeywordItem) {
+  if (!dragSourceId.value || dragSourceId.value === item.id) return
+  dragTargetId.value = item.id
+}
+
+function handleDragOver(e: DragEvent) {
+  e.preventDefault()
+}
+
+function handleDragLeave() {
+  // Optional: clear target on leave
+}
+
+async function handleDrop(targetItem: WorldKeywordItem) {
+  const sourceId = dragSourceId.value
+  const targetId = targetItem.id
+  dragSourceId.value = null
+  dragTargetId.value = null
+
+  if (!sourceId || sourceId === targetId) return
+
+  const worldId = currentWorldId.value
+  if (!worldId) return
+
+  const items = [...keywordItems.value]
+  const sourceIndex = items.findIndex((item) => item.id === sourceId)
+  const targetIndex = items.findIndex((item) => item.id === targetId)
+  if (sourceIndex === -1 || targetIndex === -1) return
+
+  // Reorder locally first
+  const [removed] = items.splice(sourceIndex, 1)
+  items.splice(targetIndex, 0, removed)
+
+  // Calculate new sortOrders (descending, highest at top)
+  const reorderItems = items.map((item, index) => ({
+    id: item.id,
+    sortOrder: items.length - index,
+  }))
+
+  isReordering.value = true
+  try {
+    await glossary.reorderKeywords(worldId, reorderItems)
+  } catch (error) {
+    message.error('排序失败')
+  } finally {
+    isReordering.value = false
+  }
+}
+
+function handleDragEnd() {
+  dragSourceId.value = null
+  dragTargetId.value = null
+}
+
 function resetForm() {
   formModel.keyword = ''
   formModel.category = ''
   formModel.aliases = ''
   formModel.matchMode = 'plain'
   formModel.description = ''
+  formModel.descriptionFormat = 'plain'
   formModel.display = 'inherit'
   formModel.isEnabled = true
 }
@@ -285,7 +412,9 @@ function openEdit(item: any) {
   formModel.category = item.category || ''
   formModel.aliases = (item.aliases || []).map((alias: string) => clampText(alias)).join(', ')
   formModel.matchMode = item.matchMode
-  formModel.description = clampDescription(item.description || '')
+  const descriptionFormat = item.descriptionFormat === 'rich' ? 'rich' : 'plain'
+  formModel.description = descriptionFormat === 'rich' ? (item.description || '') : clampDescription(item.description || '')
+  formModel.descriptionFormat = descriptionFormat
   formModel.display = item.display || 'inherit'
   formModel.isEnabled = item.isEnabled
   glossary.openEditor(worldId, item)
@@ -303,12 +432,20 @@ async function submitEditor() {
     .split(',')
     .map((item: string) => clampText(item.trim()))
     .filter(Boolean)
+  const rawDescription = formModel.description?.trim() || ''
+  const description =
+    rawDescription
+      ? formModel.descriptionFormat === 'rich'
+        ? rawDescription
+        : clampDescription(rawDescription)
+      : undefined
   const payload = {
     keyword,
     category: formModel.category?.trim() || undefined,
     aliases,
     matchMode: formModel.matchMode,
-    description: formModel.description?.trim() ? clampDescription(formModel.description.trim()) : undefined,
+    description,
+    descriptionFormat: formModel.descriptionFormat,
     display: formModel.display,
     isEnabled: formModel.isEnabled,
   }
@@ -343,6 +480,7 @@ async function handleToggle(item: WorldKeywordItem) {
     aliases: item.aliases,
     matchMode: item.matchMode,
     description: item.description,
+    descriptionFormat: item.descriptionFormat || 'plain',
     display: item.display,
     isEnabled: !item.isEnabled,
   })
@@ -413,6 +551,7 @@ async function handleBulkRenameCategory(oldName: string, newName: string) {
       aliases: item.aliases,
       matchMode: item.matchMode,
       description: item.description,
+      descriptionFormat: item.descriptionFormat || 'plain',
       display: item.display,
       isEnabled: item.isEnabled,
     })
@@ -451,6 +590,7 @@ async function handleBulkModifyCategory() {
       aliases: item.aliases,
       matchMode: item.matchMode,
       description: item.description,
+      descriptionFormat: item.descriptionFormat || 'plain',
       display: item.display,
       isEnabled: item.isEnabled,
     })
@@ -517,6 +657,7 @@ async function handleDeleteCategory(categoryName: string) {
           aliases: item.aliases,
           matchMode: item.matchMode,
           description: item.description,
+          descriptionFormat: item.descriptionFormat || 'plain',
           display: item.display,
           isEnabled: item.isEnabled,
         })
@@ -727,15 +868,17 @@ watch(
       resetForm()
       return
     }
-      if (state.keyword) {
-        const keyword = state.keyword
-        formModel.keyword = keyword.keyword
-        formModel.category = keyword.category || ''
-        formModel.aliases = (keyword.aliases || []).join(', ')
-        formModel.matchMode = keyword.matchMode
-        formModel.description = keyword.description
-        formModel.display = keyword.display || 'inherit'
-        formModel.isEnabled = keyword.isEnabled
+    if (state.keyword) {
+      const keyword = state.keyword
+      formModel.keyword = keyword.keyword
+      formModel.category = keyword.category || ''
+      formModel.aliases = (keyword.aliases || []).join(', ')
+      formModel.matchMode = keyword.matchMode
+      const descriptionFormat = keyword.descriptionFormat === 'rich' ? 'rich' : 'plain'
+      formModel.description = descriptionFormat === 'rich' ? (keyword.description || '') : clampDescription(keyword.description || '')
+      formModel.descriptionFormat = descriptionFormat
+      formModel.display = keyword.display || 'inherit'
+      formModel.isEnabled = keyword.isEnabled
     } else {
       resetForm()
     }
@@ -948,7 +1091,18 @@ onUnmounted(() => {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="item in pagedKeywords" :key="item.id">
+                <tr
+                  v-for="item in pagedKeywords"
+                  :key="item.id"
+                  :draggable="canEdit"
+                  :class="{ 'keyword-drop-target': dragTargetId === item.id, 'keyword-dragging': dragSourceId === item.id }"
+                  @dragstart="handleDragStart($event, item)"
+                  @dragenter="handleDragEnter(item)"
+                  @dragover="handleDragOver"
+                  @dragleave="handleDragLeave"
+                  @drop="handleDrop(item)"
+                  @dragend="handleDragEnd"
+                >
                   <td>
                     <n-checkbox
                       :checked="selectedIds.includes(item.id)"
@@ -959,7 +1113,7 @@ onUnmounted(() => {
                   <td>
                     <div class="font-medium">{{ item.keyword }}</div>
                     <div class="text-xs text-gray-500" v-if="item.aliases?.length">别名：{{ item.aliases.join(', ') }}</div>
-                    <div class="text-xs text-gray-500" v-if="item.description">{{ item.description }}</div>
+                    <div class="text-xs text-gray-500" v-if="getDescriptionPreview(item)">{{ getDescriptionPreview(item) }}</div>
                   </td>
                   <td>
                     <n-tag v-if="item.category" size="small" :bordered="false">{{ item.category }}</n-tag>
@@ -1098,18 +1252,41 @@ onUnmounted(() => {
           <template #label>
             <div class="keyword-description-label">
               <span>术语描述 / 详细说明</span>
-              <button
-                class="keyword-description-label__upload"
-                type="button"
-                @click="descriptionEditorRef?.triggerFileSelect()"
-                title="插入图片"
-              >
-                <n-icon :component="ImageOutline" size="14" />
-              </button>
+              <div class="keyword-description-label__actions" @click.stop.prevent @mousedown.stop.prevent>
+                <button
+                  v-if="!isRichMode"
+                  class="keyword-description-label__upload"
+                  type="button"
+                  @click="descriptionEditorRef?.triggerFileSelect()"
+                  title="插入图片"
+                >
+                  <n-icon :component="ImageOutline" size="14" />
+                </button>
+                <n-tooltip trigger="hover" :delay="300">
+                  <template #trigger>
+                    <n-switch
+                      v-model:value="isRichMode"
+                      size="small"
+                      class="keyword-rich-switch"
+                    >
+                      <template #checked>富文本</template>
+                      <template #unchecked>纯文本</template>
+                    </n-switch>
+                  </template>
+                  切换编辑模式（富文本支持格式化）
+                </n-tooltip>
+              </div>
             </div>
           </template>
           <KeywordDescriptionEditor
+            v-if="!isRichMode"
             ref="descriptionEditorRef"
+            v-model="formModel.description"
+            :maxlength="keywordMaxLength"
+          />
+          <KeywordRichEditor
+            v-else
+            ref="richEditorRef"
             v-model="formModel.description"
             :maxlength="keywordMaxLength"
           />
@@ -1289,6 +1466,23 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.keyword-drop-target {
+  background-color: rgba(24, 160, 88, 0.15) !important;
+  border-top: 2px solid var(--n-primary-color, #18a058) !important;
+}
+
+.keyword-dragging {
+  opacity: 0.5;
+}
+
+tr[draggable="true"] {
+  cursor: grab;
+}
+
+tr[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 .keyword-editor-form {
   display: flex;
   flex-direction: column;
@@ -1405,6 +1599,16 @@ onUnmounted(() => {
 
 .keyword-description-label span {
   flex: 1;
+}
+
+.keyword-description-label__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.keyword-rich-switch {
+  font-size: 11px;
 }
 
 .keyword-description-label__upload {

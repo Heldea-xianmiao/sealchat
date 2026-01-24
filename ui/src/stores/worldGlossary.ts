@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { chatEvent, useChatStore } from './chat'
 import { useUserStore } from './user'
-import type { WorldKeywordItem, WorldKeywordPayload } from '@/models/worldGlossary'
+import type { WorldKeywordItem, WorldKeywordPayload, WorldKeywordReorderItem } from '@/models/worldGlossary'
 import {
   fetchWorldKeywords,
   fetchWorldKeywordsPublic,
@@ -10,6 +10,7 @@ import {
   updateWorldKeyword,
   deleteWorldKeyword,
   bulkDeleteWorldKeywords,
+  reorderWorldKeywords,
   importWorldKeywords,
   exportWorldKeywords,
   fetchWorldKeywordCategories,
@@ -38,6 +39,7 @@ export interface CompiledKeywordSpan {
   matchMode: 'plain' | 'regex'
   display: 'standard' | 'minimal' | 'inherit'
   description: string
+  descriptionFormat?: 'plain' | 'rich'
 }
 
 interface ImportStats {
@@ -83,11 +85,17 @@ const clampDescription = (value?: string | null, maxLength?: number) => {
 
 const normalizeKeywordItem = (item: WorldKeywordItem): WorldKeywordItem => {
   const maxLen = getKeywordMaxLength()
+  const descriptionFormat = item.descriptionFormat === 'rich' ? 'rich' : 'plain'
   return {
     ...item,
     keyword: clampText(item.keyword, maxLen),
     aliases: (item.aliases || []).map((alias) => clampText(alias, maxLen)),
-    description: item.description ? clampDescription(item.description, maxLen) : '',
+    description: item.description
+      ? descriptionFormat === 'rich'
+        ? item.description
+        : clampDescription(item.description, maxLen)
+      : '',
+    descriptionFormat,
   }
 }
 
@@ -181,6 +189,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
                 matchMode: item.matchMode,
                 display,
                 description: item.description,
+                descriptionFormat: item.descriptionFormat,
               })
             } catch (error) {
               console.warn('invalid keyword pattern', item.keyword, error)
@@ -192,6 +201,8 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
 
   function updateKeywordCache(worldId: string, list: WorldKeywordItem[], meta?: { total?: number; page?: number; pageSize?: number }) {
     const normalizedList = list.map(normalizeKeywordItem)
+    // Sort by sortOrder descending to ensure priority order
+    normalizedList.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0))
     const total = meta?.total ?? list.length
     const page = meta?.page ?? 1
     const pageSize = meta?.pageSize ?? list.length
@@ -287,6 +298,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
           aliases: current.aliases,
           matchMode: current.matchMode,
           description: current.description,
+          descriptionFormat: current.descriptionFormat,
           display: current.display,
           isEnabled: enabled,
         }
@@ -318,6 +330,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
           aliases: current.aliases,
           matchMode: current.matchMode,
           description: current.description,
+          descriptionFormat: current.descriptionFormat,
           display,
           isEnabled: current.isEnabled,
         }
@@ -353,6 +366,24 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
       return fetchWorldKeywordCategoriesPublic(worldId)
     }
     return fetchWorldKeywordCategories(worldId)
+  }
+
+  async function reorderKeywords(worldId: string, items: WorldKeywordReorderItem[]) {
+    const updated = await reorderWorldKeywords(worldId, items)
+    if (updated > 0) {
+      const pageItems = pages.value[worldId]?.items || []
+      const orderMap = new Map(items.map((item) => [item.id, item.sortOrder]))
+      const nextList = pageItems.map((item) => {
+        const newOrder = orderMap.get(item.id)
+        if (newOrder !== undefined) {
+          return { ...item, sortOrder: newOrder }
+        }
+        return item
+      })
+      nextList.sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0))
+      updateKeywordCache(worldId, nextList)
+    }
+    return updated
   }
 
   function handleGatewayEvent(event?: any) {
@@ -403,6 +434,7 @@ export const useWorldGlossaryStore = defineStore('worldGlossary', () => {
     importKeywords,
     exportKeywords,
     fetchCategories,
+    reorderKeywords,
     setKeywordEnabledBulk,
     setKeywordDisplayBulk,
     setManagerVisible,

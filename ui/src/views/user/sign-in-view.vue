@@ -90,6 +90,7 @@ const loginOverlayStyle = computed(() => {
 });
 
 const captchaMode = computed(() => config.value?.captcha?.signin?.mode ?? config.value?.captcha?.mode ?? 'off');
+const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
 const captchaImageUrl = computed(() => {
   if (!captchaId.value) {
     return '';
@@ -98,7 +99,7 @@ const captchaImageUrl = computed(() => {
 });
 
 const rules: FormRules = {
-  account: [{ required: true, message: '请输入用户名/昵称' }],
+  account: [{ required: true, message: '请输入用户名/昵称/邮箱' }],
   password: [{ required: true, message: '请输入密码' }],
 };
 
@@ -263,7 +264,7 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
 
     const account = model.value.account.trim();
     if (!account) {
-      message.error('请输入用户名/昵称');
+      message.error('请输入用户名/昵称/邮箱');
       return;
     }
 
@@ -333,13 +334,13 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
-    <div class="sign-in-content" :class="{ 'has-bg': hasLoginBg }">
+    <div class="sign-in-content sc-form-scroll" :class="{ 'has-bg': hasLoginBg }">
       <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
-        <n-form-item path="account" label="用户名/昵称">
-          <n-input v-model:value="model.account" @keydown.enter.prevent />
-        </n-form-item>
+      <n-form-item path="account" label="用户名/昵称/邮箱">
+        <n-input v-model:value="model.account" placeholder="用户名/昵称/邮箱" @keydown.enter.prevent />
+      </n-form-item>
 
         <n-form-item path="password" label="密码">
           <n-input v-model:value="model.password" type="password" @keydown.enter.prevent />
@@ -371,9 +372,12 @@ onBeforeUnmount(() => {
         <n-row :gutter="[0, 24]">
           <n-col :span="24">
             <div class=" flex justify-between">
-              <router-link :to="{ name: 'user-signup' }">
-                <n-button type="text" v-if="config?.registerOpen">注册</n-button>
-              </router-link>
+              <div class="flex items-center gap-2">
+                <router-link :to="{ name: 'user-signup' }">
+                  <n-button type="text" v-if="config?.registerOpen">注册</n-button>
+                </router-link>
+                <n-button v-if="emailAuthEnabled" type="text" @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>
+              </div>
 
               <n-button :disabled="model.account === ''" round type="primary" @click="handleValidateButtonClick">
                 登录
@@ -396,6 +400,8 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .login-bg-layer {
@@ -418,9 +424,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 50%;
   min-width: 20rem;
+  max-height: 100%;
   padding: 2rem;
   transition: all 0.3s;
 }

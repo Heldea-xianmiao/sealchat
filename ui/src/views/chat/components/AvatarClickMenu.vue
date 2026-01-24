@@ -56,7 +56,9 @@ const clickWhisper = () => {
     discriminator: data.user.discriminator || '',
     is_bot: !!data.user.is_bot,
   };
-  chat.setWhisperTarget(targetUser);
+  chat.clearWhisperTargets();
+  chat.toggleWhisperTarget(targetUser);
+  chat.confirmWhisperTargets();
   chat.avatarMenu.show = false;
 };
 

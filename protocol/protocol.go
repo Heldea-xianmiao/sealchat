@@ -60,6 +60,16 @@ type ChannelIdentity struct {
 	IsDefault          bool   `json:"isDefault"`
 }
 
+type CharacterCard struct {
+	ID        string         `json:"id"`
+	UserID    string         `json:"userId,omitempty"`
+	ChannelID string         `json:"channelId,omitempty"`
+	Name      string         `json:"name"`
+	SheetType string         `json:"sheetType"`
+	Attrs     map[string]any `json:"attrs"`
+	UpdatedAt int64          `json:"updatedAt,omitempty"`
+}
+
 type GuildMember struct {
 	ID       string           `json:"id"`
 	User     *User            `json:"user"`
@@ -108,6 +118,7 @@ type Message struct {
 	IcMode        string           `json:"icMode"`
 	IsWhisper     bool             `json:"isWhisper"`
 	WhisperTo     *User            `json:"whisperTo"`
+	WhisperToIds  []*User          `json:"whisperToIds,omitempty"`
 	IsEdited         bool             `json:"isEdited"`
 	EditCount        int              `json:"editCount"`
 	EditedByUserId   string           `json:"editedByUserId,omitempty"`
@@ -224,6 +235,7 @@ type WhisperMeta struct {
 	TargetUserID     string `json:"targetUserId,omitempty"`
 	TargetUserNick   string `json:"targetUserNick,omitempty"`
 	TargetUserName   string `json:"targetUserName,omitempty"`
+	TargetUserIds    []string `json:"targetUserIds,omitempty"`
 }
 
 type MessageReorder struct {
@@ -275,6 +287,7 @@ const (
 	EventMessageUnpinned        EventName = "message-unpinned"
 	EventMessageReordered       EventName = "message-reordered"
 	EventMessageRemoved         EventName = "message-removed"
+	EventMessageReaction        EventName = "message.reaction"
 	EventInteractionCommand     EventName = "interaction/command"
 	EventReactionAdded          EventName = "reaction-added"
 	EventReactionDeleted        EventName = "reaction-deleted"
@@ -297,6 +310,10 @@ const (
 	EventStickyNoteUpdated EventName = "sticky-note-updated"
 	EventStickyNoteDeleted EventName = "sticky-note-deleted"
 	EventStickyNotePushed  EventName = "sticky-note-pushed"
+	// Character Card Events
+	EventCharacterCardCreated EventName = "character-card-created"
+	EventCharacterCardUpdated EventName = "character-card-updated"
+	EventCharacterCardDeleted EventName = "character-card-deleted"
 )
 
 // MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
@@ -306,6 +323,15 @@ type MessageContext struct {
 	WhisperToUserID string `json:"whisperToUserId,omitempty"` // 悄悄话目标用户ID
 	IsHiddenDice    bool   `json:"isHiddenDice,omitempty"`    // 是否为暗骰
 	SenderUserID    string `json:"senderUserId,omitempty"`    // 原消息发送者ID
+}
+
+type MessageReactionEvent struct {
+	MessageID string `json:"messageId"`
+	Emoji     string `json:"emoji"`
+	Count     int    `json:"count"`
+	Action    string `json:"action"` // "add" | "remove"
+	UserID    string `json:"userId"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type Event struct {
@@ -330,7 +356,9 @@ type Event struct {
 	AudioState     *AudioPlaybackStatePayload `json:"audioState,omitempty"`
 	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
 	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
+	CharacterCard  *CharacterCardEventPayload `json:"characterCard,omitempty"`
 	MessageContext *MessageContext            `json:"messageContext,omitempty"`
+	MessageReaction *MessageReactionEvent     `json:"messageReaction,omitempty"`
 }
 
 type TypingState string
@@ -481,4 +509,10 @@ type StickyNoteEventPayload struct {
 	Action        string        `json:"action,omitempty"` // create/update/delete/push
 	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
 	Layout        *StickyNoteLayout `json:"layout,omitempty"`
+}
+
+// CharacterCardEventPayload 角色卡事件载荷
+type CharacterCardEventPayload struct {
+	Card   *CharacterCard `json:"card,omitempty"`
+	Action string         `json:"action,omitempty"` // create/update/delete
 }

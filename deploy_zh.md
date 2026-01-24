@@ -50,7 +50,7 @@ SealChat 推荐使用以下操作系统：
 # 拉取最新镜像
 docker pull ghcr.io/kagangtuya-star/sealchat:latest
 
-# 创建配置文件 (可选)
+# 创建配置文件（推荐，便于持久化）
 cp config.docker.yaml.example config.yaml
 
 # 启动服务
@@ -77,6 +77,7 @@ docker run -d --name sealchat --restart unless-stopped \
   -v $(pwd)/sealchat/data:/app/data \
   -v $(pwd)/sealchat/sealchat-data:/app/sealchat-data \
   -v $(pwd)/sealchat/static:/app/static \
+  -v $(pwd)/sealchat/config.yaml:/app/config.yaml \
   -e TZ=Asia/Shanghai \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```
@@ -183,6 +184,7 @@ Windows下为zip格式。
 - Linux/macOS: sealchat-server
 
 同时发行包会包含 `bin/<平台目录>/cwebp` 与 `bin/<平台目录>/gif2webp`（以及 `LICENSE`），用于图片压缩/转换；请保持它们与主程序同目录，不要删掉或改名。
+发行包还会包含 `config.yaml.example` 与 `config.docker.yaml.example`，按需复制为 `config.yaml` 后再修改。
 
 
 ## 3. 运行程序
@@ -333,6 +335,37 @@ domain: "[2001:db8::1]:3212"
 
 注意：IPv6 地址必须使用中括号，否则会解析失败；服务地址保存时会自动补全中括号。
 
+### 邮箱相关配置（邮件通知 / 邮箱认证）
+
+SealChat 的邮件通知与邮箱认证共用同一套 SMTP 配置，位置在 `emailNotification.smtp`。即使只启用邮箱认证，也需要完整填写 SMTP 字段。
+
+关键字段与开关（节选自 `config.yaml.example`）：
+
+```yaml
+emailNotification:
+  enabled: false              # 未读邮件提醒开关
+  smtp:
+    host: smtp.example.com
+    port: 587
+    username: your@email.com
+    password: ""              # 留空，改用环境变量 SEALCHAT_SMTP_PASSWORD
+    fromAddress: noreply@example.com
+    fromName: SealChat
+    useTLS: true
+    skipVerify: false
+
+emailAuth:
+  enabled: true               # 注册验证 / 密码重置开关
+  codeLength: 6
+  codeTTLSeconds: 300
+  maxAttempts: 5
+  rateLimitPerIP: 5
+```
+
+说明：
+- 只需要邮箱认证时，可保持 `emailNotification.enabled: false`，但 SMTP 仍需配置。
+- 邮件通知与邮箱认证的验证码发送频率、有效期等由 `emailAuth` 段控制。
+
 ## 4. 对象存储（S3 兼容）
 
 SealChat 支持将附件/图片与音频存入 S3（或兼容协议的对象存储，如 MinIO、腾讯 COS 等）。相关配置在 `config.yaml` 的 `storage` 段，建议直接参考并复制 `config.yaml.example` / `config.docker.yaml.example` 中的示例，再按实际替换。
@@ -440,3 +473,57 @@ PostgreSQL因为开发者比较常用，是第二优先级支持的数据库。
 MySQL的支持可能不如前两者完善。
 
 如果在使用过程中遇到任何问题，请及时向我们反馈，我们会尽快解决。
+
+## 5. 配置版本管理
+
+SealChat 支持配置文件数据库持久化与版本历史管理，便于配置恢复和变更追溯。
+
+### 5.1 功能特性
+
+- **自动同步**：每次启动时自动将配置文件同步到数据库
+- **版本历史**：保留最近 10 个配置版本，超出自动清理
+- **灾难恢复**：配置文件丢失时自动从数据库恢复
+- **敏感字段保护**：CLI 查看时自动遮罩密码、密钥等敏感信息
+
+### 5.2 CLI 命令
+
+```bash
+# 列出所有配置历史版本
+./sealchat-server --config-list
+
+# 查看指定版本的配置详情（敏感字段显示为 ******）
+./sealchat-server --config-show 3
+
+# 回滚到指定版本（会创建新版本记录）
+./sealchat-server --config-rollback 2
+
+# 导出指定版本为 YAML 文件
+./sealchat-server --config-export 1 --output config.backup.yaml
+```
+
+### 5.3 配置同步逻辑
+
+启动时的双路径逻辑：
+
+1. **配置文件存在**：读取 `config.yaml` → 同步到数据库（若内容有变化则创建新版本）
+2. **配置文件丢失**：从数据库读取最新配置 → 写入 `config.yaml` 恢复
+
+### 5.4 版本来源标识
+
+每个版本记录包含来源标识：
+
+| 来源 | 说明 |
+| --- | --- |
+| `file` | 从配置文件同步 |
+| `init` | 初始安装 |
+| `api` | 通过管理 API 修改 |
+| `rollback` | 回滚操作 |
+
+### 5.5 环境变量
+
+CLI 命令支持通过环境变量指定数据库连接（优先级高于配置文件）：
+
+```bash
+export SEALCHAT_DSN="postgresql://user:pass@localhost:5432/sealchat"
+./sealchat-server --config-list
+```

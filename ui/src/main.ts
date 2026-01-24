@@ -36,7 +36,9 @@ import { useUserStore } from './stores/user'
 import { useChatStore } from './stores/chat'
 
 router.beforeEach(async (to, from, next) => {
-  if (to.name === 'user-signin' || to.name === 'user-signup' || to.name === 'world-private-hint') {
+  // 允许未登录访问的公开路由
+  const publicRoutes = ['user-signin', 'user-signup', 'password-recovery', 'world-private-hint'];
+  if (publicRoutes.includes(to.name as string)) {
     return next();
   }
 

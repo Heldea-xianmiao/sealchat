@@ -105,10 +105,16 @@ func AudioCreateAssetFromUpload(file *multipart.FileHeader, opts AudioUploadOpti
 	if opts.CreatedBy == "" {
 		return nil, errors.New("缺少上传者标识")
 	}
-	if opts.FolderID != nil && *opts.FolderID != "" {
-		if _, err := getAudioFolder(*opts.FolderID); err != nil {
+	if opts.FolderID != nil && strings.TrimSpace(*opts.FolderID) != "" {
+		trimmed := strings.TrimSpace(*opts.FolderID)
+		folder, err := getAudioFolder(trimmed)
+		if err != nil {
 			return nil, err
 		}
+		if err := validateFolderScopeMatch(folder, opts.Scope, opts.WorldID); err != nil {
+			return nil, err
+		}
+		opts.FolderID = &trimmed
 	}
 	asset, err := AudioProcessUpload(file, opts)
 	if err != nil {
@@ -297,6 +303,8 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 	if err != nil {
 		return nil, err
 	}
+	targetScope := asset.Scope
+	targetWorldID := cloneStringPtr(asset.WorldID)
 	updates := map[string]interface{}{"updated_at": time.Now(), "updated_by": input.UpdatedBy}
 	if input.Name != nil {
 		updates["name"] = strings.TrimSpace(*input.Name)
@@ -310,19 +318,6 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 		updates["visibility"] = *input.Visibility
 		asset.Visibility = *input.Visibility
 	}
-	if input.FolderID != nil {
-		trimmed := strings.TrimSpace(*input.FolderID)
-		if trimmed != "" {
-			if _, err := getAudioFolder(trimmed); err != nil {
-				return nil, err
-			}
-			updates["folder_id"] = trimmed
-			asset.FolderID = cloneStringPtr(&trimmed)
-		} else {
-			updates["folder_id"] = nil
-			asset.FolderID = nil
-		}
-	}
 	if input.Tags != nil {
 		updates["tags"] = model.JSONList[string](normalizeTags(input.Tags))
 		asset.Tags = model.JSONList[string](normalizeTags(input.Tags))
@@ -331,6 +326,8 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 		scope := *input.Scope
 		switch scope {
 		case model.AudioScopeCommon:
+			targetScope = scope
+			targetWorldID = nil
 			updates["scope"] = scope
 			updates["world_id"] = nil
 			asset.Scope = scope
@@ -343,12 +340,42 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 			if worldID == "" {
 				return nil, errors.New("世界级素材必须指定 worldId")
 			}
+			targetScope = scope
+			targetWorldID = &worldID
 			updates["scope"] = scope
 			updates["world_id"] = worldID
 			asset.Scope = scope
 			asset.WorldID = &worldID
 		default:
 			return nil, errors.New("素材级别无效")
+		}
+	}
+	if input.FolderID != nil {
+		trimmed := strings.TrimSpace(*input.FolderID)
+		if trimmed != "" {
+			folder, err := getAudioFolder(trimmed)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateFolderScopeMatch(folder, targetScope, targetWorldID); err != nil {
+				return nil, err
+			}
+			updates["folder_id"] = trimmed
+			asset.FolderID = cloneStringPtr(&trimmed)
+		} else {
+			updates["folder_id"] = nil
+			asset.FolderID = nil
+		}
+	} else if input.Scope != nil && asset.FolderID != nil {
+		trimmed := strings.TrimSpace(*asset.FolderID)
+		if trimmed != "" {
+			folder, err := getAudioFolder(trimmed)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateFolderScopeMatch(folder, targetScope, targetWorldID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if len(input.Variants) > 0 {
@@ -409,7 +436,11 @@ func AudioListFoldersWithFilters(filters AudioFolderFilters) ([]*AudioFolderNode
 		node := &AudioFolderNode{AudioFolder: folder}
 		nodeMap[folder.ID] = node
 	}
-	for _, node := range nodeMap {
+	for _, folder := range folders {
+		node := nodeMap[folder.ID]
+		if node == nil {
+			continue
+		}
 		if node.ParentID != nil && *node.ParentID != "" {
 			parent, ok := nodeMap[*node.ParentID]
 			if ok {
@@ -428,18 +459,41 @@ func AudioCreateFolder(payload AudioFolderPayload) (*model.AudioFolder, error) {
 		return nil, errors.New("文件夹名称不能为空")
 	}
 	var path string
+	worldID := normalizeOptionalStringPtr(payload.WorldID)
+	scope := payload.Scope
 	if payload.ParentID != nil && *payload.ParentID != "" {
 		parent, err := getAudioFolder(*payload.ParentID)
 		if err != nil {
 			return nil, err
 		}
+		if scope == "" {
+			scope = parent.Scope
+		} else if scope != parent.Scope {
+			return nil, errors.New("父级文件夹与子文件夹级别不一致")
+		}
+		parentWorldID := normalizeOptionalString(parent.WorldID)
+		if worldID == nil && parentWorldID != "" {
+			worldID = cloneStringPtr(parent.WorldID)
+		} else if worldID != nil && parentWorldID != "" && normalizeOptionalString(worldID) != parentWorldID {
+			return nil, errors.New("父级文件夹与子文件夹世界不一致")
+		} else if worldID != nil && parentWorldID == "" {
+			return nil, errors.New("父级为通用文件夹，不能创建世界级子文件夹")
+		}
 		path = buildFolderPath(parent.Path, name)
 	} else {
 		path = buildFolderPath("", name)
 	}
-	scope := payload.Scope
 	if scope == "" {
 		scope = model.AudioScopeCommon
+	}
+	if scope == model.AudioScopeWorld {
+		if normalizeOptionalString(worldID) == "" {
+			return nil, errors.New("世界级文件夹必须指定 worldId")
+		}
+	} else if scope == model.AudioScopeCommon {
+		if worldID != nil {
+			return nil, errors.New("通用文件夹不能指定 worldId")
+		}
 	}
 	folder := &model.AudioFolder{}
 	folder.StringPKBaseModel.Init()
@@ -449,7 +503,7 @@ func AudioCreateFolder(payload AudioFolderPayload) (*model.AudioFolder, error) {
 	folder.CreatedBy = payload.ActorID
 	folder.UpdatedBy = payload.ActorID
 	folder.Scope = scope
-	folder.WorldID = cloneStringPtr(payload.WorldID)
+	folder.WorldID = cloneStringPtr(worldID)
 	if err := model.GetDB().Create(folder).Error; err != nil {
 		return nil, err
 	}
@@ -473,6 +527,14 @@ func AudioUpdateFolder(id string, payload AudioFolderPayload) (*model.AudioFolde
 		parent, err := getAudioFolder(*payload.ParentID)
 		if err != nil {
 			return nil, err
+		}
+		if parent.Scope != folder.Scope {
+			return nil, errors.New("父级文件夹与子文件夹级别不一致")
+		}
+		parentWorldID := normalizeOptionalString(parent.WorldID)
+		folderWorldID := normalizeOptionalString(folder.WorldID)
+		if parentWorldID != folderWorldID {
+			return nil, errors.New("父级文件夹与子文件夹世界不一致")
 		}
 		if strings.HasPrefix(parent.Path, folder.Path) {
 			return nil, errors.New("不能移动到子目录")
@@ -714,4 +776,53 @@ func cloneStringPtr(src *string) *string {
 	}
 	value := *src
 	return &value
+}
+
+func normalizeOptionalString(src *string) string {
+	if src == nil {
+		return ""
+	}
+	return strings.TrimSpace(*src)
+}
+
+func normalizeOptionalStringPtr(src *string) *string {
+	if src == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*src)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func validateFolderScopeMatch(folder *model.AudioFolder, scope model.AudioAssetScope, worldID *string) error {
+	if folder == nil {
+		return errors.New("文件夹不存在")
+	}
+	if scope == "" {
+		scope = model.AudioScopeCommon
+	}
+	switch scope {
+	case model.AudioScopeCommon:
+		if folder.Scope != model.AudioScopeCommon {
+			return errors.New("文件夹级别与素材级别不一致")
+		}
+		if normalizeOptionalString(folder.WorldID) != "" {
+			return errors.New("通用素材不能绑定世界级文件夹")
+		}
+	case model.AudioScopeWorld:
+		if folder.Scope != model.AudioScopeWorld {
+			return errors.New("文件夹级别与素材级别不一致")
+		}
+		if normalizeOptionalString(worldID) == "" {
+			return errors.New("世界级素材必须指定 worldId")
+		}
+		if normalizeOptionalString(folder.WorldID) != normalizeOptionalString(worldID) {
+			return errors.New("文件夹不属于目标世界")
+		}
+	default:
+		return errors.New("素材级别无效")
+	}
+	return nil
 }

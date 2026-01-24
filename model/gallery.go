@@ -15,15 +15,21 @@ const (
 	OwnerTypeChannel OwnerType = "channel"
 )
 
+const (
+	CollectionTypeEmojiFavorites = "emoji_favorites"
+	CollectionTypeEmojiReactions = "emoji_reactions"
+)
+
 type GalleryCollection struct {
 	StringPKBaseModel
-	OwnerType OwnerType `json:"ownerType" gorm:"type:varchar(16);index:idx_gallery_owner"`
-	OwnerID   string    `json:"ownerId" gorm:"index:idx_gallery_owner"`
-	Name      string    `json:"name"`
-	Order     int       `json:"order"`
-	QuotaUsed int64     `json:"quotaUsed"`
-	CreatedBy string    `json:"createdBy"`
-	UpdatedBy string    `json:"updatedBy"`
+	OwnerType      OwnerType `json:"ownerType" gorm:"type:varchar(16);index:idx_gallery_owner"`
+	OwnerID        string    `json:"ownerId" gorm:"index:idx_gallery_owner"`
+	CollectionType *string   `json:"collectionType,omitempty" gorm:"type:varchar(32)"`
+	Name           string    `json:"name"`
+	Order          int       `json:"order"`
+	QuotaUsed      int64     `json:"quotaUsed"`
+	CreatedBy      string    `json:"createdBy"`
+	UpdatedBy      string    `json:"updatedBy"`
 }
 
 func (*GalleryCollection) TableName() string { return "gallery_collections" }

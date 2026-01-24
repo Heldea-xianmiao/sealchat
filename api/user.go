@@ -266,6 +266,45 @@ func UserInfo(c *fiber.Ctx) error {
 	})
 }
 
+func UserLookup(c *fiber.Ctx) error {
+	userId := strings.TrimSpace(c.Query("userId"))
+	username := strings.TrimSpace(c.Query("username"))
+	if userId == "" && username == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "userId 或 username 必填",
+		})
+	}
+	if userId != "" && username != "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "userId 与 username 只能填写一个",
+		})
+	}
+
+	var user *model.UserModel
+	var err error
+	if userId != "" {
+		user, err = model.UserGetEx(userId)
+	} else {
+		user, err = model.UserGetByUsername(username)
+	}
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "不存在") {
+			status = http.StatusNotFound
+		}
+		return c.Status(status).JSON(fiber.Map{
+			"message": err.Error(),
+		})
+	}
+	return c.JSON(fiber.Map{
+		"user": fiber.Map{
+			"id":       user.ID,
+			"username": user.Username,
+			"nick":     user.Nickname,
+		},
+	})
+}
+
 func UserInfoUpdate(c *fiber.Ctx) error {
 	type RequestBody struct {
 		Nickname string `json:"nick" form:"nick"`

@@ -10,7 +10,7 @@ let pinyinModule: PinyinProModule | null = null
 let loadPromise: Promise<boolean> | null = null
 
 // CDN 地址（UMD，全局暴露 window.pinyinPro）
-const CDN_URL = 'https://unpkg.com/pinyin-pro@3.27.0/dist/index.min.js'
+const CDN_URL = 'https://npm.elemecdn.com/pinyin-pro/dist/index.js'
 const CDN_SCRIPT_ID = 'pinyin-pro-cdn'
 
 const getGlobalPinyinModule = (): PinyinProModule | null => {
@@ -282,6 +282,12 @@ function matchSingleKeyword(query: string, item: WorldKeywordItem): KeywordMatch
   return null
 }
 
+// 清理查询字符串中的标点符号（处理输入法自动补全引号等情况）
+function sanitizeQuery(query: string): string {
+  // 移除中英文标点符号，保留字母、数字、中文及空格
+  return query.replace(/["""'''\(\)（）\[\]【】\{\}《》<>,.，。!！?？;；:：、·`~@#$%^&*+=|\\\/\-_]/g, '')
+}
+
 // 执行匹配
 export function matchKeywords(
   query: string,
@@ -289,6 +295,12 @@ export function matchKeywords(
   limit: number = 5
 ): KeywordMatchResult[] {
   if (!query || !keywords?.length) {
+    return []
+  }
+
+  // 清理标点符号
+  query = sanitizeQuery(query)
+  if (!query) {
     return []
   }
 

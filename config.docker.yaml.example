@@ -39,6 +39,11 @@ captcha:
     turnstile:
       siteKey: ""
       secretKey: ""
+  passwordReset:
+    mode: local                              # 密码重置验证码
+    turnstile:
+      siteKey: ""
+      secretKey: ""
 
 # SQLite 优化配置 (使用 SQLite 时生效)
 sqlite:
@@ -67,6 +72,7 @@ audio:
   defaultBitrateKbps: 96
   alternateBitrates: [] # 已废弃：当前仅保留一份转码产物
   ffmpegPath: "" # 可填写 ffmpeg 路径；ffprobe 与 ffmpeg 同目录可自动用于时长探测
+  allowNonAdminCreateWorld: true # 是否允许非平台管理员创建新世界
 
 # 导出配置
 export:
@@ -104,5 +110,12 @@ storage:
     presignTTL: 900
     maxSizeMB: 64
     logLevel: warn
+
+# 数据备份配置
+backup:
+  enabled: true                                # 是否启用自动备份
+  intervalHours: 12                            # 备份间隔（小时）
+  retentionCount: 5                            # 保留备份数量
+  path: ./backups                              # 备份文件存储路径
 
 version: 1

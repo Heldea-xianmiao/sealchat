@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/blake2s"
@@ -27,6 +28,10 @@ type UserModel struct {
 	Password string `gorm:"not null" json:"-"`                                  // 密码，非空
 	Salt     string `gorm:"not null" json:"-"`                                  // 盐，非空
 	IsBot    bool   `gorm:"null" json:"is_bot"`                                 // 是否是机器人
+
+	Email           *string    `gorm:"size:254;index:idx_user_email,unique" json:"email,omitempty"`
+	EmailVerified   bool       `gorm:"default:false" json:"emailVerified"`
+	EmailVerifiedAt *time.Time `json:"emailVerifiedAt,omitempty"`
 
 	Disabled    bool              `json:"disabled"`
 	AccessToken *AccessTokenModel `gorm:"-" json:"-"`
@@ -149,7 +154,28 @@ func UserUpdatePassword(userID string, newPassword string) error {
 var (
 	ErrInvalidCredentials = errors.New("账号或密码错误")
 	ErrNicknameNotUnique  = errors.New("昵称不唯一，请使用用户名")
+	ErrEmailAlreadyUsed   = errors.New("该邮箱已被使用")
 )
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "UNIQUE constraint failed") {
+		return true
+	}
+	if strings.Contains(msg, "Error 1062") || strings.Contains(msg, "Duplicate entry") {
+		return true
+	}
+	if strings.Contains(msg, "SQLSTATE 23505") || strings.Contains(msg, "duplicate key value") {
+		return true
+	}
+	return false
+}
 
 func verifyUserPassword(user *UserModel, password string) error {
 	hashedPassword, err := hashPassword(password, user.Salt)
@@ -177,7 +203,7 @@ func UserAuthenticate(username, password string) (*UserModel, error) {
 	return &user, nil
 }
 
-// 登录认证（用户名或昵称）
+// 登录认证（用户名/昵称/邮箱）
 func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 	var user UserModel
 	if err := db.Where("username = ?", account).First(&user).Error; err == nil {
@@ -187,6 +213,18 @@ func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 		return &user, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
+	}
+
+	if strings.Contains(account, "@") {
+		email := strings.ToLower(account)
+		if err := db.Where("email = ?", email).First(&user).Error; err == nil {
+			if err := verifyUserPassword(&user, password); err != nil {
+				return nil, err
+			}
+			return &user, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 	}
 
 	var users []UserModel
@@ -295,6 +333,26 @@ func UserGetEx(id string) (*UserModel, error) {
 	return &user, nil
 }
 
+// UserGetByUsername 通过用户名获取用户信息
+func UserGetByUsername(username string) (*UserModel, error) {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return nil, fmt.Errorf("用户名不能为空")
+	}
+	var user UserModel
+	result := db.Where("username = ?", trimmed).Limit(1).Find(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("用户不存在")
+		}
+		return nil, fmt.Errorf("获取用户信息失败: %v", result.Error)
+	}
+	if user.ID == "" {
+		return nil, fmt.Errorf("用户不存在")
+	}
+	return &user, nil
+}
+
 func UserGet(id string) *UserModel {
 	r, _ := UserGetEx(id)
 	return r
@@ -350,4 +408,87 @@ func UsersDuplicateRemove() error {
 		}
 	}
 	return nil
+}
+
+// UserGetByEmail 通过邮箱查询用户
+func UserGetByEmail(email string) (*UserModel, error) {
+	var user UserModel
+	if err := db.Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UserExistsByEmail 检查邮箱是否已被使用
+func UserExistsByEmail(email string) (bool, error) {
+	var count int64
+	if err := db.Model(&UserModel{}).Where("email = ?", email).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// UserExistsByEmailExcludingUser 检查邮箱是否被其他用户使用
+func UserExistsByEmailExcludingUser(email, excludeUserID string) (bool, error) {
+	var count int64
+	if err := db.Model(&UserModel{}).Where("email = ? AND id != ?", email, excludeUserID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// UserBindEmail 为用户绑定邮箱
+func UserBindEmail(userID, email string) error {
+	now := time.Now()
+	err := db.Model(&UserModel{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"email":             email,
+		"email_verified":    true,
+		"email_verified_at": now,
+	}).Error
+	if err == nil {
+		return nil
+	}
+	if isUniqueConstraintError(err) {
+		return ErrEmailAlreadyUsed
+	}
+	return err
+}
+
+// UserCreateWithEmail 创建带邮箱的用户
+func UserCreateWithEmail(username, password, nickname, email string) (*UserModel, error) {
+	salt := generateSalt()
+	hashedPassword, err := hashPassword(password, salt)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	user := &UserModel{
+		Username:        username,
+		Nickname:        nickname,
+		Password:        hashedPassword,
+		Salt:            salt,
+		Email:           &email,
+		EmailVerified:   true,
+		EmailVerifiedAt: &now,
+	}
+	user.ID = utils.NewID()
+	if err := db.Create(user).Error; err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// UserGetByEmailOrUsername 通过邮箱或用户名查询用户
+func UserGetByEmailOrUsername(account string) (*UserModel, error) {
+	var user UserModel
+	if err := db.Where("username = ? OR email = ?", account, account).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &user, nil
 }

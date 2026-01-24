@@ -52,6 +52,16 @@ SealChat 支持将**附件/图片**与**音频**分别存入 S3（或兼容协�
 
 更完整的 S3/COS 配置示例与常见问题请参考 `deploy_zh.md` 的“对象存储（S3 兼容）”章节。
 
+## 未读信息邮件通知与邮箱登录认证
+
+SealChat 的**未读信息邮件通知**与**邮箱认证（邮件注册验证/邮件密码重置）**共用 `config.yaml` 的 SMTP 配置。
+
+- 配置入口：`emailNotification.smtp`（即使只启用邮箱认证，也需要完整 SMTP 配置）。
+- 功能开关：`emailNotification.enabled` 控制未读信息提醒；`emailAuth.enabled` 控制邮件注册验证/密码重置。
+
+配置示例与常见问题请参考 `deploy_zh.md` 的“未读信息邮件通知与邮箱登录认证”章节。
+示例（节选自 `config.yaml.example`）：
+
 ## 快速开始
 
 ### Docker 部署（推荐）
@@ -60,7 +70,7 @@ SealChat 支持将**附件/图片**与**音频**分别存入 S3（或兼容协�
 # 1. 拉取最新镜像
 docker pull ghcr.io/kagangtuya-star/sealchat:latest
 
-# 2. 创建配置文件 (可选，首次运行会自动生成)
+# 2. 创建配置文件（推荐，便于持久化）
 cp config.docker.yaml.example config.yaml
 
 # 3. 使用 Docker Compose 启动
@@ -81,6 +91,7 @@ docker run -d --name sealchat --restart unless-stopped \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/sealchat-data:/app/sealchat-data \
   -v $(pwd)/static:/app/static \
+  -v $(pwd)/config.yaml:/app/config.yaml \
   -e TZ=Asia/Shanghai \
   ghcr.io/kagangtuya-star/sealchat:latest
 ```
@@ -89,7 +100,7 @@ docker run -d --name sealchat --restart unless-stopped \
 
 ### 二进制部署
 
-1. 从发行页下载或 `go build ./...` 编译，运行 `./sealchat_server`（Windows 下为 `.exe`）。
+1. 从发行页下载或 `go build ./...` 编译，运行 `./sealchat_server`（Windows 下为 `.exe`）。发行包内附 `config.yaml.example` 与 `config.docker.yaml.example`，可按需复制为 `config.yaml`。
 2. 首次启动会生成 `config.yaml` 与 `data/` 目录，按照示例修改域名、端口、数据库、附件/音频/导出目录。
 3. 浏览器访问 `http://<domain>:3212/`，注册首个账号（自动成为管理员并创建默认世界）。
 4. 参考 [`docs/product-introduction.md`](docs/product-introduction.md) 或 `deploy_zh.md` 完成世界、频道、权限与资产配置。
@@ -106,6 +117,27 @@ docker run -d --name sealchat --restart unless-stopped \
 - `go run main.go`：启动服务端并自动托管静态资源。
 - `go test ./...`：执行后端单元测试（导出/骰子等模块含示例测试）。
 - `./sealchat_server -i` / `./sealchat_server --uninstall`：在 Windows 上注册/卸载系统服务。
+
+### 配置版本管理
+SealChat 支持配置文件数据库持久化与版本历史管理，最多保留 10 个历史版本。
+
+```bash
+# 列出配置历史版本
+./sealchat_server --config-list
+
+# 查看指定版本配置详情（敏感字段已遮罩）
+./sealchat_server --config-show 3
+
+# 回滚到指定版本
+./sealchat_server --config-rollback 2
+
+# 导出指定版本为 YAML 文件
+./sealchat_server --config-export 1 --output config.backup.yaml
+```
+
+配置同步逻辑：
+- 配置文件存在时：读取并同步到数据库
+- 配置文件丢失时：从数据库恢复并重建配置文件
 
 ## 目录导览
 | 目录 | 说明 |

@@ -156,15 +156,17 @@ func ChannelList(userId, worldID string) ([]*model.ChannelModel, error) {
 	if worldID == "" {
 		return []*model.ChannelModel{}, nil
 	}
-	isSystemAdmin := pm.CanWithSystemRole(userId, pm.PermModAdmin)
-	if !IsWorldMember(worldID, userId) && !isSystemAdmin {
+	if !IsWorldMember(worldID, userId) {
 		return []*model.ChannelModel{}, nil
 	}
 	channels, err := ChannelListByWorld(worldID)
 	if err != nil {
 		return nil, err
 	}
-	allowed, _ := ChannelIdList(userId)
+	allowed, err := ChannelIdListByWorld(userId, worldID, false)
+	if err != nil {
+		return nil, err
+	}
 	allowedSet := map[string]struct{}{}
 	for _, id := range allowed {
 		allowedSet[id] = struct{}{}
@@ -172,10 +174,6 @@ func ChannelList(userId, worldID string) ([]*model.ChannelModel, error) {
 	visible := make([]*model.ChannelModel, 0, len(channels))
 	for _, ch := range channels {
 		if ch == nil || strings.TrimSpace(ch.ID) == "" {
-			continue
-		}
-		if isSystemAdmin {
-			visible = append(visible, ch)
 			continue
 		}
 		if _, ok := allowedSet[ch.ID]; ok {

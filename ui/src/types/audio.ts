@@ -54,6 +54,10 @@ export interface AudioFolder {
   children?: AudioFolder[];
   scope: AudioAssetScope;
   worldId?: string | null;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AudioFolderPayload {

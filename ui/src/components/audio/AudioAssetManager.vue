@@ -192,7 +192,7 @@
           </header>
           <ul class="audio-library__detail-list">
             <li>时长：{{ formatDuration(selectedAsset.duration) }}</li>
-            <li>上传者：{{ selectedAsset.createdBy }}</li>
+            <li>上传者：{{ formatUserLabel(selectedAsset.createdBy) }}</li>
             <li>更新时间：{{ formatDate(selectedAsset.updatedAt) }}</li>
             <li>素材级别：{{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}</li>
             <li>存储：{{ selectedAsset.storageType === 's3' ? '对象存储 (支持跳转)' : '本地文件' }}</li>
@@ -218,7 +218,27 @@
             </n-button>
           </div>
         </template>
-        <n-empty description="选择一条素材以查看详情" v-else />
+        <template v-else-if="currentFolder">
+          <header class="audio-library__detail-header">
+            <div>
+              <h3>{{ currentFolder.name }}</h3>
+              <p class="audio-library__detail-subtitle">{{ currentFolder.path || '' }}</p>
+            </div>
+            <div class="audio-library__detail-tags">
+              <n-tag size="small" :type="currentFolder.scope === 'common' ? 'info' : 'warning'">
+                {{ currentFolder.scope === 'common' ? '通用级' : '世界级' }}
+              </n-tag>
+            </div>
+          </header>
+          <ul class="audio-library__detail-list">
+            <li>所属世界：{{ folderWorldLabel }}</li>
+            <li>文件夹级别：{{ currentFolder.scope === 'common' ? '通用级' : '世界级' }}</li>
+            <li>创建者：{{ formatUserLabel(currentFolder.createdBy) }}</li>
+            <li>创建时间：{{ formatDate(currentFolder.createdAt) }}</li>
+            <li>更新时间：{{ formatDate(currentFolder.updatedAt) }}</li>
+          </ul>
+        </template>
+        <n-empty description="选择一条素材或文件夹以查看详情" v-else />
       </section>
     </section>
 
@@ -378,10 +398,15 @@ import {
 } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
 import type { AudioAsset, AudioAssetScope, AudioFolder } from '@/types/audio';
+import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
+import { useChatStore } from '@/stores/chat';
+import { useUserStore } from '@/stores/user';
 import UploadPanel from './UploadPanel.vue';
 
 const audio = useAudioStudioStore();
+const chat = useChatStore();
+const user = useUserStore();
 const message = useMessage();
 const dialog = useDialog();
 
@@ -433,12 +458,23 @@ const assetFormRules: FormRules = {
   name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
 };
 
+const detailFocus = ref<'asset' | 'folder'>('asset');
+const userLabelCache = reactive<Record<string, string>>({});
+const userLookupPending = new Set<string>();
+
 const { width: viewportWidth } = useWindowSize();
 const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 640);
 const assetDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 360));
 
 const tableData = computed(() => audio.filteredAssets);
 const selectedAsset = computed(() => audio.selectedAsset);
+const folderWorldLabel = computed(() => {
+  const worldId = currentFolder.value?.worldId;
+  if (!worldId) return '全局 (common)';
+  const world = chat.worldMap?.[worldId];
+  const name = world?.name || '未知世界';
+  return `${name} (${worldId})`;
+});
 const selectionCount = computed(() => checkedRowKeys.value.length);
 const hasSelection = computed(() => selectionCount.value > 0);
 const checkedAssets = computed(() => {
@@ -634,7 +670,10 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
 const rowKey = (row: AudioAsset) => row.id;
 const rowClassName = (row: AudioAsset) => (row.id === audio.selectedAssetId ? 'is-selected-row' : '');
 const rowProps = (row: AudioAsset) => ({
-  onClick: () => audio.setSelectedAsset(row.id),
+  onClick: () => {
+    detailFocus.value = 'asset';
+    audio.setSelectedAsset(row.id);
+  },
 });
 
 function handleCheckedRowKeysChange(keys: Array<string | number>) {
@@ -665,6 +704,35 @@ function formatDate(value?: string) {
   if (!value) return '未知';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString();
+}
+
+function formatUserLabel(userId?: string | null) {
+  const trimmed = (userId ?? '').trim();
+  if (!trimmed) return '未知';
+  if (user.info?.id === trimmed) {
+    const name = user.info.username || trimmed;
+    return `${name} (${trimmed})`;
+  }
+  return userLabelCache[trimmed] || `${trimmed} (${trimmed})`;
+}
+
+async function ensureUserLabel(userId?: string | null) {
+  const trimmed = (userId ?? '').trim();
+  if (!trimmed) return;
+  if (userLabelCache[trimmed] || user.info?.id === trimmed || userLookupPending.has(trimmed)) {
+    return;
+  }
+  userLookupPending.add(trimmed);
+  try {
+    const resp = await api.get('/api/v1/user-lookup', { params: { userId: trimmed } });
+    const data = resp.data?.user;
+    const username = data?.username || data?.nick || trimmed;
+    userLabelCache[trimmed] = `${username} (${trimmed})`;
+  } catch (err) {
+    console.warn('user lookup failed', err);
+  } finally {
+    userLookupPending.delete(trimmed);
+  }
 }
 
 function formatFileSize(value: number) {
@@ -712,6 +780,7 @@ function getDurationFilter(): [number, number] | null {
 }
 
 async function handleRefresh() {
+  await audio.fetchFolders();
   await audio.fetchAssets();
   message.success('素材列表已刷新');
 }
@@ -731,10 +800,20 @@ async function handleFolderSelect(keys: Array<string | number>) {
   folderKeys.value = target ? [target] : [];
   clearSelection();
   if (target === 'all') {
+    detailFocus.value = 'asset';
+    if (!audio.selectedAsset && audio.filteredAssets.length) {
+      audio.setSelectedAsset(audio.filteredAssets[0].id);
+    }
+  } else {
+    detailFocus.value = 'folder';
+    audio.setSelectedAsset(null);
+  }
+  if (target === 'all') {
     await audio.applyFilters({ folderId: null });
     return;
   }
   await audio.applyFilters({ folderId: target });
+  audio.setSelectedAsset(null);
 }
 
 function openCreateFolder() {
@@ -977,9 +1056,28 @@ watch(
       audio.setSelectedAsset(null);
       return;
     }
+    if (detailFocus.value === 'folder') {
+      return;
+    }
     if (!audio.selectedAssetId || !list.some((item) => item.id === audio.selectedAssetId)) {
       audio.setSelectedAsset(list[0].id);
     }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => selectedAsset.value?.createdBy,
+  (creatorId) => {
+    void ensureUserLabel(creatorId);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentFolder.value?.createdBy,
+  (creatorId) => {
+    void ensureUserLabel(creatorId);
   },
   { immediate: true }
 );

@@ -101,6 +101,9 @@ func GalleryCollectionUpdate(c *fiber.Ctx) error {
 	if col.OwnerType != model.OwnerTypeUser || col.OwnerID != user.ID {
 		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "无法操作他人的分类")
 	}
+	if service.GalleryIsSystemCollection(col) {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "系统分类不可修改")
+	}
 	var req createCollectionRequest
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求参数错误")
@@ -136,6 +139,9 @@ func GalleryCollectionDelete(c *fiber.Ctx) error {
 	}
 	if col.OwnerType != model.OwnerTypeUser || col.OwnerID != user.ID {
 		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "无法删除他人的分类")
+	}
+	if service.GalleryIsSystemCollection(col) {
+		return wrapErrorStatus(c, fiber.StatusForbidden, nil, "系统分类不可删除")
 	}
 
 	var items []*model.GalleryItem

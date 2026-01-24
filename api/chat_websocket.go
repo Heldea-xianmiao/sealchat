@@ -21,6 +21,7 @@ import (
 type ApiMsgPayload struct {
 	Api  string `json:"api"`
 	Echo string `json:"echo"`
+	Data json.RawMessage `json:"data"`
 }
 
 type WsSyncConn struct {
@@ -77,6 +78,10 @@ const (
 	healthCheckIntervalSeconds = 60
 	// 连接无心跳最大存活时间（秒）
 	connectionMaxIdleSeconds = 180
+	// BOT 连接健康检查间隔（秒）
+	botHealthCheckIntervalSeconds = 15
+	// BOT 连接无心跳最大存活时间（秒）
+	botConnectionMaxIdleSeconds = 45
 )
 
 func getChannelUsersMap() *utils.SyncMap[string, *utils.SyncSet[string]] {
@@ -280,31 +285,41 @@ func websocketWorks(app *fiber.App) {
 
 	// 全局连接健康检查，定期清理僵尸连接
 	go func() {
-		ticker := time.NewTicker(healthCheckIntervalSeconds * time.Second)
+		// 使用更短的间隔以支持 BOT 的 15s 检查周期
+		ticker := time.NewTicker(botHealthCheckIntervalSeconds * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
 			now := time.Now().UnixMilli()
-			cutoff := now - (connectionMaxIdleSeconds * 1000)
 			cleanedCount := 0
 
 			userId2ConnInfo.Range(func(userId string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-				var staleConns []*WsSyncConn
+				type staleEntry struct {
+					conn           *WsSyncConn
+					timeoutSeconds int64
+				}
+				var staleConns []staleEntry
 				connMap.Range(func(conn *WsSyncConn, info *ConnInfo) bool {
 					lastAlive := info.LastAliveTime
 					if lastAlive == 0 {
 						lastAlive = info.LastPingTime
 					}
+					// BOT 使用更短的超时阈值
+					timeoutSeconds := int64(connectionMaxIdleSeconds)
+					if info.User != nil && info.User.IsBot {
+						timeoutSeconds = int64(botConnectionMaxIdleSeconds)
+					}
+					cutoff := now - (timeoutSeconds * 1000)
 					if lastAlive < cutoff {
-						staleConns = append(staleConns, conn)
+						staleConns = append(staleConns, staleEntry{conn: conn, timeoutSeconds: timeoutSeconds})
 					}
 					return true
 				})
 
-				for _, conn := range staleConns {
-					log.Printf("[WS] 健康检查：关闭用户 %s 的僵尸连接（无心跳超 %d 秒）", userId, connectionMaxIdleSeconds)
-					conn.Close()
-					connMap.Delete(conn)
+				for _, entry := range staleConns {
+					log.Printf("[WS] 健康检查：关闭用户 %s 的僵尸连接（无心跳超 %d 秒）", userId, entry.timeoutSeconds)
+					entry.conn.Close()
+					connMap.Delete(entry.conn)
 					cleanedCount++
 					if collector := metrics.Get(); collector != nil {
 						collector.RecordConnectionClosed(userId)
@@ -349,13 +364,16 @@ func websocketWorks(app *fiber.App) {
 		})
 
 		// 启动ping goroutine，定期发送WebSocket ping帧检测连接是否存活
-		pingTicker := time.NewTicker(30 * time.Second)
 		pingDone := make(chan struct{})
 		go func() {
-			defer pingTicker.Stop()
 			for {
+				// BOT 使用 15s ping 间隔，普通用户使用 30s
+				interval := 30 * time.Second
+				if curConnInfo != nil && curConnInfo.User != nil && curConnInfo.User.IsBot {
+					interval = time.Duration(botHealthCheckIntervalSeconds) * time.Second
+				}
 				select {
-				case <-pingTicker.C:
+				case <-time.After(interval):
 					c.Mux.Lock()
 					err := rawConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
 					c.Mux.Unlock()
@@ -505,6 +523,15 @@ func websocketWorks(app *fiber.App) {
 					if solved {
 						continue
 					}
+
+					// Handle BOT response (api field is empty)
+					if apiMsg.Api == "" && apiMsg.Echo != "" {
+						if len(apiMsg.Data) > 0 && HandleCharacterResponse(apiMsg.Echo, apiMsg.Data) {
+							solved = true
+							continue
+						}
+					}
+
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
 					// Sticky Note APIs
@@ -611,6 +638,10 @@ func websocketWorks(app *fiber.App) {
 						apiWrap(ctx, msg, apiMessageTyping)
 						solved = true
 
+					case "asset.upload":
+						apiWrap(ctx, msg, apiAssetUpload)
+						solved = true
+
 					case "unread.count":
 						apiWrap(ctx, msg, apiUnreadCount)
 
@@ -626,6 +657,36 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "bot.channel_member.set_name":
 						apiBotChannelMemberSetName(ctx, msg)
+						solved = true
+
+					// Character card APIs (SealChat ↔ SealDice RPC)
+					case "character.get":
+						apiCharacterGet(ctx, msg)
+						solved = true
+					case "character.set":
+						apiCharacterSet(ctx, msg)
+						solved = true
+					case "character.list":
+						apiCharacterList(ctx, msg)
+						solved = true
+					case "character.new":
+						apiCharacterNew(ctx, msg)
+						solved = true
+					case "character.save":
+						apiCharacterSave(ctx, msg)
+						solved = true
+					case "character.tag":
+						apiCharacterTag(ctx, msg)
+						solved = true
+					case "character.untagAll":
+						apiCharacterUntagAll(ctx, msg)
+						solved = true
+					case "character.load":
+						apiCharacterLoad(ctx, msg)
+						solved = true
+					case "character.delete":
+						apiCharacterDelete(ctx, msg)
+						solved = true
 					}
 				}
 			}

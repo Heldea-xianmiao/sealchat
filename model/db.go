@@ -111,9 +111,11 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelModel{})
 	db.AutoMigrate(&GuildModel{})
 	db.AutoMigrate(&MessageModel{})
+	db.AutoMigrate(&MessageWhisperRecipientModel{})
 	db.AutoMigrate(&MessageDiceRollModel{})
 	db.AutoMigrate(&MessageEditHistoryModel{})
 	db.AutoMigrate(&MessageArchiveLogModel{})
+	db.AutoMigrate(&MessageReactionModel{}, &MessageReactionCountModel{})
 	db.AutoMigrate(&UserModel{})
 	db.AutoMigrate(&AccessTokenModel{})
 	db.AutoMigrate(&MemberModel{})
@@ -125,6 +127,7 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&BotTokenModel{})
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
+	db.AutoMigrate(&CharacterCardModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{})
@@ -140,7 +143,10 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelWebhookIntegrationModel{}, &MessageExternalRefModel{}, &WebhookEventLogModel{}, &WebhookIdentityBindingModel{})
 	db.AutoMigrate(&StickyNoteModel{}, &StickyNoteUserStateModel{}, &StickyNoteFolderModel{})
 	db.AutoMigrate(&EmailNotificationSettingsModel{}, &EmailNotificationLogModel{})
+	db.AutoMigrate(&EmailVerificationCodeModel{})
 	db.AutoMigrate(&UpdateCheckState{})
+	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
+	db.AutoMigrate(&UserPreferenceModel{})
 
 	if err := db.Model(&ChannelModel{}).
 		Where("default_dice_expr = '' OR default_dice_expr IS NULL").
@@ -174,6 +180,68 @@ func DBInit(cfg *utils.AppConfig) {
 
 func GetDB() *gorm.DB {
 	return db
+}
+
+// DBInitMinimal 仅初始化数据库连接（用于配置恢复场景）
+// 只执行连接和配置表迁移，不执行完整迁移
+func DBInitMinimal(dsn string) error {
+	if db != nil {
+		return nil // 已初始化
+	}
+
+	resetSQLiteFTSState()
+	resetPostgresFTSState()
+
+	var err error
+	var dialector gorm.Dialector
+	var isSQLite bool
+
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		dbDriver = "postgres"
+		dialector = postgres.Open(dsn)
+	} else if strings.HasPrefix(dsn, "mysql://") || strings.Contains(dsn, "@tcp(") {
+		dbDriver = "mysql"
+		dsn = strings.TrimLeft(dsn, "mysql://")
+		dialector = mysql.Open(dsn)
+	} else {
+		dsn = ensureSQLiteDSNPath(dsn)
+		if !strings.Contains(strings.ToLower(dsn), "_txlock=") {
+			if strings.Contains(dsn, "?") {
+				dsn += "&_txlock=immediate"
+			} else {
+				dsn += "?_txlock=immediate"
+			}
+		}
+		dbDriver = "sqlite"
+		dialector = sqlite.Open(dsn)
+		isSQLite = true
+	}
+
+	gormCfg := &gorm.Config{}
+	if isSQLite {
+		gormCfg.SkipDefaultTransaction = true
+	}
+
+	db, err = gorm.Open(dialector, gormCfg)
+	if err != nil {
+		return err
+	}
+
+	if isSQLite {
+		applySQLitePragmas(db, utils.SQLiteConfig{
+			EnableWAL:     true,
+			BusyTimeoutMS: 10000,
+			CacheSizeKB:   512000,
+			Synchronous:   "NORMAL",
+		})
+	}
+
+	// 仅迁移配置表
+	if err := db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func DBDriver() string {

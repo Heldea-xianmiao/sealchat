@@ -25,6 +25,8 @@ import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { chatEvent } from '@/stores/chat'
+import CharacterCardBadge from './CharacterCardBadge.vue'
+import MessageReactions from './MessageReactions.vue'
 
 type EditingPreviewInfo = {
   userId: string;
@@ -112,6 +114,8 @@ const parseContent = (payload: any, overrideContent?: string) => {
         if (item.attrs.src) {
           item.attrs.src = resolveAttachmentUrl(item.attrs.src);
         }
+        // 添加 lazy loading 优化性能
+        item.attrs.loading = 'lazy';
         textItems.push(DOMPurify.sanitize(item.toString()));
         hasImage.value = true;
         break;
@@ -274,6 +278,15 @@ const handleContentDblclick = async (event: MouseEvent) => {
   inlineImageViewer.view(imageIndex >= 0 ? imageIndex : 0);
 };
 
+const handleContentClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('a')) return;
+  const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null;
+  if (!spoiler) return;
+  spoiler.classList.toggle('is-revealed');
+};
+
 const props = defineProps({
   username: String,
   content: String,
@@ -401,6 +414,29 @@ const resolveChannelIdentityColor = (identityId?: string) => {
   return channelIdentityMap.value.get(String(identityId))?.color || '';
 };
 
+const resolveWhisperTargets = (item: any) => {
+  const list = item?.whisperToIds || item?.whisper_to_ids || item?.whisperTargets || item?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    return list.map((entry: any) => {
+      if (typeof entry === 'string') {
+        const name = resolveChannelUserDisplayName(entry) || entry;
+        return { id: entry, name };
+      }
+      const id = entry?.id || '';
+      const name = entry?.nick || entry?.name || resolveChannelUserDisplayName(id) || entry?.username || id || '未知成员';
+      return { id, name };
+    });
+  }
+  const metaIds = item?.whisperMeta?.targetUserIds;
+  if (Array.isArray(metaIds) && metaIds.length > 0) {
+    return metaIds.map((id: string) => ({
+      id,
+      name: resolveChannelUserDisplayName(id) || id || '未知成员',
+    }));
+  }
+  return [];
+};
+
 const quoteInlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi;
 
 const buildQuoteSummary = (quote?: any) => {
@@ -455,19 +491,37 @@ const buildQuoteSummary = (quote?: any) => {
 const buildWhisperLabel = (item?: any) => {
   if (!item?.isWhisper) return '';
   const senderName = getMemberDisplayName(item);
-  const targetName = getTargetDisplayName(item);
-  const senderLabel = `@${senderName}`;
-  const targetLabel = `@${targetName}`;
   const senderUserId = item?.user?.id || item?.whisperMeta?.senderUserId;
+  const senderLabel = `@${senderName}`;
+  const targets = resolveWhisperTargets(item);
+  const targetNames = targets.map((target: any) => target?.name).filter(Boolean);
+  if (targetNames.length > 0) {
+    if (senderUserId === user.info.id) {
+      return t('whisper.sentTo', { targets: targetNames.join('、') });
+    }
+    const otherRecipients = targets.filter((target: any) => {
+      const targetId = target?.id;
+      if (!targetId) return false;
+      return targetId !== user.info.id && targetId !== senderUserId;
+    });
+    if (otherRecipients.length > 0) {
+      const otherNames = otherRecipients.map((target: any) => target?.name).filter(Boolean).join('、');
+      return t('whisper.fromMultiple', { sender: senderLabel, otherUsers: otherNames });
+    }
+    return t('whisper.from', { sender: senderLabel });
+  }
+
+  const targetName = getTargetDisplayName(item);
+  const targetLabel = `@${targetName}`;
   const targetUserId = item?.whisperTo?.id || item?.whisperMeta?.targetUserId;
   if (senderUserId === user.info.id) {
-    return t('whisper.sendTo', { target: targetLabel });
+    return t('whisper.sentTo', { targets: targetLabel });
   }
   if (targetUserId === user.info.id) {
     return t('whisper.from', { sender: senderLabel });
   }
   if (targetName && targetName !== '未知成员') {
-    return t('whisper.sendTo', { target: targetLabel });
+    return t('whisper.sentTo', { targets: targetLabel });
   }
   return t('whisper.generic');
 };
@@ -660,6 +714,7 @@ const keywordTooltipResolver = (keywordId: string) => {
   return {
     title: keyword.keyword,
     description: keyword.description,
+    descriptionFormat: keyword.descriptionFormat,
   }
 }
 
@@ -1295,7 +1350,27 @@ const displayAvatar = computed(() => {
   return props.avatar;
 });
 
+const messageReactions = computed(() => {
+  if (!props.item?.id) {
+    return [];
+  }
+  return chat.getMessageReactions(props.item.id);
+});
+
+const handleReactionToggle = async (emoji: string) => {
+  if (!props.item?.id) return;
+  const reaction = messageReactions.value.find((item) => item.emoji === emoji);
+  if (reaction?.meReacted) {
+    await chat.removeReaction(props.item.id, emoji);
+  } else {
+    await chat.addReaction(props.item.id, emoji);
+  }
+};
+
 const nameColor = computed(() => props.item?.identity?.color || props.item?.sender_identity_color || props.identityColor || '');
+
+const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.sender_identity_id || props.item?.senderIdentityId || '');
+
 
 </script>
 
@@ -1350,8 +1425,10 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
           <span>{{ tooltipTimestampText }}</span>
         </n-popover>
         <span v-if="props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+        <CharacterCardBadge v-if="props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
 
         <span v-if="!props.isRtl" class="name" :style="nameColor ? { color: nameColor } : undefined">{{ nick }}</span>
+        <CharacterCardBadge v-if="!props.isRtl" :identity-id="senderIdentityId" :identity-color="nameColor" />
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
           <template #trigger>
             <span class="time">{{ inlineTimestampText }}</span>
@@ -1373,7 +1450,7 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick"
+      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick"
         :class="contentClassList">
         <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">
@@ -1450,6 +1527,12 @@ const nameColor = computed(() => props.item?.identity?.color || props.item?.send
         </template>
         <div v-if="props.item?.failed" class="failed absolute bg-red-600 rounded-md px-2 text-white">!</div>
       </div>
+      <MessageReactions
+        v-if="props.item?.id"
+        :reactions="messageReactions"
+        :message-id="props.item.id"
+        @toggle="handleReactionToggle"
+      />
     </div>
   </div>
 </template>

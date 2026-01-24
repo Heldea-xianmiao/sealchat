@@ -33,6 +33,7 @@ import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
+import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
@@ -55,7 +56,6 @@ import dayjs from 'dayjs';
 import IconNumber from '@/components/icons/IconNumber.vue'
 import IconBuildingBroadcastTower from '@/components/icons/IconBuildingBroadcastTower.vue'
 import { computedAsync, useDebounceFn, useEventListener, useWindowSize, useIntersectionObserver } from '@vueuse/core';
-import type { UserEmojiModel } from '@/types';
 import { useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
@@ -80,6 +80,9 @@ import { isHotkeyMatchingEvent } from '@/utils/hotkey';
 import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
+import CharacterCardPanel from './components/CharacterCardPanel.vue';
+import { useCharacterCardStore } from '@/stores/characterCard';
+import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 
@@ -98,6 +101,8 @@ const channelImages = useChannelImagesStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
+const characterCardStore = useCharacterCardStore();
+const characterSheetStore = useCharacterSheetStore();
 iFormStore.bootstrap();
 const router = useRouter();
 const route = useRoute();
@@ -105,6 +110,30 @@ const isEditing = computed(() => !!chat.editing);
 
 const isEmbedMode = computed(() => route.path === '/embed');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+
+let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const ST_REFRESH_DELAY = 1000;
+const CARD_REFRESH_COMMAND_RE = /^([./。,，！!#\\/])?(st|sc|en|buff|ss|ds|cast|ri)(?=\\s|$|[^a-zA-Z])/i;
+
+const hasCardRefreshCommand = (content: string) => {
+  const plain = (content || '').replace(/<[^>]*>/g, '').trim();
+  if (!plain) return false;
+  const lines = plain.split(/\\r?\\n/);
+  return lines.some(line => CARD_REFRESH_COMMAND_RE.test(line.trim()));
+};
+
+const scheduleCharacterSheetRefresh = () => {
+  if (stRefreshTimer) clearTimeout(stRefreshTimer);
+  stRefreshTimer = setTimeout(() => {
+    const channelId = chat.curChannel?.id;
+    if (channelId) {
+      void characterCardStore.getActiveCard(channelId);
+    }
+    if (characterSheetStore.activeWindowIds.length > 0) {
+      void characterSheetStore.refreshAllWindows();
+    }
+  }, ST_REFRESH_DELAY);
+};
 
 const openSplitView = () => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
@@ -379,6 +408,7 @@ const spectatorInputDisabled = computed(() => !channelSendAllowed.value);
 const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
 const emailNotificationDrawerVisible = ref(false);
+const characterCardPanelVisible = ref(false);
 let webhookPermissionSeq = 0;
 
 watch(
@@ -828,13 +858,8 @@ chatEvent.on('action-ribbon-state-request', handleActionRibbonStateRequest);
 chatEvent.on('open-display-settings', handleOpenDisplaySettings);
 
 const emojiLoading = ref(false)
-const uploadImages = computedAsync(async () => {
-  if (user.emojiCount) {
-    const resp = await user.emojiList();
-    return resp.data.items;
-  }
-  return [];
-}, [], emojiLoading);
+// 统一使用 Gallery Store 的表情收藏数据
+const emojiItems = computed<GalleryItem[]>(() => gallery.emojiItems);
 
 const EMOJI_THUMB_SIZE = 80;
 const emojiAttachmentMetaCache = reactive<Record<string, AttachmentMeta | null>>({});
@@ -871,18 +896,12 @@ const resolveEmojiAttachmentUrl = (attachmentId: string) => {
   return `${urlBase}/api/v1/attachment/${normalized}/thumb?size=${EMOJI_THUMB_SIZE}`;
 };
 
-const getEmojiItemSrc = (item: UserEmojiModel) => {
-  const id = item.attachmentId || item.id;
+const getEmojiItemSrc = (item: GalleryItem) => {
+  const id = item.attachmentId;
   return resolveEmojiAttachmentUrl(id);
 };
 
-const hasUserEmoji = computed(() => (uploadImages.value?.length ?? 0) > 0);
-const galleryEmojiItems = computed<GalleryItem[]>(() => {
-  if (!gallery.emojiCollectionId) return [];
-  return gallery.getItemsByCollection(gallery.emojiCollectionId);
-});
-const galleryEmojiName = computed(() => gallery.emojiCollection?.name ?? '');
-const hasGalleryEmoji = computed(() => galleryEmojiItems.value.length > 0);
+const hasEmojiItems = computed(() => emojiItems.value.length > 0);
 
 const emojiPopoverShow = ref(false);
 const emojiTriggerButtonRef = ref<HTMLElement | null>(null);
@@ -894,6 +913,32 @@ const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
+
+// 表情分类选项卡（使用 store 持久化）
+const activeEmojiTab = computed({
+  get: () => gallery.activeEmojiTabId,
+  set: (val) => {
+    const userId = user.info?.id;
+    if (userId) {
+      gallery.setActiveEmojiTab(val, userId);
+    }
+  }
+});
+const emojiTabOptions = computed(() => {
+  const ids = gallery.allEmojiCollectionIds;
+  const ownerId = user.info?.id;
+  if (!ownerId) return [];
+  const collections = gallery.getCollections(ownerId);
+  return ids.map(id => {
+    const col = collections.find(c => c.id === id);
+    return {
+      id,
+      name: col?.name || '未知分类',
+      isFavorites: id === gallery.favoritesCollectionId
+    };
+  });
+});
+const hasMultipleTabs = computed(() => emojiTabOptions.value.length > 1);
 
 const toggleEmojiRemarkVisible = () => {
   const userId = user.info?.id;
@@ -960,16 +1005,9 @@ const ensureEmojiCollectionLoaded = async () => {
     return;
   }
   try {
-    await gallery.loadCollections(ownerId);
+    await gallery.ensureEmojiCollection(ownerId);
   } catch {
     // ignore load errors for emoji collections
-  }
-  if (gallery.emojiCollectionId) {
-    try {
-      await gallery.loadItems(gallery.emojiCollectionId);
-    } catch {
-      // ignore
-    }
   }
 };
 
@@ -1001,21 +1039,23 @@ const sortByUsage = <T extends { id: string }>(items: T[]): T[] => {
   });
 };
 
-const filteredUserEmojis = computed(() => {
+const filteredEmojiItems = computed(() => {
   const query = emojiSearchQuery.value.trim().toLowerCase();
-  const items = uploadImages.value || [];
+  const tabId = activeEmojiTab.value;
+
+  // 根据选项卡筛选
+  let items: GalleryItem[];
+  if (tabId) {
+    items = gallery.getItemsByCollection(tabId);
+  } else {
+    items = emojiItems.value;
+  }
+
+  // 搜索过滤
   const filtered = !query ? items : items.filter((item, idx) => {
     const remark = (item.remark && item.remark.trim()) || `收藏${idx + 1}`;
     return remark.toLowerCase().includes(query);
   });
-  return sortByUsage(filtered);
-});
-
-const filteredGalleryEmojis = computed(() => {
-  const query = emojiSearchQuery.value.trim().toLowerCase();
-  const filtered = !query ? galleryEmojiItems.value : galleryEmojiItems.value.filter(item =>
-    item.remark?.toLowerCase().includes(query)
-  );
   return sortByUsage(filtered);
 });
 
@@ -1542,12 +1582,13 @@ watch(
 );
 
 watch(
-  () => gallery.emojiCollectionId,
-  (collectionId) => {
-    if (collectionId) {
-      void gallery.loadItems(collectionId);
+  () => gallery.emojiCollectionIds,
+  (ids) => {
+    for (const id of ids) {
+      void gallery.loadItems(id);
     }
-  }
+  },
+  { deep: true }
 );
 
 watch(emojiPopoverShow, (show, prevShow) => {
@@ -1623,21 +1664,25 @@ const handleEmojiTriggerClick = () => {
 
 
 const buildEmojiRemarkMap = () => {
-  const allEmojis = [
-    ...(uploadImages.value || []).map(item => ({
-      remark: item.remark?.trim(),
-      attachmentId: item.attachmentId || item.id
-    })),
-    ...allGalleryItems.value.map(item => ({
-      remark: item.remark?.trim(),
-      attachmentId: item.attachmentId
-    }))
-  ].filter(e => e.remark && e.attachmentId);
-
+  // 优先使用表情收藏的备注映射，采用"先到先得"策略避免覆盖
   const remarkMap = new Map<string, string>();
-  allEmojis.forEach(e => {
-    if (e.remark) remarkMap.set(e.remark, e.attachmentId);
-  });
+
+  // 先添加表情收藏（优先级最高）
+  for (const item of emojiItems.value) {
+    const remark = item.remark?.trim();
+    if (remark && item.attachmentId && !remarkMap.has(remark)) {
+      remarkMap.set(remark, item.attachmentId);
+    }
+  }
+
+  // 再添加其他画廊条目（不覆盖已存在的）
+  for (const item of allGalleryItems.value) {
+    const remark = item.remark?.trim();
+    if (remark && item.attachmentId && !remarkMap.has(remark)) {
+      remarkMap.set(remark, item.attachmentId);
+    }
+  }
+
   return remarkMap;
 };
 
@@ -1702,7 +1747,9 @@ const identityForm = reactive({
   avatarAttachmentId: '',
   isDefault: false,
   folderIds: [] as string[],
+  characterCardId: '' as string,
 });
+const identityOriginalCardId = ref('');
 const identityAvatarPreview = ref('');
 const identityAvatarInputRef = ref<HTMLInputElement | null>(null);
 const identityAvatarEditorVisible = ref(false);
@@ -1738,6 +1785,15 @@ const folderMap = computed<Record<string, ChannelIdentityFolder>>(() => {
 });
 
 const folderSelectOptions = computed(() => identityFolders.value.map(folder => ({ label: folder.name, value: folder.id })));
+
+const characterCardSelectOptions = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  const cards = characterCardStore.getCardsByChannel(channelId);
+  return [
+    { label: '不绑定', value: '' },
+    ...cards.map(card => ({ label: card.name, value: card.id })),
+  ];
+});
 
 const favoriteFolderSet = computed(() => new Set(identityFavoriteFolderIds.value));
 
@@ -2727,6 +2783,8 @@ const resetIdentityForm = (identity?: ChannelIdentity | null) => {
   identityForm.avatarAttachmentId = identity?.avatarAttachmentId || '';
   identityForm.isDefault = identity?.isDefault ?? (currentChannelIdentities.value.length === 0);
   identityForm.folderIds = identity?.folderIds ? [...identity.folderIds] : [];
+  identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+  identityOriginalCardId.value = identityForm.characterCardId;
   identityAvatarPreview.value = resolveAttachmentUrl(identity?.avatarAttachmentId);
 };
 
@@ -2741,13 +2799,23 @@ const openIdentityCreate = async () => {
   if (!identityForm.displayName) {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
+  // Load character cards for the channel
+  await characterCardStore.loadCards(chat.curChannel.id);
+  identityForm.characterCardId = '';
+  identityOriginalCardId.value = '';
   identityDialogVisible.value = true;
 };
 
-const openIdentityEdit = (identity: ChannelIdentity) => {
+const openIdentityEdit = async (identity: ChannelIdentity) => {
   editingIdentity.value = identity;
   identityDialogMode.value = 'edit';
   resetIdentityForm(identity);
+  // Load character cards for the channel
+  if (chat.curChannel?.id) {
+    await characterCardStore.loadCards(chat.curChannel.id);
+    identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
+    identityOriginalCardId.value = identityForm.characterCardId;
+  }
   identityDialogVisible.value = true;
 };
 
@@ -2851,10 +2919,34 @@ const submitIdentityForm = async () => {
       identityAvatarFile = null;
     }
     if (identityDialogMode.value === 'create') {
-      await chat.channelIdentityCreate(payload);
+      const createdIdentity = await chat.channelIdentityCreate(payload);
+      // Handle character card binding for new identity
+      if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        try {
+          if (identityForm.characterCardId) {
+            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
+          } else {
+            await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+          }
+        } catch (e) {
+          console.warn('Failed to bind character card', e);
+        }
+      }
       message.success('频道角色已创建');
     } else if (editingIdentity.value) {
       await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+      // Handle character card binding changes for existing identity
+      if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+        try {
+          if (identityForm.characterCardId) {
+            await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+          } else {
+            await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+          }
+        } catch (e) {
+          console.warn('Failed to update character card binding', e);
+        }
+      }
       message.success('频道角色已更新');
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true);
@@ -3648,6 +3740,12 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.whisperTo === undefined && msg.whisper_to !== undefined) {
     msg.whisperTo = msg.whisper_to;
   }
+  if (msg.whisperToIds === undefined && msg.whisper_to_ids !== undefined) {
+    msg.whisperToIds = msg.whisper_to_ids;
+  }
+  if (msg.whisperToIds === undefined && msg.whisper_targets !== undefined) {
+    msg.whisperToIds = msg.whisper_targets;
+  }
   if (msg.whisperMeta === undefined && msg.whisper_meta !== undefined) {
     msg.whisperMeta = msg.whisper_meta;
   }
@@ -3706,6 +3804,19 @@ const normalizeMessageShape = (msg: any): Message => {
     if (!meta.targetUserId && msg.whisper_to) {
       meta.targetUserId = msg.whisper_to;
     }
+    if (!meta.targetUserIds) {
+      const candidateList = msg.whisperToIds || msg.whisper_to_ids || msg.whisper_targets;
+      if (Array.isArray(candidateList)) {
+        const ids = candidateList.map((entry: any) => {
+          if (!entry) return '';
+          if (typeof entry === 'string') return entry;
+          return entry.id || '';
+        }).filter((id: string) => id);
+        if (ids.length > 0) {
+          meta.targetUserIds = ids;
+        }
+      }
+    }
     if (!meta.senderUserId && msg.user?.id) {
       meta.senderUserId = msg.user.id;
     }
@@ -3743,6 +3854,9 @@ const normalizeMessageShape = (msg: any): Message => {
 
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
+  }
+  if (Array.isArray((msg as any).reactions) && msg.id) {
+    chat.setMessageReactions(msg.id, (msg as any).reactions);
   }
   return msg as Message;
 };
@@ -3794,6 +3908,12 @@ const localReorderOps = new Set<string>();
 const messageRowRefs = new Map<string, HTMLElement>();
 const SEARCH_JUMP_WINDOWS_MS = [30, 120, 360, 1440, 10080].map((minutes) => minutes * 60 * 1000);
 const searchJumping = ref(false);
+
+interface SearchJumpWindow {
+  messages: Message[];
+  cursorBefore?: string | null;
+  fromTime?: number;
+}
 
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
@@ -3882,6 +4002,47 @@ const loadSearchJumpWindow = async (from: number, to: number, limit: number) => 
   };
 };
 
+const buildAnchorWindowMessages = (messages: Message[], targetId: string) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return null;
+  }
+  const sorted = messages.slice().sort(compareByDisplayOrder);
+  const targetIndex = sorted.findIndex((msg) => msg.id === targetId);
+  if (targetIndex < 0) {
+    return null;
+  }
+  const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
+  const end = Math.min(sorted.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
+  return sorted.slice(start, end);
+};
+
+const applyHistoricalWindowFromMessages = (
+  messages: Message[],
+  payload: { messageId: string },
+  options: { cursorBefore?: string | null; fromTime?: number } = {},
+) => {
+  const windowMessages = buildAnchorWindowMessages(messages, payload.messageId);
+  if (!windowMessages) {
+    return false;
+  }
+  resetWindowState('history');
+  rows.value = windowMessages;
+  sortRowsByDisplayOrder();
+  if (options.cursorBefore !== undefined) {
+    applyCursorUpdate({ before: options.cursorBefore ?? '' });
+  }
+  computeAfterCursorFromRows();
+  messageWindow.hasReachedStart = false;
+  if (options.fromTime !== undefined) {
+    messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && options.fromTime === 0;
+  }
+  messageWindow.hasReachedLatest = false;
+  updateAnchorMessage(payload.messageId);
+  showButton.value = true;
+  lockHistoryView();
+  return true;
+};
+
 const mountHistoricalWindowWithSpan = async (
   payload: { messageId: string; createdAt?: number },
   spanMs: number,
@@ -3913,22 +4074,10 @@ const mountHistoricalWindowWithSpan = async (
     if (!containsTarget) {
       return false;
     }
-    const targetIndex = normalized.findIndex((msg) => msg.id === payload.messageId);
-    const start = Math.max(0, targetIndex - SEARCH_ANCHOR_WINDOW_LIMIT);
-    const end = Math.min(normalized.length, targetIndex + SEARCH_ANCHOR_WINDOW_LIMIT + 1);
-    const windowMessages = normalized.slice(start, end);
-    resetWindowState('history');
-    rows.value = windowMessages;
-    sortRowsByDisplayOrder();
-    applyCursorUpdate({ before: resp?.next ?? '' });
-    computeAfterCursorFromRows();
-    messageWindow.hasReachedStart = false;
-    messageWindow.beforeCursorExhausted = !messageWindow.beforeCursor && from === 0;
-    messageWindow.hasReachedLatest = false;
-    updateAnchorMessage(payload.messageId);
-    showButton.value = true;
-    lockHistoryView();
-    return true;
+    return applyHistoricalWindowFromMessages(normalized, payload, {
+      cursorBefore: resp?.next ?? '',
+      fromTime: from,
+    });
   } catch (error) {
     console.warn('加载历史视图失败', error);
     return false;
@@ -3950,44 +4099,50 @@ const loadMessagesWithinWindow = async (
   spanMs: number,
 ) => {
   if (!chat.curChannel?.id || !payload.createdAt || spanMs <= 0) {
-    return false;
+    return null;
   }
   const center = Number(payload.createdAt);
   if (!Number.isFinite(center)) {
-    return false;
+    return null;
   }
   const from = Math.max(0, Math.floor(center - spanMs));
   const to = Math.max(from + 1, Math.floor(center + spanMs));
   try {
     let { resp, normalized } = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_PRIMARY);
     if (!normalized.length) {
-      return false;
+      return null;
     }
-    mergeIncomingMessages(normalized, resp ? { before: resp.next ?? '' } : undefined);
-    if (messageExistsLocally(payload.messageId)) {
-      return true;
-    }
-    if (normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+    let containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (!containsTarget && normalized.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
       const retry = await loadSearchJumpWindow(from, to, SEARCH_JUMP_LIMIT_RETRY);
-      if (!retry.normalized.length) {
-        return false;
+      resp = retry.resp;
+      normalized = retry.normalized;
+      if (!normalized.length) {
+        return null;
       }
-      mergeIncomingMessages(retry.normalized, retry.resp ? { before: retry.resp.next ?? '' } : undefined);
+      containsTarget = normalized.some((msg) => msg.id === payload.messageId);
     }
-    return messageExistsLocally(payload.messageId);
+    if (!containsTarget) {
+      return null;
+    }
+    return {
+      messages: normalized,
+      cursorBefore: resp?.next ?? '',
+      fromTime: from,
+    };
   } catch (error) {
     console.warn('定位消息失败（时间窗口）', error);
-    return false;
+    return null;
   }
 };
 
 const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   if (!chat.curChannel?.id || payload.displayOrder === undefined) {
-    return false;
+    return null;
   }
   const order = Number(payload.displayOrder);
   if (!Number.isFinite(order)) {
-    return false;
+    return null;
   }
   const cursorOrder = order + 1e-6;
   const cursorTime = Math.max(0, Math.floor(Number(payload.createdAt ?? Date.now())));
@@ -4001,13 +4156,11 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
     });
     let incoming = normalizeMessageList(firstResp?.data || []);
     if (!incoming.length) {
-      return false;
+      return null;
     }
-    mergeIncomingMessages(incoming, firstResp ? { before: firstResp.next ?? '' } : undefined);
-    if (messageExistsLocally(payload.messageId)) {
-      return true;
-    }
-    if (incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
+    let containsTarget = incoming.some((msg) => msg.id === payload.messageId);
+    let cursorBefore = firstResp?.next ?? '';
+    if (!containsTarget && incoming.length >= SEARCH_JUMP_LIMIT_PRIMARY) {
       const retryResp = await chat.messageList(chat.curChannel.id, cursor, {
         includeArchived: true,
         includeOoc: true,
@@ -4016,22 +4169,29 @@ const loadMessagesByCursor = async (payload: { messageId: string; displayOrder?:
       });
       incoming = normalizeMessageList(retryResp?.data || []);
       if (!incoming.length) {
-        return false;
+        return null;
       }
-      mergeIncomingMessages(incoming, retryResp ? { before: retryResp.next ?? '' } : undefined);
+      containsTarget = incoming.some((msg) => msg.id === payload.messageId);
+      cursorBefore = retryResp?.next ?? '';
     }
-    return messageExistsLocally(payload.messageId);
+    if (!containsTarget) {
+      return null;
+    }
+    return {
+      messages: incoming,
+      cursorBefore,
+    };
   } catch (error) {
     console.warn('定位消息失败（游标）', error);
-    return false;
+    return null;
   }
 };
 
 const locateMessageForJump = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   for (const span of SEARCH_JUMP_WINDOWS_MS) {
-    const found = await loadMessagesWithinWindow(payload, span);
-    if (found) {
-      return true;
+    const window = await loadMessagesWithinWindow(payload, span);
+    if (window) {
+      return window;
     }
   }
   return loadMessagesByCursor(payload);
@@ -4055,8 +4215,17 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
     const located = await locateMessageForJump(payload);
     if (!located) {
       message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+      return false;
     }
-    return located;
+    const applied = applyHistoricalWindowFromMessages(located.messages, payload, {
+      cursorBefore: located.cursorBefore,
+      fromTime: located.fromTime,
+    });
+    if (!applied) {
+      message.warning('仍未定位到该消息，稍后再试');
+      return false;
+    }
+    return true;
   } finally {
     loadingMsg?.destroy?.();
     searchJumping.value = false;
@@ -5468,7 +5637,7 @@ const resetTypingPreview = () => {
 	typingPreviewRowRefs.clear();
 };
 
-const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTarget?.id || null;
+const resolveCurrentWhisperTargetId = (): string | null => chat.whisperTargets[0]?.id || null;
 
 const sendTypingUpdate = throttle(
 	(state: TypingBroadcastState, content: string, channelId: string, options?: { whisperTo?: string | null; orderKey?: number }) => {
@@ -6277,6 +6446,7 @@ const whisperPickerSource = ref<'slash' | 'manual' | null>(null);
 const whisperQuery = ref('');
 const whisperSelectionIndex = ref(0);
 const whisperSearchInputRef = ref<any>(null);
+const whisperCandidateColorMap = ref<Map<string, string>>(new Map());
 
 interface WhisperCandidate {
   raw: any;
@@ -6284,18 +6454,8 @@ interface WhisperCandidate {
   avatar: string;
   displayName: string;
   secondaryName: string;
+  color: string;
 }
-
-const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
-  .filter((i: any) => i?.id && i.id !== user.info.id)
-  .map((candidate: any) => ({
-    raw: candidate,
-    id: candidate.id,
-    avatar: candidate.avatar || '',
-    displayName: candidateDisplayName(candidate),
-    secondaryName: candidateSecondaryName(candidate),
-  }))
-);
 
 const candidateDisplayName = (candidate: any) => candidate?.nick || candidate?.name || candidate?.username || '未知成员';
 const candidateSecondaryName = (candidate: any) => {
@@ -6306,6 +6466,47 @@ const candidateSecondaryName = (candidate: any) => {
   }
   return '';
 };
+
+const resolveWhisperCandidateColor = (candidate: any) => {
+  const id = candidate?.id;
+  if (id) {
+    const mapped = whisperCandidateColorMap.value.get(String(id));
+    if (mapped) {
+      return mapped;
+    }
+  }
+  const fallback = candidate?.nick_color || candidate?.nickColor || candidate?.color || '';
+  return normalizeHexColor(fallback) || '';
+};
+
+const resolveWhisperTargetColor = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
+  const id = target?.id;
+  if (id) {
+    const mapped = whisperCandidateColorMap.value.get(String(id));
+    if (mapped) {
+      return mapped;
+    }
+  }
+  const fallback = target?.color || target?.nick_color || target?.nickColor || '';
+  return normalizeHexColor(fallback) || '';
+};
+
+const getWhisperTargetStyle = (target: { id?: string; color?: string; nick_color?: string; nickColor?: string } | null | undefined) => {
+  const color = resolveWhisperTargetColor(target);
+  return color ? { color } : undefined;
+};
+
+const whisperCandidates = computed<WhisperCandidate[]>(() => chat.curChannelUsers
+  .filter((i: any) => i?.id && i.id !== user.info.id)
+  .map((candidate: any) => ({
+    raw: candidate,
+    id: candidate.id,
+    avatar: candidate.avatar || '',
+    displayName: candidateDisplayName(candidate),
+    secondaryName: candidateSecondaryName(candidate),
+    color: resolveWhisperCandidateColor(candidate),
+  }))
+);
 
 const filteredWhisperCandidates = computed(() => {
   const keyword = whisperQuery.value.trim().toLowerCase();
@@ -6323,9 +6524,22 @@ const filteredWhisperCandidates = computed(() => {
 });
 
 const canOpenWhisperPanel = computed(() => whisperCandidates.value.length > 0);
-const whisperMode = computed(() => !!chat.whisperTarget);
-const whisperTargetDisplay = computed(() => chat.whisperTarget?.nick || chat.whisperTarget?.name || '未知成员');
-const whisperPlaceholderText = computed(() => t('inputBox.whisperPlaceholder', { target: `@${whisperTargetDisplay.value}` }));
+const whisperTargets = computed(() => chat.whisperTargets);
+const isWhisperTarget = (u: { id?: string } | null | undefined) => (
+  Boolean(u?.id) && whisperTargets.value.some((item) => item.id === u?.id)
+);
+const whisperMode = computed(() => whisperTargets.value.length > 0);
+const whisperPlaceholderText = computed(() => {
+  if (!whisperMode.value) {
+    return '';
+  }
+  if (whisperTargets.value.length === 1) {
+    const target = whisperTargets.value[0];
+    const name = target?.nick || target?.name || '未知成员';
+    return t('inputBox.whisperPlaceholder', { target: `@${name}` });
+  }
+  return t('inputBox.whisperPlaceholderMultiple', { count: whisperTargets.value.length });
+});
 
 const ensureInputFocus = () => {
   nextTick(() => {
@@ -6403,9 +6617,23 @@ const resolveMessageWhisperTargetId = (msg?: any): string | null => {
   if (!msg) {
     return null;
   }
+  const metaIds = msg?.whisperMeta?.targetUserIds;
+  if (Array.isArray(metaIds) && metaIds.length > 0) {
+    return String(metaIds[0]);
+  }
   const metaId = msg?.whisperMeta?.targetUserId;
   if (metaId) {
     return metaId;
+  }
+  const list = msg?.whisperToIds || msg?.whisper_to_ids || msg?.whisperTargets || msg?.whisper_targets;
+  if (Array.isArray(list) && list.length > 0) {
+    const first = list[0];
+    if (typeof first === 'string') {
+      return first;
+    }
+    if (first && typeof first === 'object' && first.id) {
+      return first.id;
+    }
   }
   const camel = msg?.whisperTo;
   if (typeof camel === 'string') {
@@ -6526,7 +6754,7 @@ const beginEdit = (target?: Message) => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   chat.curReplyTo = null;
-  chat.clearWhisperTarget();
+  chat.clearWhisperTargets();
   const detectedMode = detectMessageContentMode(target.content);
   const whisperTargetId = resolveMessageWhisperTargetId(target);
   const identityId = resolveMessageIdentityId(target);
@@ -6635,6 +6863,7 @@ function openWhisperPanel(source: 'slash' | 'manual') {
   whisperPickerSource.value = source;
   whisperPanelVisible.value = true;
   whisperSelectionIndex.value = 0;
+  void loadWhisperCandidateColors();
   if (source === 'manual') {
     whisperQuery.value = '';
     nextTick(() => {
@@ -6650,7 +6879,33 @@ function closeWhisperPanel() {
   whisperPickerSource.value = null;
 }
 
-const applyWhisperTarget = (candidate: WhisperCandidate) => {
+const loadWhisperCandidateColors = async () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId || channelId.length >= 30) {
+    whisperCandidateColorMap.value = new Map();
+    return;
+  }
+  try {
+    const resp = await chat.fetchMentionableMembers(channelId);
+    const items = resp?.items || [];
+    const nextMap = new Map<string, string>();
+    for (const item of items) {
+      const userId = item?.userId;
+      if (!userId || nextMap.has(String(userId))) {
+        continue;
+      }
+      const color = normalizeHexColor(item?.color || '') || '';
+      if (color) {
+        nextMap.set(String(userId), color);
+      }
+    }
+    whisperCandidateColorMap.value = nextMap;
+  } catch (error) {
+    console.warn('获取悄悄话候选成员颜色失败', error);
+  }
+};
+
+const onWhisperTargetToggle = (candidate: WhisperCandidate) => {
   if (!candidate?.id) {
     return;
   }
@@ -6663,7 +6918,12 @@ const applyWhisperTarget = (candidate: WhisperCandidate) => {
     discriminator: raw.discriminator || '',
     is_bot: !!raw.is_bot,
   };
-  chat.setWhisperTarget(targetUser);
+  (targetUser as any).color = candidate.color || '';
+  chat.toggleWhisperTarget(targetUser);
+};
+
+const confirmWhisperSelection = () => {
+  chat.confirmWhisperTargets();
   const source = whisperPickerSource.value;
   closeWhisperPanel();
   if (source === 'slash') {
@@ -6709,7 +6969,7 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Enter' || event.key === 'Tab') {
     const selected = list[whisperSelectionIndex.value];
     if (selected) {
-      applyWhisperTarget(selected);
+      onWhisperTargetToggle(selected);
     }
     event.preventDefault();
     return true;
@@ -6734,8 +6994,8 @@ const startWhisperSelection = () => {
   openWhisperPanel('manual');
 };
 
-const clearWhisperTarget = () => {
-  chat.clearWhisperTarget();
+const clearWhisperTargets = () => {
+  chat.clearWhisperTargets();
   ensureInputFocus();
 };
 
@@ -7220,7 +7480,7 @@ watch(() => chat.editing?.messageId, (messageId, previousId) => {
       draft = convertMessageContentToDraft(chat.editing.draft);
     }
     chat.curReplyTo = null;
-    chat.clearWhisperTarget();
+    chat.clearWhisperTargets();
     textToSend.value = draft;
     chat.updateEditingDraft(draft);
     chat.messageMenu.show = false;
@@ -7352,10 +7612,11 @@ const send = throttle(async () => {
     (tmpMsg as any).channel = chat.curChannel;
   }
 
-  const whisperTargetForSend = chat.whisperTarget;
-  if (whisperTargetForSend) {
+  const whisperTargetsForSend = chat.whisperTargets.slice();
+  if (whisperTargetsForSend.length > 0) {
     (tmpMsg as any).isWhisper = true;
-    (tmpMsg as any).whisperTo = whisperTargetForSend;
+    (tmpMsg as any).whisperTo = whisperTargetsForSend[0];
+    (tmpMsg as any).whisperToIds = whisperTargetsForSend;
   }
 
 	(tmpMsg as any).failed = false;
@@ -7378,7 +7639,7 @@ const send = throttle(async () => {
 		const newMsg = await chat.messageCreate(
 			finalContent,
 			replyTo?.id,
-			whisperTargetForSend?.id,
+			whisperTargetsForSend[0]?.id,
 			clientId,
 			identityIdOverride,
 		);
@@ -7485,6 +7746,19 @@ watch(canOpenWhisperPanel, (canOpen) => {
   }
 });
 
+watch(
+  () => chat.curChannel?.id,
+  (channelId, previous) => {
+    if (channelId === previous) {
+      return;
+    }
+    whisperCandidateColorMap.value = new Map();
+    if (whisperPanelVisible.value) {
+      void loadWhisperCandidateColors();
+    }
+  },
+);
+
 watch([
   inputPreviewEnabled,
   inputMode,
@@ -7514,13 +7788,12 @@ watch(
   },
 );
 
-watch(() => chat.whisperTarget?.id, (targetId, prevId) => {
-  if (chat.whisperTarget && targetId) {
-    closeWhisperPanel();
-    ensureInputFocus();
-  }
-  if (targetId === prevId) {
+watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds, prevIds) => {
+  if (targetIds === prevIds) {
     return;
+  }
+  if (targetIds && whisperCandidateColorMap.value.size === 0) {
+    void loadWhisperCandidateColors();
   }
   stopTypingPreviewNow();
   emitTypingPreview();
@@ -7653,10 +7926,23 @@ const isMe = (item: Message) => {
 const scrollToBottom = () => {
   // virtualListRef.value?.scrollToBottom();
   nextTick(() => {
-    const elLst = messagesListRef.value;
-    if (elLst) {
+    requestAnimationFrame(() => {
+      const elLst = messagesListRef.value;
+      if (!elLst) {
+        return;
+      }
       elLst.scrollTop = elLst.scrollHeight;
-    }
+      requestAnimationFrame(() => {
+        const retry = messagesListRef.value;
+        if (!retry) {
+          return;
+        }
+        const offset = retry.scrollHeight - (retry.clientHeight + retry.scrollTop);
+        if (offset > 1) {
+          retry.scrollTop = retry.scrollHeight;
+        }
+      });
+    });
   });
 }
 
@@ -7733,6 +8019,9 @@ chatEvent.on('message-created', (e?: Event) => {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  if (hasCardRefreshCommand(incoming.content || '')) {
+    scheduleCharacterSheetRefresh();
+  }
   const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
     let matchedPending: Message | undefined;
@@ -8129,6 +8418,10 @@ onBeforeUnmount(() => {
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
+  if (stRefreshTimer) {
+    clearTimeout(stRefreshTimer);
+    stRefreshTimer = null;
+  }
 });
 
 const showButton = ref(false);
@@ -8727,10 +9020,10 @@ const keyDown = function (e: KeyboardEvent) {
     return;
   }
 
-  if (e.key === 'Backspace' && chat.whisperTarget) {
+  if (e.key === 'Backspace' && chat.whisperTargets.length > 0) {
     const selection = getInputSelection();
     if (selection.start === 0 && selection.end === 0 && textToSend.value.length === 0) {
-      clearWhisperTarget();
+      clearWhisperTargets();
       e.preventDefault();
       return;
     }
@@ -8962,13 +9255,13 @@ const sendImageMessage = async (attachmentId: string) => {
   return true;
 };
 
-const sendEmoji = throttle(async (i: UserEmojiModel) => {
+const sendEmoji = throttle(async (item: GalleryItem) => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
     return;
   }
-  if (await sendImageMessage(i.attachmentId)) {
-    recordEmojiUsage(i.id);
+  if (await sendImageMessage(item.attachmentId)) {
+    recordEmojiUsage(item.id);
     emojiPopoverShow.value = false;
   }
 }, 1000);
@@ -9157,19 +9450,19 @@ const selectedEmojiIds = ref<string[]>([]);
 const emojiRemarkModalVisible = ref(false);
 const emojiRemarkInput = ref('');
 const emojiRemarkSaving = ref(false);
-const editingEmoji = ref<UserEmojiModel | null>(null);
+const editingEmojiItem = ref<GalleryItem | null>(null);
 const emojiRemarkPattern = /^[\p{L}\p{N}_]{1,64}$/u;
 
-const resolveEmojiRemark = (item: UserEmojiModel, idx: number) => (item.remark?.trim() || `收藏${idx + 1}`);
+const resolveEmojiRemark = (item: GalleryItem, idx: number) => (item.remark?.trim() || `收藏${idx + 1}`);
 
-const openEmojiRemarkEditor = (item: UserEmojiModel) => {
-  editingEmoji.value = item;
+const openEmojiRemarkEditor = (item: GalleryItem) => {
+  editingEmojiItem.value = item;
   emojiRemarkInput.value = item.remark?.trim() || '';
   emojiRemarkModalVisible.value = true;
 };
 
 const submitEmojiRemark = async () => {
-  if (!editingEmoji.value) {
+  if (!editingEmojiItem.value) {
     return false;
   }
   const remark = emojiRemarkInput.value.trim();
@@ -9183,8 +9476,8 @@ const submitEmojiRemark = async () => {
   }
   emojiRemarkSaving.value = true;
   try {
-    await user.emojiUpdate(editingEmoji.value.id, { remark });
-    editingEmoji.value.remark = remark;
+    const collectionId = editingEmojiItem.value.collectionId;
+    await gallery.updateItem(collectionId, editingEmojiItem.value.id, { remark });
     message.success('备注已更新');
     emojiRemarkModalVisible.value = false;
     return true;
@@ -9217,8 +9510,13 @@ const emojiSelectedDelete = async () => {
     message.info('没有选中的表情');
     return;
   }
+  const collectionId = gallery.favoritesCollectionId;
+  if (!collectionId) {
+    message.error('未找到表情收藏分类');
+    return;
+  }
   try {
-    await user.emojiDelete(selectedEmojiIds.value);
+    await gallery.deleteItems(collectionId, selectedEmojiIds.value);
     message.success('已删除所选表情');
     selectedEmojiIds.value = [];
   } catch (error: any) {
@@ -9357,6 +9655,8 @@ onBeforeUnmount(() => {
         :webhook-active="webhookDrawerVisible"
         :email-notification-enabled="true"
         :email-notification-active="emailNotificationDrawerVisible"
+        :character-card-enabled="true"
+        :character-card-active="characterCardPanelVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
         @open-export="exportManagerVisible = true"
@@ -9370,6 +9670,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
+        @open-character-card="characterCardPanelVisible = true"
         @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -9734,39 +10035,65 @@ onBeforeUnmount(() => {
         <n-button @click="chat.curReplyTo = null">取消</n-button>
       </div>
 
-      <div
-        ref="inputContainerRef"
-        class="chat-input-container flex flex-col w-full relative"
-        :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
-        @pointerdown="handleInputBorderPointerDown"
-      >
+      <div class="chat-input-wrapper flex flex-col w-full relative">
         <transition name="fade">
-          <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop>
+          <div v-if="whisperPanelVisible" class="whisper-panel" @mousedown.stop @pointerdown.stop>
             <div class="whisper-panel__title">{{ t('inputBox.whisperPanelTitle') }}</div>
             <n-input v-if="whisperPickerSource === 'manual'" ref="whisperSearchInputRef"
               v-model:value="whisperQuery" size="small" :placeholder="t('inputBox.whisperSearchPlaceholder')" clearable
               @keydown="handleWhisperKeydown" />
             <div class="whisper-panel__list" @keydown="handleWhisperKeydown">
               <div v-for="(candidate, idx) in filteredWhisperCandidates" :key="candidate.id"
-                class="whisper-panel__item" :class="{ 'is-active': idx === whisperSelectionIndex }"
+                class="whisper-panel__item"
+                :class="{ 'is-active': idx === whisperSelectionIndex || isWhisperTarget(candidate.raw) }"
                 @mousedown.prevent @mouseenter="whisperSelectionIndex = idx"
-                @click="applyWhisperTarget(candidate)">
+                @click="onWhisperTargetToggle(candidate)">
                 <AvatarVue :border="false" :size="32" :src="candidate.avatar" />
                 <div class="whisper-panel__meta">
-                  <div class="whisper-panel__name">{{ candidate.displayName }}</div>
+                  <div class="whisper-panel__name" :style="candidate.color ? { color: candidate.color } : undefined">{{ candidate.displayName }}</div>
                   <div v-if="candidate.secondaryName" class="whisper-panel__sub">@{{ candidate.secondaryName }}</div>
                 </div>
+                <n-checkbox
+                  class="whisper-panel__checkbox"
+                  :checked="isWhisperTarget(candidate.raw)"
+                  @click.stop
+                />
               </div>
               <div v-if="!filteredWhisperCandidates.length" class="whisper-panel__empty">{{ t('inputBox.whisperEmpty') }}</div>
             </div>
+            <div class="whisper-panel__footer">
+              <n-button size="small" @click="closeWhisperPanel">{{ t('inputBox.whisperCancel') }}</n-button>
+              <n-button
+                type="primary"
+                size="small"
+                :disabled="whisperTargets.length === 0"
+                @click="confirmWhisperSelection"
+              >
+                {{ t('inputBox.whisperConfirm') }} ({{ whisperTargets.length }})
+              </n-button>
+            </div>
           </div>
         </transition>
-
-          <div v-if="whisperMode" class="whisper-pill-wrapper">
-            <div class="whisper-pill" @mousedown.prevent>
-              <span class="whisper-pill__label">{{ t('inputBox.whisperPillPrefix') }} @{{ whisperTargetDisplay }}</span>
-              <button type="button" class="whisper-pill__close" @click="clearWhisperTarget">×</button>
-            </div>
+        <div
+          ref="inputContainerRef"
+          class="chat-input-container flex flex-col w-full relative"
+          :class="{ 'chat-input-container--spectator-hidden': spectatorInputDisabled, 'chat-input-container--resizing': isResizingInput }"
+          @pointerdown="handleInputBorderPointerDown"
+        >
+          <div v-if="whisperTargets.length" class="whisper-pills">
+            <span class="whisper-pill-prefix">{{ t('inputBox.whisperPillPrefix') }}</span>
+            <n-tag
+              v-for="target in whisperTargets"
+              :key="target.id"
+              class="whisper-pill-tag"
+              type="info"
+              size="small"
+              closable
+              :style="getWhisperTargetStyle(target)"
+              @close.stop="chat.removeWhisperTarget(target)"
+            >
+              {{ target.nick || target.name }}
+            </n-tag>
           </div>
           <div class="chat-input-area relative flex-1">
             <div
@@ -9858,7 +10185,27 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
 
-                        <div v-if="hasGalleryEmoji && !isManagingEmoji" class="emoji-panel__search">
+                        <div v-if="hasEmojiItems && hasMultipleTabs" class="emoji-panel__tabs">
+                          <button
+                            class="emoji-panel__tab"
+                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === null }"
+                            @click="activeEmojiTab = null"
+                          >
+                            全部
+                          </button>
+                          <button
+                            v-for="tab in emojiTabOptions"
+                            :key="tab.id"
+                            class="emoji-panel__tab"
+                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === tab.id }"
+                            :title="tab.name"
+                            @click="activeEmojiTab = tab.id"
+                          >
+                            <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                          </button>
+                        </div>
+
+                        <div v-if="hasEmojiItems" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
@@ -9867,23 +10214,25 @@ onBeforeUnmount(() => {
                           />
                         </div>
 
-                        <div v-if="!hasUserEmoji && !hasGalleryEmoji" class="emoji-panel__empty">
+                        <div v-if="!hasEmojiItems" class="emoji-panel__empty">
                           当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
                         </div>
 
                         <div v-else class="emoji-panel__content">
-                        <template v-if="true">
-                          <template v-if="hasUserEmoji && !emojiSearchQuery">
-                            <template v-if="isManagingEmoji">
+                          <template v-if="isManagingEmoji">
+                            <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
+                              没有匹配的表情
+                            </div>
+                            <template v-else>
                               <n-checkbox-group v-model:value="selectedEmojiIds">
                                 <div class="emoji-grid">
-                                  <div class="emoji-manage-item" v-for="(item, idx) in uploadImages" :key="item.id">
+                                  <div class="emoji-manage-item" v-for="(item, idx) in filteredEmojiItems" :key="item.id">
                                     <div class="emoji-manage-item__content">
                                       <n-checkbox :value="item.id">
                                         <div class="emoji-item">
-                                          <img :src="getEmojiItemSrc(item)" alt="表情" />
-                                          <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">
-                                            {{ resolveEmojiRemark(item, idx) }}
+                                          <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                          <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">
+                                            {{ item.remark || `收藏${idx + 1}` }}
                                           </div>
                                         </div>
                                       </n-checkbox>
@@ -9892,49 +10241,38 @@ onBeforeUnmount(() => {
                                   </div>
                                 </div>
                               </n-checkbox-group>
+                            </template>
 
-                              <div class="emoji-panel__actions">
-                                <n-button type="info" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
-                                  删除选中
-                                </n-button>
-                                <n-button type="default" size="small" @click="exitEmojiManage">
-                                  退出管理
-                                </n-button>
-                              </div>
-                            </template>
-                            <template v-else>
-                              <div class="emoji-grid">
-                                <div class="emoji-item" v-for="(item, idx) in filteredUserEmojis" :key="item.id" @click="sendEmoji(item)">
-                                  <img :src="getEmojiItemSrc(item)" alt="表情" />
-                                  <div class="emoji-caption" :title="resolveEmojiRemark(item, idx)">{{ resolveEmojiRemark(item, idx) }}</div>
-                                  <div class="emoji-item__actions">
-                                    <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
-                                  </div >
-                                </div>
-                              </div>
-                            </template>
+                            <div class="emoji-panel__actions">
+                              <n-button type="error" size="small" @click="emojiSelectedDelete" :disabled="selectedEmojiIds.length === 0">
+                                删除选中
+                              </n-button>
+                              <n-button type="default" size="small" @click="exitEmojiManage">
+                                退出管理
+                              </n-button>
+                            </div>
                           </template>
-
-                          <template v-if="!isManagingEmoji && (hasGalleryEmoji || emojiSearchQuery)">
-                            <div class="emoji-section__title">联动分类：{{ galleryEmojiName || '未命名分类' }}</div>
-                            <div v-if="filteredGalleryEmojis.length === 0" class="emoji-panel__empty">
+                          <template v-else>
+                            <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
                               没有匹配的表情
                             </div>
                             <div v-else class="emoji-grid">
                               <div
                                 class="emoji-item"
-                                v-for="item in filteredGalleryEmojis"
+                                v-for="(item, idx) in filteredEmojiItems"
                                 :key="item.id"
                                 draggable="true"
                                 @dragstart="handleGalleryEmojiDragStart(item, $event)"
-                                @click="handleGalleryEmojiClick(item)"
+                                @click="sendEmoji(item)"
                               >
-                                <img :src="getGalleryItemThumb(item)" alt="表情" />
-                                <div class="emoji-caption">{{ item.remark || '未命名表情' }}</div>
+                                <img :src="getEmojiItemSrc(item)" :alt="item.remark || '表情'" />
+                                <div class="emoji-caption" :title="item.remark || `收藏${idx + 1}`">{{ item.remark || `收藏${idx + 1}` }}</div>
+                                <div class="emoji-item__actions">
+                                  <n-button text size="tiny" @click.stop="openEmojiRemarkEditor(item)">备注</n-button>
+                                </div>
                               </div>
                             </div>
                           </template>
-                        </template>
                         </div>
                       </div>
                     </n-popover>
@@ -10319,6 +10657,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </div>
+  </div>
 
   <RightClickMenu />
   <AvatarClickMenu />
@@ -10330,6 +10669,7 @@ onBeforeUnmount(() => {
     @select-all="handleMultiSelectAll"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
+  <CharacterCardPanel v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
   <ChannelImageViewerDrawer @locate-message="handleChannelImagesLocate" />
   <n-modal
     v-model:show="emojiRemarkModalVisible"
@@ -10387,6 +10727,14 @@ onBeforeUnmount(() => {
             <n-button v-if="identityForm.avatarAttachmentId" size="small" tertiary @click="removeIdentityAvatar">移除</n-button>
           </n-space>
         </div>
+      </n-form-item>
+      <n-form-item label="绑定人物卡">
+        <n-select
+          v-model:value="identityForm.characterCardId"
+          :options="characterCardSelectOptions"
+          placeholder="选择要绑定的人物卡"
+          clearable
+        />
       </n-form-item>
       <n-form-item>
         <n-checkbox v-model:checked="identityForm.isDefault">
@@ -10738,6 +11086,9 @@ onBeforeUnmount(() => {
     v-if="chat.curChannel?.id"
     :channel-id="chat.curChannel.id"
   />
+
+  <!-- 人物卡预览窗口 -->
+  <CharacterSheetManager />
 </template>
 
 <style lang="scss" scoped>
@@ -12377,6 +12728,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.chat-input-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
 .chat-input-container {
   width: 100%;
   background-color: transparent;
@@ -13099,6 +13459,39 @@ onBeforeUnmount(() => {
   color: #9ca3af;
 }
 
+.whisper-panel__checkbox {
+  margin-left: auto;
+}
+
+.whisper-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px 0;
+  border-top: 1px solid var(--sc-border-mute);
+  margin-top: 0.6rem;
+}
+
+.whisper-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--sc-bg-elevated);
+  border-bottom: 1px solid var(--sc-border-mute);
+}
+
+.whisper-pill-prefix {
+  font-size: 12px;
+  color: var(--sc-text-secondary);
+  margin-right: 4px;
+}
+
+.whisper-pill-tag {
+  max-width: 100px;
+}
+
 .identity-switcher-cell {
   display: flex;
   align-items: center;
@@ -13188,6 +13581,54 @@ onBeforeUnmount(() => {
 
 .emoji-panel__title {
   font-weight: 600;
+}
+
+.emoji-panel__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-bottom: 4px;
+}
+
+.emoji-panel__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+  border-radius: 12px;
+  background: var(--sc-bg-elevated, #f8fafc);
+  color: var(--sc-text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.emoji-panel__tab:hover {
+  background: var(--sc-bg-hover, #e2e8f0);
+  border-color: var(--border-color-hover, rgba(0, 0, 0, 0.15));
+}
+
+.emoji-panel__tab--active {
+  background: var(--primary-color, #18a058);
+  border-color: var(--primary-color, #18a058);
+  color: #fff;
+}
+
+.emoji-panel__tab--active:hover {
+  background: var(--primary-color-hover, #16924e);
+  border-color: var(--primary-color-hover, #16924e);
+}
+
+.emoji-panel__tab-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .emoji-panel__search {
@@ -14109,6 +14550,60 @@ onBeforeUnmount(() => {
 :global([data-display-palette='night'] .keyword-highlight--underline:hover),
 :global(:root[data-display-palette='night'] .keyword-highlight--underline:hover) {
   background: transparent;
+}
+
+/* Spoiler styles */
+:root {
+  --spoiler-bg: #cbd5e1;
+  --spoiler-stripe: rgba(100, 116, 139, 0.55);
+  --spoiler-border: rgba(15, 23, 42, 0.18);
+  --spoiler-reveal-bg: rgba(226, 232, 240, 0.85);
+}
+
+:root[data-display-palette='night'] {
+  --spoiler-bg: #3f3f46;
+  --spoiler-stripe: rgba(148, 163, 184, 0.35);
+  --spoiler-border: rgba(255, 255, 255, 0.18);
+  --spoiler-reveal-bg: rgba(71, 85, 105, 0.35);
+}
+
+:root[data-custom-theme='true'] {
+  --spoiler-bg: color-mix(in srgb, var(--sc-text-primary) 16%, transparent);
+  --spoiler-stripe: color-mix(in srgb, var(--sc-text-primary) 35%, transparent);
+  --spoiler-border: color-mix(in srgb, var(--sc-text-primary) 25%, transparent);
+  --spoiler-reveal-bg: color-mix(in srgb, var(--sc-text-primary) 12%, transparent);
+}
+
+.tiptap-spoiler {
+  display: inline-block;
+  padding: 0 0.2em;
+  border-radius: 0.2em;
+  border: 1px solid var(--spoiler-border);
+  color: transparent;
+  background-color: var(--spoiler-bg);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--spoiler-stripe) 0,
+    var(--spoiler-stripe) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.tiptap-spoiler.is-revealed {
+  color: inherit;
+  background-color: var(--spoiler-reveal-bg);
+  background-image: none;
+}
+
+.tiptap-editor .tiptap-spoiler,
+.keyword-rich-content .tiptap-spoiler,
+.sticky-note-editor__content .tiptap-spoiler {
+  color: inherit;
+  background-color: var(--spoiler-reveal-bg);
+  background-image: none;
 }
 
 /* @ mention option styles */

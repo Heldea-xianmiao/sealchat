@@ -10,6 +10,8 @@ import {
   updateCollection as apiUpdateCollection,
   updateItem as apiUpdateItem,
   uploadItems as apiUploadItems,
+  addEmojiToFavorites as apiAddEmojiToFavorites,
+  addEmojiToReactions as apiAddEmojiToReactions,
   type GalleryCollectionPayload,
   type GalleryItemUploadPayload
 } from '@/models/gallery';
@@ -43,35 +45,48 @@ interface GalleryState {
   panelVisible: boolean;
   activeOwner: { type: 'user'; id: string } | null;
   activeCollectionId: string | null;
-  emojiCollectionId: string | null;
+  emojiCollectionIds: string[];
+  favoritesCollectionId: string | null;
+  reactionCollectionId: string | null;
   emojiRemarkVisible: boolean;
+  activeEmojiTabId: string | null;
 }
 
 const STORAGE_EMOJI_COLLECTION = 'sealchat.gallery.emojiCollection';
 const DEFAULT_EMOJI_REMARK_VISIBLE = true;
 
+export const COLLECTION_TYPE_EMOJI = 'emoji_favorites';
+export const COLLECTION_TYPE_EMOJI_REACTION = 'emoji_reactions';
+
 interface EmojiPreferencePayload {
-  emojiCollectionId: string | null;
+  emojiCollectionIds: string[];
   emojiRemarkVisible: boolean;
+  activeEmojiTabId: string | null;
 }
 
 function normalizeEmojiPreferencePayload(stored: string | null): EmojiPreferencePayload {
   if (!stored) {
-    return { emojiCollectionId: null, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+    return { emojiCollectionIds: [], emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE, activeEmojiTabId: null };
   }
   try {
     const parsed = JSON.parse(stored);
     if (parsed && typeof parsed === 'object') {
-      const emojiCollectionId = typeof parsed.emojiCollectionId === 'string' ? parsed.emojiCollectionId : null;
+      let emojiCollectionIds: string[] = [];
+      if (Array.isArray(parsed.emojiCollectionIds)) {
+        emojiCollectionIds = parsed.emojiCollectionIds.filter((id: unknown) => typeof id === 'string');
+      } else if (typeof parsed.emojiCollectionId === 'string') {
+        emojiCollectionIds = [parsed.emojiCollectionId];
+      }
       const emojiRemarkVisible = typeof parsed.emojiRemarkVisible === 'boolean'
         ? parsed.emojiRemarkVisible
         : DEFAULT_EMOJI_REMARK_VISIBLE;
-      return { emojiCollectionId, emojiRemarkVisible };
+      const activeEmojiTabId = typeof parsed.activeEmojiTabId === 'string' ? parsed.activeEmojiTabId : null;
+      return { emojiCollectionIds, emojiRemarkVisible, activeEmojiTabId };
     }
   } catch {
     // ignore and fallback to legacy string payload
   }
-  return { emojiCollectionId: stored, emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE };
+  return { emojiCollectionIds: [stored], emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE, activeEmojiTabId: null };
 }
 
 function ownerKey(ownerId: string) {
@@ -91,8 +106,11 @@ export const useGalleryStore = defineStore('gallery', {
     panelVisible: false,
     activeOwner: null,
     activeCollectionId: null,
-    emojiCollectionId: null,
-    emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE
+    emojiCollectionIds: [],
+    favoritesCollectionId: null,
+    reactionCollectionId: null,
+    emojiRemarkVisible: DEFAULT_EMOJI_REMARK_VISIBLE,
+    activeEmojiTabId: null
   }),
 
   getters: {
@@ -115,13 +133,37 @@ export const useGalleryStore = defineStore('gallery', {
     isPanelVisible: (state) => state.panelVisible,
     isInitializing: (state) => state.initializing,
     emojiItems(state): GalleryItem[] {
-      if (!state.emojiCollectionId) return [];
-      return state.items[state.emojiCollectionId]?.items ?? [];
+      const result = new Map<string, GalleryItem>();
+      const addItems = (collectionId: string | null) => {
+        if (!collectionId) return;
+        const items = state.items[collectionId]?.items;
+        if (items) {
+          for (const item of items) {
+            result.set(item.id, item);
+          }
+        }
+      };
+      addItems(state.favoritesCollectionId);
+      for (const id of state.emojiCollectionIds) {
+        addItems(id);
+      }
+      return Array.from(result.values());
     },
-    emojiCollection(state): GalleryCollection | null {
-      if (!state.activeOwner || !state.emojiCollectionId) return null;
-      const list = state.collections[ownerKey(state.activeOwner.id)]?.items ?? [];
-      return list.find((item) => item.id === state.emojiCollectionId) ?? null;
+    reactionEmojiItems(state): GalleryItem[] {
+      if (!state.reactionCollectionId) return [];
+      return state.items[state.reactionCollectionId]?.items ?? [];
+    },
+    allEmojiCollectionIds(state): string[] {
+      const ids: string[] = [];
+      if (state.favoritesCollectionId) {
+        ids.push(state.favoritesCollectionId);
+      }
+      for (const id of state.emojiCollectionIds) {
+        if (!ids.includes(id)) {
+          ids.push(id);
+        }
+      }
+      return ids;
     }
   },
 
@@ -130,17 +172,24 @@ export const useGalleryStore = defineStore('gallery', {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
       const stored = localStorage.getItem(key);
       const preference = normalizeEmojiPreferencePayload(stored);
-      this.emojiCollectionId = preference.emojiCollectionId;
+      this.emojiCollectionIds = preference.emojiCollectionIds;
       this.emojiRemarkVisible = preference.emojiRemarkVisible;
+      this.activeEmojiTabId = preference.activeEmojiTabId;
     },
 
     persistEmojiPreference(userId: string) {
       const key = `${STORAGE_EMOJI_COLLECTION}:${userId}`;
       const payload: EmojiPreferencePayload = {
-        emojiCollectionId: this.emojiCollectionId,
-        emojiRemarkVisible: this.emojiRemarkVisible
+        emojiCollectionIds: this.emojiCollectionIds,
+        emojiRemarkVisible: this.emojiRemarkVisible,
+        activeEmojiTabId: this.activeEmojiTabId
       };
       localStorage.setItem(key, JSON.stringify(payload));
+    },
+
+    setActiveEmojiTab(tabId: string | null, userId: string) {
+      this.activeEmojiTabId = tabId;
+      this.persistEmojiPreference(userId);
     },
 
     setEmojiRemarkVisible(visible: boolean, userId: string) {
@@ -168,9 +217,11 @@ export const useGalleryStore = defineStore('gallery', {
       } finally {
         this.initializing = false;
       }
-      if (this.emojiCollectionId && this.emojiCollectionId !== this.activeCollectionId) {
-        // Load emoji collection in the background so panel init isn't blocked.
-        void this.loadItems(this.emojiCollectionId).catch(() => {});
+      // Load emoji collections in background
+      for (const id of this.emojiCollectionIds) {
+        if (id !== this.activeCollectionId) {
+          void this.loadItems(id).catch(() => {});
+        }
       }
     },
 
@@ -185,11 +236,67 @@ export const useGalleryStore = defineStore('gallery', {
       }
     },
 
-    linkEmojiCollection(collectionId: string | null, userId: string) {
-      this.emojiCollectionId = collectionId;
+    linkEmojiCollection(collectionId: string, userId: string, link: boolean) {
+      if (collectionId === this.reactionCollectionId) {
+        return;
+      }
+      if (link) {
+        if (!this.emojiCollectionIds.includes(collectionId)) {
+          this.emojiCollectionIds.push(collectionId);
+          void this.loadItems(collectionId);
+        }
+      } else {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== collectionId);
+      }
       this.persistEmojiPreference(userId);
-      if (collectionId) {
-        void this.loadItems(collectionId);
+    },
+
+    async ensureEmojiCollection(ownerId: string): Promise<string | null> {
+      const collections = await this.loadCollections(ownerId, true);
+      const existing = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
+      const reactionCollection = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI_REACTION);
+
+      if (existing) {
+        this.favoritesCollectionId = existing.id;
+        await this.loadItems(existing.id);
+      }
+      if (reactionCollection) {
+        this.reactionCollectionId = reactionCollection.id;
+        await this.loadItems(reactionCollection.id);
+      }
+      if (this.reactionCollectionId && this.emojiCollectionIds.includes(this.reactionCollectionId)) {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== this.reactionCollectionId);
+        this.persistEmojiPreference(ownerId);
+      }
+
+      // Load linked collections in background
+      for (const id of this.emojiCollectionIds) {
+        void this.loadItems(id).catch(() => {});
+      }
+
+      return existing?.id ?? null;
+    },
+
+    async addEmoji(attachmentId: string, ownerId: string): Promise<void> {
+      const resp = await apiAddEmojiToFavorites(attachmentId);
+      const item = resp.data.item;
+      // Refresh emoji collection data
+      const collections = await this.loadCollections(ownerId, true);
+      const emojiCol = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI);
+      if (emojiCol) {
+        this.favoritesCollectionId = emojiCol.id;
+        this.upsertItems(emojiCol.id, [item]);
+      }
+    },
+
+    async addReactionEmoji(attachmentId: string, ownerId: string): Promise<void> {
+      const resp = await apiAddEmojiToReactions(attachmentId);
+      const item = resp.data.item;
+      const collections = await this.loadCollections(ownerId, true);
+      const reactionCol = collections.find(c => c.collectionType === COLLECTION_TYPE_EMOJI_REACTION);
+      if (reactionCol) {
+        this.reactionCollectionId = reactionCol.id;
+        this.upsertItems(reactionCol.id, [item]);
       }
     },
 
@@ -248,8 +355,14 @@ export const useGalleryStore = defineStore('gallery', {
           void this.loadItems(newActiveId);
         }
       }
-      if (this.emojiCollectionId === collectionId) {
-        this.emojiCollectionId = null;
+      if (this.emojiCollectionIds.includes(collectionId)) {
+        this.emojiCollectionIds = this.emojiCollectionIds.filter(id => id !== collectionId);
+      }
+      if (this.favoritesCollectionId === collectionId) {
+        this.favoritesCollectionId = null;
+      }
+      if (this.reactionCollectionId === collectionId) {
+        this.reactionCollectionId = null;
       }
       this.persistEmojiPreference(ownerId);
     },

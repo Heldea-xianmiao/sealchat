@@ -20,6 +20,9 @@
     "whisperEmpty": "該当するメンバーはいません",
     "whisperPillPrefix": "宛先:",
     "whisperPlaceholder": "{target} にささやきを送信...",
+    "whisperPlaceholderMultiple": "{count}人にささやく...",
+    "whisperConfirm": "確認",
+    "whisperCancel": "キャンセル",
     "whisperNoOnline": "このチャンネルにはオンラインのメンバーがいません"
   },
   "connectState": {
@@ -62,7 +65,9 @@
     "selfNotAllowed": "自分にささやきを送ることはできません",
     "userUnknown": "メンバーを特定できません",
     "sendTo": "[ささやき] {target} へ",
+    "sentTo": "[ささやき] {targets}へ",
     "from": "[ささやき] {sender} から",
+    "fromMultiple": "[ささやき] {sender}から、{otherUsers}も受信",
     "generic": "[ささやき] プライベートメッセージ"
   },
   "avatarPrompt": {
@@ -71,5 +76,12 @@
     "action": "今すぐ設定",
     "skip": "後で",
     "badge": "クリックしてアバターを設定"
+  },
+  "emailBindPrompt": {
+    "title": "メールアドレスを登録",
+    "description": "パスワードの復旧とアカウントのセキュリティのため、メールアドレスを登録してください。",
+    "action": "登録する",
+    "dismiss": "今後表示しない",
+    "later": "後で"
   }
 }

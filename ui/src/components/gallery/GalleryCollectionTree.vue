@@ -28,7 +28,7 @@
           </span>
         </n-button>
         <n-dropdown
-          v-if="collection.id === activeId"
+          v-if="collection.id === activeId && !collection.collectionType"
           trigger="click"
           :options="contextMenuOptions"
           @select="(key) => $emit('context-action', key, collection)"
@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { NButton, NDropdown, NIcon } from 'naive-ui';
 import { EllipsisVertical } from '@vicons/ionicons5';
 import type { GalleryCollection } from '@/types';
@@ -62,10 +62,21 @@ const emit = defineEmits<{
 
 const dragOverId = ref<string | null>(null);
 
-const contextMenuOptions = [
+const defaultContextMenuOptions = [
   { label: '重命名', key: 'rename' },
   { label: '删除', key: 'delete' }
 ];
+
+const activeCollection = computed(() =>
+  props.collections.find((c) => c.id === props.activeId) ?? null
+);
+
+const contextMenuOptions = computed(() => {
+  if (activeCollection.value?.collectionType) {
+    return [];
+  }
+  return defaultContextMenuOptions;
+});
 
 function formatSize(size: number) {
   if (!size) return '';

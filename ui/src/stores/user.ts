@@ -37,6 +37,8 @@ export const useUserStore = defineStore({
       avatar: '',
       brief: '',
       disabled: false,
+      email: undefined,
+      emailVerified: false,
     },
   }),
 
@@ -265,6 +267,51 @@ export const useUserStore = defineStore({
           return true;
         }
       }
+    },
+
+    // 邮箱认证相关
+    async sendSignupEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+      const resp = await api.post('api/v1/email-auth/signup-code', payload);
+      return resp;
+    },
+
+    async signUpWithEmail(payload: { username: string; password: string; nickname: string; email: string; code: string }) {
+      const resp = await api.post('api/v1/email-auth/signup', payload);
+      const data = resp.data as { token: string; user: any };
+      if (data.token) {
+        localStorage.setItem('accessToken', data.token);
+        this._accessToken = data.token;
+      }
+      return resp;
+    },
+
+    async verifyPasswordResetIdentity(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+      const resp = await api.post('api/v1/password-reset/verify', payload);
+      return resp;
+    },
+
+    async sendPasswordResetCode(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; verified?: boolean }) {
+      const resp = await api.post('api/v1/password-reset/request', payload);
+      return resp;
+    },
+
+    async confirmPasswordReset(payload: { account: string; code: string; newPassword: string }) {
+      const resp = await api.post('api/v1/password-reset/confirm', payload);
+      return resp;
+    },
+
+    async sendBindEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+      const resp = await api.post('api/v1/email-auth/bind-code', payload, {
+        headers: { 'Authorization': this.token }
+      });
+      return resp;
+    },
+
+    async confirmBindEmail(payload: { email: string; code: string }) {
+      const resp = await api.post('api/v1/email-auth/bind-confirm', payload, {
+        headers: { 'Authorization': this.token }
+      });
+      return resp;
     },
 
   },

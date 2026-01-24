@@ -1032,7 +1032,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async fetchFolders() {
       try {
-        const resp = await api.get('/api/v1/audio/folders');
+        const params: Record<string, unknown> = {};
+        if (!this.isSystemAdmin && !this.filters.worldId) {
+          return;
+        }
+        if (this.filters.scope) {
+          params.scope = this.filters.scope;
+        }
+        if (this.filters.worldId) {
+          params.worldId = this.filters.worldId;
+        }
+        if (this.filters.includeCommon !== undefined) {
+          params.includeCommon = this.filters.includeCommon;
+        }
+        const resp = await api.get('/api/v1/audio/folders', { params });
         this.folders = resp.data?.items || [];
         this.folderPathLookup = buildFolderPathLookup(this.folders);
         await this.refreshLocalCacheWithFolderPaths();
@@ -1044,7 +1057,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     async createFolder(payload: AudioFolderPayload) {
       this.folderActionLoading = true;
       try {
-        await api.post('/api/v1/audio/folders', payload);
+        const effectivePayload = { ...payload };
+        if (!effectivePayload.scope) {
+          if (this.filters.scope) {
+            effectivePayload.scope = this.filters.scope;
+          } else if (!this.isSystemAdmin) {
+            effectivePayload.scope = 'world';
+          } else {
+            effectivePayload.scope = 'common';
+          }
+        }
+        if (effectivePayload.scope === 'world' && !effectivePayload.worldId) {
+          effectivePayload.worldId = this.filters.worldId ?? this.currentWorldId ?? undefined;
+        }
+        await api.post('/api/v1/audio/folders', effectivePayload);
         await this.fetchFolders();
       } catch (err) {
         console.error('createFolder failed', err);
@@ -1579,6 +1605,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       mergedFilters.folderId = normalizeFolderId(mergedFilters.folderId) ?? null;
       this.filters = mergedFilters;
       this.assetPagination.page = 1;
+      await this.fetchFolders();
       await this.fetchAssets({ pagination: { page: 1 } });
     },
 

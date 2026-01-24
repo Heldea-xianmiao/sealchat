@@ -27,15 +27,16 @@ type LogUploadConfig struct {
 }
 
 type AudioConfig struct {
-	StorageDir              string   `json:"storageDir" yaml:"storageDir"`
-	TempDir                 string   `json:"tempDir" yaml:"tempDir"`
-	MaxUploadSizeMB         int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
-	AllowedMimeTypes        []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
-	EnableTranscode         bool     `json:"enableTranscode" yaml:"enableTranscode"`
-	DefaultBitrateKbps      int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
-	AlternateBitrates       []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
-	FFmpegPath              string   `json:"ffmpegPath" yaml:"ffmpegPath"`
-	AllowWorldAudioWorkbench bool    `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	StorageDir               string   `json:"storageDir" yaml:"storageDir"`
+	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
+	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
+	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
+	DefaultBitrateKbps       int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
+	AlternateBitrates        []int    `json:"alternateBitrates" yaml:"alternateBitrates"`
+	FFmpegPath               string   `json:"ffmpegPath" yaml:"ffmpegPath"`
+	AllowWorldAudioWorkbench bool     `json:"allowWorldAudioWorkbench" yaml:"allowWorldAudioWorkbench"`
+	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
 type StorageMode string
@@ -52,6 +53,9 @@ const (
 	defaultExportHTMLPageSize       = 100
 	defaultExportHTMLPageSizeMax    = 500
 	defaultExportHTMLMaxConcurrency = 2
+	defaultBackupPath               = "./backups"
+	defaultBackupIntervalHours      = 12
+	defaultBackupRetentionCount     = 5
 )
 
 type CaptchaMode string
@@ -75,15 +79,17 @@ type CaptchaTargetConfig struct {
 type CaptchaScene string
 
 const (
-	CaptchaSceneSignup CaptchaScene = "signup"
-	CaptchaSceneSignin CaptchaScene = "signin"
+	CaptchaSceneSignup        CaptchaScene = "signup"
+	CaptchaSceneSignin        CaptchaScene = "signin"
+	CaptchaScenePasswordReset CaptchaScene = "passwordReset"
 )
 
 type CaptchaConfig struct {
-	Mode      CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
-	Turnstile TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
-	Signup    CaptchaTargetConfig `json:"signup" yaml:"signup"`
-	Signin    CaptchaTargetConfig `json:"signin" yaml:"signin"`
+	Mode          CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Turnstile     TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
+	Signup        CaptchaTargetConfig `json:"signup" yaml:"signup"`
+	Signin        CaptchaTargetConfig `json:"signin" yaml:"signin"`
+	PasswordReset CaptchaTargetConfig `json:"passwordReset" yaml:"passwordReset"`
 }
 
 type StorageConfig struct {
@@ -152,6 +158,23 @@ type UpdateCheckConfig struct {
 	GithubToken string `json:"-" yaml:"githubToken"`
 }
 
+// EmailAuthConfig 邮箱认证配置（SMTP 配置复用 emailNotification.smtp）
+type EmailAuthConfig struct {
+	Enabled        bool `json:"enabled" yaml:"enabled"`
+	CodeLength     int  `json:"-" yaml:"codeLength"`
+	CodeTTLSeconds int  `json:"-" yaml:"codeTTLSeconds"`
+	MaxAttempts    int  `json:"-" yaml:"maxAttempts"`
+	RateLimitPerIP int  `json:"-" yaml:"rateLimitPerIP"`
+}
+
+// BackupConfig SQLite 备份配置
+type BackupConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	IntervalHours  int    `json:"intervalHours" yaml:"intervalHours"`
+	RetentionCount int    `json:"retentionCount" yaml:"retentionCount"`
+	Path           string `json:"path" yaml:"path"`
+}
+
 // LoginBackgroundConfig 登录页背景配置
 type LoginBackgroundConfig struct {
 	AttachmentId   string `json:"attachmentId" yaml:"attachmentId"`
@@ -187,7 +210,9 @@ type AppConfig struct {
 	SQLite                    SQLiteConfig            `json:"sqlite" yaml:"sqlite"`
 	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
 	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
+	EmailAuth                 EmailAuthConfig         `json:"emailAuth" yaml:"emailAuth"`
 	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
+	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 }
 
@@ -264,6 +289,7 @@ func ReadConfig() *AppConfig {
 			AlternateBitrates:        []int{64, 128},
 			FFmpegPath:               "",
 			AllowWorldAudioWorkbench: false,
+			AllowNonAdminCreateWorld: true,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,
@@ -314,10 +340,23 @@ func ReadConfig() *AppConfig {
 				FromName: "SealChat",
 			},
 		},
+		EmailAuth: EmailAuthConfig{
+			Enabled:        false,
+			CodeLength:     6,
+			CodeTTLSeconds: 300,
+			MaxAttempts:    5,
+			RateLimitPerIP: 10,
+		},
 		UpdateCheck: UpdateCheckConfig{
 			Enabled:     true,
 			IntervalSec: 6 * 60 * 60,
 			GithubRepo:  "kagangtuya-star/sealchat",
+		},
+		Backup: BackupConfig{
+			Enabled:        true,
+			IntervalHours:  defaultBackupIntervalHours,
+			RetentionCount: defaultBackupRetentionCount,
+			Path:           defaultBackupPath,
 		},
 		LoginBackground: LoginBackgroundConfig{
 			Mode:       "cover",
@@ -388,7 +427,9 @@ func ReadConfig() *AppConfig {
 	applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
+	applyEmailAuthDefaults(&config.EmailAuth)
 	applyUpdateCheckDefaults(&config.UpdateCheck)
+	applyBackupDefaults(&config.Backup)
 
 	k.Print()
 	currentConfig = &config
@@ -475,6 +516,24 @@ func applyEmailNotificationDefaults(cfg *EmailNotificationConfig) {
 	}
 }
 
+func applyEmailAuthDefaults(cfg *EmailAuthConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.CodeLength <= 0 {
+		cfg.CodeLength = 6
+	}
+	if cfg.CodeTTLSeconds <= 0 {
+		cfg.CodeTTLSeconds = 300
+	}
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 5
+	}
+	if cfg.RateLimitPerIP <= 0 {
+		cfg.RateLimitPerIP = 10
+	}
+}
+
 func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
 	if cfg == nil {
 		return
@@ -490,12 +549,28 @@ func applyUpdateCheckDefaults(cfg *UpdateCheckConfig) {
 	}
 }
 
+func applyBackupDefaults(cfg *BackupConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.IntervalHours <= 0 {
+		cfg.IntervalHours = defaultBackupIntervalHours
+	}
+	if cfg.RetentionCount <= 0 {
+		cfg.RetentionCount = defaultBackupRetentionCount
+	}
+	if strings.TrimSpace(cfg.Path) == "" {
+		cfg.Path = defaultBackupPath
+	}
+}
+
 func (cfg *CaptchaConfig) normalize() {
 	if cfg == nil {
 		return
 	}
 	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
 	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile)
+	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
 }
 
 func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig) {
@@ -524,6 +599,8 @@ func (cfg *CaptchaConfig) Target(scene CaptchaScene) CaptchaTargetConfig {
 	switch scene {
 	case CaptchaSceneSignin:
 		return cfg.Signin
+	case CaptchaScenePasswordReset:
+		return cfg.PasswordReset
 	default:
 		return cfg.Signup
 	}
@@ -533,7 +610,7 @@ func (cfg *CaptchaConfig) HasLocalEnabled() bool {
 	if cfg == nil {
 		return false
 	}
-	return cfg.Signup.Mode == CaptchaModeLocal || cfg.Signin.Mode == CaptchaModeLocal
+	return cfg.Signup.Mode == CaptchaModeLocal || cfg.Signin.Mode == CaptchaModeLocal || cfg.PasswordReset.Mode == CaptchaModeLocal
 }
 
 func WriteConfig(config *AppConfig) {
@@ -586,6 +663,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.alternateBitrates", config.Audio.AlternateBitrates)
 		_ = k.Set("audio.ffmpegPath", config.Audio.FFmpegPath)
 		_ = k.Set("audio.allowWorldAudioWorkbench", config.Audio.AllowWorldAudioWorkbench)
+		_ = k.Set("audio.allowNonAdminCreateWorld", config.Audio.AllowNonAdminCreateWorld)
 		_ = k.Set("export.storageDir", config.Export.StorageDir)
 		_ = k.Set("export.downloadBandwidthKBps", config.Export.DownloadBandwidthKBps)
 		_ = k.Set("export.downloadBurstKB", config.Export.DownloadBurstKB)
@@ -635,6 +713,12 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)
 		_ = k.Set("emailNotification.minDelayMinutes", config.EmailNotification.MinDelayMinutes)
 		_ = k.Set("emailNotification.maxDelayMinutes", config.EmailNotification.MaxDelayMinutes)
+
+		// 备份配置
+		_ = k.Set("backup.enabled", config.Backup.Enabled)
+		_ = k.Set("backup.intervalHours", config.Backup.IntervalHours)
+		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
+		_ = k.Set("backup.path", config.Backup.Path)
 
 		// 登录页背景配置
 		_ = k.Set("loginBackground.attachmentId", config.LoginBackground.AttachmentId)

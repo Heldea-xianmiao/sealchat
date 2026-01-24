@@ -29,6 +29,9 @@
     "whisperEmpty": "暂无匹配成员",
     "whisperPillPrefix": "发送给:",
     "whisperPlaceholder": "向 {target} 发送悄悄话...",
+    "whisperPlaceholderMultiple": "向 {count} 人发送悄悄话...",
+    "whisperConfirm": "确认",
+    "whisperCancel": "取消",
     "whisperNoOnline": "当前频道暂无在线成员在线"
   },
   "connectState": {
@@ -72,7 +75,9 @@
     "selfNotAllowed": "不能给自己发送悄悄话",
     "userUnknown": "无法识别该成员",
     "sendTo": "[悄悄话] 发送给 {target}",
+    "sentTo": "[悄悄话] 发送给 {targets}",
     "from": "[悄悄话] 来自 {sender}",
+    "fromMultiple": "[悄悄话] 来自 {sender}，{otherUsers} 也收到了",
     "generic": "[悄悄话] 私密消息"
   },
   "avatarPrompt": {
@@ -81,5 +86,12 @@
     "action": "现在设置",
     "skip": "稍后再说",
     "badge": "点击设置头像"
+  },
+  "emailBindPrompt": {
+    "title": "绑定邮箱",
+    "description": "绑定邮箱可用于找回密码，保障账号安全。",
+    "action": "去绑定",
+    "dismiss": "不再提醒",
+    "later": "稍后"
   }
 }

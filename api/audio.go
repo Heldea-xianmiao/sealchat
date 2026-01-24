@@ -282,13 +282,25 @@ func AudioAssetDelete(c *fiber.Ctx) error {
 
 func AudioFolderList(c *fiber.Ctx) error {
 	filters := service.AudioFolderFilters{}
-	if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
-		filters.Scope = model.AudioAssetScope(scope)
-	}
-	if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+	user := getCurUser(c)
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if !isSystemAdmin {
+		worldID := strings.TrimSpace(c.Query("worldId"))
+		if worldID == "" {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "世界ID不能为空")
+		}
+		filters.Scope = model.AudioScopeWorld
 		filters.WorldID = &worldID
+		filters.IncludeCommon = true
+	} else {
+		if scope := strings.TrimSpace(c.Query("scope")); scope != "" {
+			filters.Scope = model.AudioAssetScope(scope)
+		}
+		if worldID := strings.TrimSpace(c.Query("worldId")); worldID != "" {
+			filters.WorldID = &worldID
+		}
+		filters.IncludeCommon = c.QueryBool("includeCommon", true)
 	}
-	filters.IncludeCommon = c.QueryBool("includeCommon", true)
 	items, err := service.AudioListFoldersWithFilters(filters)
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取文件夹失败")

@@ -82,6 +82,7 @@ watch(
   draft.disableContextMenu = value.disableContextMenu
   draft.avatarSize = value.avatarSize
   draft.avatarBorderRadius = value.avatarBorderRadius
+  draft.characterCardBadgeEnabled = value.characterCardBadgeEnabled
   // Custom theme fields are managed directly by store actions, not by draft
   },
   { deep: true, immediate: true },

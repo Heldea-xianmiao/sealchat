@@ -230,6 +230,43 @@ func ChannelInfoEdit(c *fiber.Ctx) error {
 	})
 }
 
+// ChannelBackgroundEdit 处理频道背景编辑请求
+func ChannelBackgroundEdit(c *fiber.Ctx) error {
+	channelId := c.Query("id")
+	if channelId == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "频道ID不能为空",
+		})
+	}
+
+	// TODO: 这里借一下 PermFuncChannelRoleLink 权限，以处理老频道
+	if !CanWithChannelRole(c, channelId, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
+		return nil
+	}
+
+	user := getCurUser(c)
+
+	var updates model.ChannelBackgroundUpdate
+	if err := c.BodyParser(&updates); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "请求参数解析失败",
+		})
+	}
+
+	if err := model.ChannelBackgroundEdit(channelId, &updates); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "频道背景更新失败",
+		})
+	}
+	if channel, err := model.ChannelGet(channelId); err == nil {
+		broadcastChannelUpdated(user, channel)
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "频道背景更新成功",
+	})
+}
+
 func broadcastChannelUpdated(operator *model.UserModel, channel *model.ChannelModel) {
 	if channel == nil || channel.ID == "" {
 		return

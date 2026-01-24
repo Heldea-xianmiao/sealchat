@@ -20,20 +20,21 @@ const (
 	WorldRoleSpectator = "spectator"
 )
 
-// WorldModel 表示“世界”实体，承载频道集合与可见性配置。
+// WorldModel 表示"世界"实体，承载频道集合与可见性配置。
 type WorldModel struct {
 	StringPKBaseModel
-	Name              string `json:"name" gorm:"size:100;not null"`
-	Description       string `json:"description" gorm:"size:500"`
-	Avatar            string `json:"avatar" gorm:"size:255"`
-	Visibility        string `json:"visibility" gorm:"size:24;default:public;index"` // public/private/unlisted
-	EnforceMembership          bool `json:"enforceMembership" gorm:"default:false"`          // 预留未来严格控制
-	AllowAdminEditMessages     bool `json:"allowAdminEditMessages" gorm:"default:false"`     // 允许管理员编辑成员发言
-	AllowMemberEditKeywords    bool `json:"allowMemberEditKeywords" gorm:"default:false"`    // 允许成员编辑世界术语
-	OwnerID                string `json:"ownerId" gorm:"size:100;index"`
-	DefaultChannelID  string `json:"defaultChannelId" gorm:"size:100"`
-	InviteSlug        string `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
-	Status            string `json:"status" gorm:"size:24;default:active;index"`
+	Name                    string `json:"name" gorm:"size:100;not null"`
+	Description             string `json:"description" gorm:"size:500"`
+	Avatar                  string `json:"avatar" gorm:"size:255"`
+	Visibility              string `json:"visibility" gorm:"size:24;default:public;index"` // public/private/unlisted
+	EnforceMembership       bool   `json:"enforceMembership" gorm:"default:false"`         // 预留未来严格控制
+	AllowAdminEditMessages  bool   `json:"allowAdminEditMessages" gorm:"default:false"`    // 允许管理员编辑成员发言
+	AllowMemberEditKeywords bool   `json:"allowMemberEditKeywords" gorm:"default:false"`   // 允许成员编辑世界术语
+	IsSystemDefault         bool   `json:"isSystemDefault" gorm:"default:false;index"`     // 系统默认世界标识，仅允许一个
+	OwnerID                 string `json:"ownerId" gorm:"size:100;index"`
+	DefaultChannelID        string `json:"defaultChannelId" gorm:"size:100"`
+	InviteSlug              string `json:"inviteSlug" gorm:"size:64;uniqueIndex"`
+	Status                  string `json:"status" gorm:"size:24;default:active;index"`
 }
 
 func (*WorldModel) TableName() string {
@@ -115,25 +116,42 @@ func BackfillWorldData() error {
 	}
 
 	var world WorldModel
-	// 如果不存在世界，则创建默认世界
-	var count int64
-	if err := db.Model(&WorldModel{}).Count(&count).Error; err != nil {
+	// 优先查找已标记的系统默认世界（按创建时间排序确保确定性）
+	if err := db.Where("is_system_default = ? AND status = ?", true, "active").
+		Order("created_at asc").Limit(1).Find(&world).Error; err != nil {
 		return err
 	}
-	if count == 0 {
-		world = WorldModel{
-			Name:              "默认世界",
-			Description:       "系统初始化自动创建的默认世界",
-			Visibility:        "public",
-			EnforceMembership: false,
-			Status:            "active",
-		}
-		if err := db.Create(&world).Error; err != nil {
+
+	if world.ID == "" {
+		// 如果没有系统默认世界，检查是否有旧的默认世界需要迁移
+		var oldDefault WorldModel
+		if err := db.Where("status = ?", "active").
+			Order("created_at asc").Limit(1).Find(&oldDefault).Error; err != nil {
 			return err
 		}
-	} else {
-		if err := db.Order("created_at asc").Limit(1).Find(&world).Error; err != nil {
-			return err
+
+		if oldDefault.ID != "" {
+			// 将最早的世界标记为系统默认世界（迁移兼容）
+			// 使用 map 确保即使值为 false 也能正确更新
+			result := db.Model(&WorldModel{}).Where("id = ?", oldDefault.ID).
+				Updates(map[string]interface{}{"is_system_default": true})
+			if result.Error != nil {
+				return result.Error
+			}
+			world = oldDefault
+			world.IsSystemDefault = true
+		} else {
+			// 没有任何世界，创建新的系统默认世界
+			world = WorldModel{
+				Name:            "默认世界",
+				Description:     "系统初始化自动创建的默认世界",
+				Visibility:      "public",
+				IsSystemDefault: true,
+				Status:          "active",
+			}
+			if err := db.Create(&world).Error; err != nil {
+				return err
+			}
 		}
 	}
 	if world.ID == "" {

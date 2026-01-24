@@ -2,6 +2,7 @@ package api
 
 import (
 	_ "embed"
+	"encoding/json"
 	"html"
 	"io/fs"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/spf13/afero"
 
+	"sealchat/model"
 	"sealchat/pm"
 	"sealchat/service"
 	"sealchat/utils"
@@ -26,6 +28,33 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+
+// SyncConfigToDB 将配置同步到数据库
+func SyncConfigToDB(config *utils.AppConfig, source string) {
+	if config == nil {
+		return
+	}
+
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		log.Printf("[配置] 序列化配置失败: %v", err)
+		return
+	}
+
+	note := ""
+	switch source {
+	case "file":
+		note = "从配置文件同步"
+	case "init":
+		note = "初始安装"
+	case "api":
+		note = "通过 API 修改"
+	}
+
+	if err := model.SaveConfigVersion(string(configJSON), source, note); err != nil {
+		log.Printf("[配置] 保存配置版本失败: %v", err)
+	}
+}
 
 type listenMode int
 
@@ -186,6 +215,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/captcha/:id.png", CaptchaImage)
 	v1.Get("/captcha/:id/reload", CaptchaReload)
 
+	// Email auth routes (public)
+	v1.Post("/email-auth/signup-code", EmailAuthSignupCodeSend)
+	v1.Post("/email-auth/signup", EmailAuthSignupWithCode)
+	v1.Post("/password-reset/verify", EmailAuthPasswordResetVerify)
+	v1.Post("/password-reset/request", EmailAuthPasswordResetRequest)
+	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
+
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := sanitizeConfigForClient(appConfig)
 		u := getCurUser(c)
@@ -223,10 +259,20 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/user-password-change", UserChangePassword)
 	v1Auth.Get("/user-info", UserInfo)
 	v1Auth.Post("/user-info-update", UserInfoUpdate)
+	v1Auth.Get("/user-lookup", UserLookup)
 	v1Auth.Post("/user-emoji-add", UserEmojiAdd)
+	v1Auth.Post("/user-reaction-emoji-add", UserReactionEmojiAdd)
 	v1Auth.Get("/user-emoji-list", UserEmojiList)
 	v1Auth.Post("/user-emoji-delete", UserEmojiDelete)
 	v1Auth.Patch("/user-emoji/:id", UserEmojiUpdate)
+
+	// Email auth routes (authenticated)
+	v1Auth.Post("/email-auth/bind-code", EmailAuthBindCodeSend)
+	v1Auth.Post("/email-auth/bind-confirm", EmailAuthBindConfirm)
+
+	// User preferences
+	v1Auth.Get("/user/preferences", UserPreferencesGet)
+	v1Auth.Post("/user/preferences", UserPreferencesUpsert)
 
 	v1Auth.Get("/gallery/collections", GalleryCollectionsList)
 	v1Auth.Post("/gallery/collections", GalleryCollectionCreate)
@@ -257,6 +303,15 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Post("/channel-identities", ChannelIdentityCreate)
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
+	v1Auth.Post("/channel-identities/:id/bind-character-card", ChannelIdentityBindCharacterCard)
+	v1Auth.Post("/channel-identities/:id/unbind-character-card", ChannelIdentityUnbindCharacterCard)
+
+	v1Auth.Get("/character-cards", CharacterCardList)
+	v1Auth.Post("/character-cards", CharacterCardCreate)
+	v1Auth.Get("/character-cards/:id", CharacterCardGet)
+	v1Auth.Put("/character-cards/:id", CharacterCardUpdate)
+	v1Auth.Delete("/character-cards/:id", CharacterCardDelete)
+
 	v1Auth.Get("/channel-identity-folders", ChannelIdentityFolderList)
 	v1Auth.Post("/channel-identity-folders", ChannelIdentityFolderCreate)
 	v1Auth.Put("/channel-identity-folders/:id", ChannelIdentityFolderUpdate)
@@ -272,6 +327,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	diceMacros.Post("/import", ChannelDiceMacroImport)
 
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
+	v1Auth.Post("/messages/:messageId/reactions", MessageReactionAdd)
+	v1Auth.Delete("/messages/:messageId/reactions", MessageReactionRemove)
+	v1Auth.Get("/messages/:messageId/reactions", MessageReactionList)
+	v1Auth.Get("/messages/:messageId/reactions/users", MessageReactionUsers)
 	v1Auth.Get("/channels/:channelId/images", ChannelImagesList)
 	v1Auth.Get("/channels/:channelId/mentionable-members", ChannelMentionableMembers)
 
@@ -335,6 +394,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channels/:channelId/speaker-role-options", ChannelSpeakerRoleOptions)
 	v1Auth.Post("/channels/:channelId/copy", ChannelCopy)
 	v1Auth.Delete("/channels/:channelId", ChannelDissolve)
+	v1Auth.Post("/channel-background-edit", ChannelBackgroundEdit)
 	v1Auth.Post("/channel-info-edit", ChannelInfoEdit)
 	v1Auth.Get("/channel-info", ChannelInfoGet)
 	v1Auth.Get("/channel-perm-tree", ChannelPermTree)
@@ -365,6 +425,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	worldGroup.Patch("/:worldId/keywords/:keywordId", WorldKeywordUpdateHandler)
 	worldGroup.Delete("/:worldId/keywords/:keywordId", WorldKeywordDeleteHandler)
 	worldGroup.Post("/:worldId/keywords/bulk-delete", WorldKeywordBulkDeleteHandler)
+	worldGroup.Post("/:worldId/keywords/reorder", WorldKeywordReorderHandler)
 	worldGroup.Post("/:worldId/keywords/import", WorldKeywordImportHandler)
 	worldGroup.Get("/:worldId/keywords/export", WorldKeywordExportHandler)
 	worldGroup.Get("/:worldId/archived-channels", ArchivedChannelList)
@@ -420,12 +481,17 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
 	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
 	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
+	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
+	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
+	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)
 	v1AuthAdmin.Post("/admin/image-migration/execute", ImageMigrationExecute)
 	v1AuthAdmin.Get("/admin/s3-migration/preview", S3MigrationPreview)
 	v1AuthAdmin.Post("/admin/s3-migration/execute", S3MigrationExecute)
+	v1AuthAdmin.Get("/admin/audio-folder-migration/preview", AudioFolderMigrationPreview)
+	v1AuthAdmin.Post("/admin/audio-folder-migration/execute", AudioFolderMigrationExecute)
 
 	// Email notification admin test
 	v1AuthAdmin.Post("/admin/email-test", AdminEmailTestSend)
@@ -447,6 +513,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
+
+		// 同步到数据库
+		SyncConfigToDB(appConfig, "api")
+
 		return nil
 	})
 

@@ -1,9 +1,12 @@
 import type { CompiledKeywordSpan } from '@/stores/worldGlossary'
 import { createImageTokenRegex, isValidAttachmentToken } from '@/utils/attachmentMarkdown'
+import { tiptapJsonToHtml, isTipTapJson } from '@/utils/tiptap-render'
 
 interface TooltipContent {
   title: string
   description: string
+  descriptionFormat?: 'plain' | 'rich'
+  matchedVia?: string
 }
 
 type ContentResolver = (keywordId: string) => TooltipContent | null | undefined
@@ -554,38 +557,68 @@ export function createKeywordTooltip(
     header.textContent = data.title || '术语'
     tooltip.appendChild(header)
 
+    // Show redirect info if matched via alias
+    if (data.matchedVia && data.matchedVia.toLowerCase() !== data.title.toLowerCase()) {
+      const redirect = document.createElement('div')
+      redirect.className = 'keyword-tooltip__redirect'
+      redirect.textContent = `重定向自: ${data.matchedVia}`
+      tooltip.appendChild(redirect)
+    }
+
     if (data.description) {
       const body = document.createElement('div')
       body.className = 'keyword-tooltip__body'
+      body.addEventListener('click', (event) => {
+        const target = event.target as HTMLElement | null
+        if (!target) return
+        if (target.closest('a')) return
+        const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null
+        if (!spoiler || !body.contains(spoiler)) return
+        event.preventDefault()
+        event.stopPropagation()
+        spoiler.classList.toggle('is-revealed')
+      })
 
-      // 检测是否包含换行，如果有则按段落渲染
-      // 支持 \n, \r\n, \r 等各种换行符
-      const paragraphs = data.description.split(/\r?\n|\r/)
-      const shouldIndent = paragraphs.length > 1 && textIndent > 0
+      // 根据格式选择渲染方式
+      const isRich = data.descriptionFormat === 'rich' && isTipTapJson(data.description)
 
-      if (shouldIndent) {
-        body.classList.add('keyword-tooltip__body--indented')
-        body.style.setProperty('--keyword-tooltip-text-indent', `${textIndent}em`)
-
-        // 将每个段落包装在 p 标签中
-        paragraphs.forEach((para, index) => {
-          if (para.trim() === '' && index !== paragraphs.length - 1) {
-            // 空行用 br 表示
-            body.appendChild(document.createElement('br'))
-            return
-          }
-          if (para.trim() === '') return
-
-          const p = document.createElement('p')
-          p.className = 'keyword-tooltip__paragraph'
-
-          // Use renderTextWithImages for image support
-          p.innerHTML = renderTextWithImages(para, options?.compiledKeywords, underlineOnly, level)
-          body.appendChild(p)
-        })
+      if (isRich) {
+        // 富文本模式：使用 TipTap 渲染器
+        const textRenderer = (text: string) =>
+          applyHighlightsToText(text, options?.compiledKeywords || [], underlineOnly)
+        body.innerHTML = tiptapJsonToHtml(data.description, { textRenderer })
+        body.classList.add('keyword-tooltip__body--rich')
       } else {
-        // 单段或禁用缩进时，使用原有逻辑 with image support
-        body.innerHTML = renderTextWithImages(data.description, options?.compiledKeywords, underlineOnly, level)
+        // 纯文本模式：按段落渲染
+        // 检测是否包含换行，如果有则按段落渲染
+        // 支持 \n, \r\n, \r 等各种换行符
+        const paragraphs = data.description.split(/\r?\n|\r/)
+        const shouldIndent = paragraphs.length > 1 && textIndent > 0
+
+        if (shouldIndent) {
+          body.classList.add('keyword-tooltip__body--indented')
+          body.style.setProperty('--keyword-tooltip-text-indent', `${textIndent}em`)
+
+          // 将每个段落包装在 p 标签中
+          paragraphs.forEach((para, index) => {
+            if (para.trim() === '' && index !== paragraphs.length - 1) {
+              // 空行用 br 表示
+              body.appendChild(document.createElement('br'))
+              return
+            }
+            if (para.trim() === '') return
+
+            const p = document.createElement('p')
+            p.className = 'keyword-tooltip__paragraph'
+
+            // Use renderTextWithImages for image support
+            p.innerHTML = renderTextWithImages(para, options?.compiledKeywords, underlineOnly, level)
+            body.appendChild(p)
+          })
+        } else {
+          // 单段或禁用缩进时，使用原有逻辑 with image support
+          body.innerHTML = renderTextWithImages(data.description, options?.compiledKeywords, underlineOnly, level)
+        }
       }
 
       tooltip.appendChild(body)
@@ -623,8 +656,12 @@ export function createKeywordTooltip(
       return
     }
 
+    // Get matched source from target element
+    const matchedVia = target.dataset.keywordSource || undefined
+    const enrichedData = { ...data, matchedVia }
+
     const tooltip = getHoverTooltip()
-    renderContent(tooltip, data, keywordId, false)
+    renderContent(tooltip, enrichedData, keywordId, false)
     positionTooltip(tooltip, target)
   }
 
@@ -644,6 +681,10 @@ export function createKeywordTooltip(
     const data = resolver(keywordId)
     if (!data) return
 
+    // Get matched source from target element
+    const matchedVia = target.dataset.keywordSource || undefined
+    const enrichedData = { ...data, matchedVia }
+
     hideTooltipsFromLevel(level)
 
     if (hoverTooltipElement) {
@@ -652,7 +693,7 @@ export function createKeywordTooltip(
 
     const tooltip = createTooltipElement(level)
     tooltip.classList.add('keyword-tooltip--pinned')
-    renderContent(tooltip, data, keywordId, true)
+    renderContent(tooltip, enrichedData, keywordId, true)
     positionTooltip(tooltip, target)
 
     currentTooltip = {

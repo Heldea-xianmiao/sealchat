@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, EventName, Event, GuildMember } from '@satorijs/protocol'
-import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
+import type { APIChannelCreateResp, APIChannelListResp, APIMessage, ChannelIdentity, ChannelIdentityFolder, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -54,7 +54,7 @@ interface ChatState {
   // 频道未读: id - 数量
   unreadCountMap: { [key: string]: number },
 
-  whisperTarget: User | null,
+  whisperTargets: User[],
 
   messageMenu: {
     show: boolean
@@ -125,6 +125,9 @@ interface ChatState {
     messageId: string;
     messageTime: number;
   } | null;
+  messageReactions: Record<string, MessageReaction[]>;
+  messageReactionLoaded: Record<string, boolean>;
+  messageReactionLoading: Record<string, boolean>;
 }
 
 interface ChannelCopyOptions {
@@ -160,6 +163,7 @@ const apiMap = new Map<string, any>();
 let _connectResolve: any = null;
 
 const ROLELESS_FILTER_ID = '__roleless__';
+const defaultOocRoleCreateTasks = new Map<string, Promise<string | null>>();
 
 const normalizeRoleFilterIds = (roleIds?: string[]) => {
   const raw = Array.isArray(roleIds) ? roleIds : [];
@@ -221,7 +225,8 @@ type myEventName =
   | 'channel-member-settings-open'
   | 'bot-list-updated'
   | 'global-overlay-toggle'
-  | 'open-display-settings';
+  | 'open-display-settings'
+  | 'message.reaction';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
   // 'message-created': (msg: Event) => void;
@@ -341,7 +346,7 @@ export const useChatStore = defineStore({
     // 太遮挡视线，先关闭了
     atOptionsOn: false,
 
-    whisperTarget: null,
+    whisperTargets: [],
 
     messageMenu: {
       show: false,
@@ -409,6 +414,9 @@ export const useChatStore = defineStore({
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
+    messageReactions: {},
+    messageReactionLoaded: {},
+    messageReactionLoading: {},
   }),
 
   getters: {
@@ -1251,7 +1259,7 @@ export const useChatStore = defineStore({
           }
           this.curMember = resp.data.member;
           this.curChannelUsers = [];
-          this.whisperTarget = null;
+          this.whisperTargets = [];
           writeScopedLocalStorage('lastChannel', id);
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
@@ -1323,7 +1331,7 @@ export const useChatStore = defineStore({
         return true;
       }
       this.curChannelUsers = resp2.data.data;
-      this.whisperTarget = null;
+      this.whisperTargets = [];
 
       if (isStale()) {
         return true;
@@ -2251,6 +2259,156 @@ export const useChatStore = defineStore({
       return (resp as any).data?.message;
     },
 
+    getMessageReactions(messageId: string): MessageReaction[] {
+      return this.messageReactions[messageId] || [];
+    },
+
+    async fetchMessageReactions(messageId: string, options?: { force?: boolean }) {
+      if (!messageId) return [];
+      const force = options?.force === true;
+      if (!force && (this.messageReactionLoaded[messageId] || this.messageReactionLoading[messageId])) {
+        return this.messageReactions[messageId] || [];
+      }
+      this.messageReactionLoading[messageId] = true;
+      try {
+        const resp = await api.get(`api/v1/messages/${messageId}/reactions`);
+        const items = resp?.data?.items || [];
+        this.setMessageReactions(messageId, items);
+        return items;
+      } finally {
+        this.messageReactionLoading[messageId] = false;
+      }
+    },
+
+    setMessageReactions(messageId: string, items: MessageReaction[]) {
+      this.messageReactions[messageId] = Array.isArray(items) ? items : [];
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    async addReaction(messageId: string, emoji: string) {
+      const normalized = emoji?.trim();
+      if (!messageId || !normalized) return;
+      const identityId = this.getActiveIdentityId(this.curChannel?.id);
+      const payload: Record<string, any> = { emoji: normalized };
+      if (identityId) {
+        payload.identity_id = identityId;
+      }
+      this.optimisticAddReaction(messageId, normalized);
+      try {
+        const resp = await api.post(`api/v1/messages/${messageId}/reactions`, payload);
+        this.updateReactionFromServer(messageId, resp?.data);
+      } catch (error) {
+        await this.fetchMessageReactions(messageId, { force: true });
+        throw error;
+      }
+    },
+
+    async removeReaction(messageId: string, emoji: string) {
+      const normalized = emoji?.trim();
+      if (!messageId || !normalized) return;
+      const identityId = this.getActiveIdentityId(this.curChannel?.id);
+      const payload: Record<string, any> = { emoji: normalized };
+      if (identityId) {
+        payload.identity_id = identityId;
+      }
+      this.optimisticRemoveReaction(messageId, normalized);
+      try {
+        const resp = await api.delete(`api/v1/messages/${messageId}/reactions`, { data: payload });
+        this.updateReactionFromServer(messageId, resp?.data);
+      } catch (error) {
+        await this.fetchMessageReactions(messageId, { force: true });
+        throw error;
+      }
+    },
+
+    optimisticAddReaction(messageId: string, emoji: string) {
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (idx >= 0) {
+        if (!reactions[idx].meReacted) {
+          reactions[idx] = { ...reactions[idx], count: reactions[idx].count + 1, meReacted: true };
+        }
+      } else {
+        reactions.push({ emoji, count: 1, meReacted: true });
+      }
+      this.messageReactions[messageId] = reactions;
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    optimisticRemoveReaction(messageId: string, emoji: string) {
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (idx >= 0 && reactions[idx].meReacted) {
+        const nextCount = reactions[idx].count - 1;
+        if (nextCount <= 0) {
+          reactions.splice(idx, 1);
+        } else {
+          reactions[idx] = { ...reactions[idx], count: nextCount, meReacted: false };
+        }
+        this.messageReactions[messageId] = reactions;
+      }
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    updateReactionFromServer(messageId: string, payload?: any) {
+      const emoji = String(payload?.emoji || '').trim();
+      if (!messageId || !emoji) return;
+      const count = typeof payload?.count === 'number' ? payload.count : 0;
+      const meReacted = !!payload?.meReacted;
+      const reactions = [...(this.messageReactions[messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === emoji);
+      if (count <= 0) {
+        if (idx >= 0) {
+          reactions.splice(idx, 1);
+        }
+      } else if (idx >= 0) {
+        reactions[idx] = { ...reactions[idx], count, meReacted };
+      } else {
+        reactions.push({ emoji, count, meReacted });
+      }
+      this.messageReactions[messageId] = reactions;
+      this.messageReactionLoaded[messageId] = true;
+    },
+
+    handleReactionEvent(event: MessageReactionEvent) {
+      if (!event?.messageId || !event?.emoji) {
+        return;
+      }
+      const reactions = [...(this.messageReactions[event.messageId] || [])];
+      const idx = reactions.findIndex((item) => item.emoji === event.emoji);
+      const user = useUserStore();
+      if (event.action === 'add') {
+        if (idx >= 0) {
+          reactions[idx] = {
+            ...reactions[idx],
+            count: event.count,
+            meReacted: event.userId === user.info.id ? true : reactions[idx].meReacted,
+          };
+        } else {
+          reactions.push({
+            emoji: event.emoji,
+            count: event.count,
+            meReacted: event.userId === user.info.id,
+          });
+        }
+      } else {
+        if (idx >= 0) {
+          const next = {
+            ...reactions[idx],
+            count: event.count,
+            meReacted: event.userId === user.info.id ? false : reactions[idx].meReacted,
+          };
+          if (event.count <= 0) {
+            reactions.splice(idx, 1);
+          } else {
+            reactions[idx] = next;
+          }
+        }
+      }
+      this.messageReactions[event.messageId] = reactions;
+      this.messageReactionLoaded[event.messageId] = true;
+    },
+
     async messageReorder(channel_id: string, payload: { messageId: string; beforeId?: string; afterId?: string; clientOpId?: string }) {
       const resp = await this.sendAPI('message.reorder', {
         channel_id,
@@ -2278,9 +2436,14 @@ export const useChatStore = defineStore({
       if (quote_id) {
         payload.quote_id = quote_id;
       }
-      const whisperId = whisper_to ?? this.whisperTarget?.id;
-      if (whisperId) {
-        payload.whisper_to = whisperId;
+      const whisperIds = [
+        whisper_to,
+        ...this.whisperTargets.map((target) => target?.id),
+      ].filter(Boolean) as string[];
+      const uniqueWhisperIds = Array.from(new Set(whisperIds));
+      if (uniqueWhisperIds.length > 0) {
+        payload.whisper_to_ids = uniqueWhisperIds;
+        payload.whisper_to = uniqueWhisperIds[0];
       }
       if (clientId) {
         payload.client_id = clientId;
@@ -2327,8 +2490,8 @@ export const useChatStore = defineStore({
           payload.ic_mode = extra.icMode;
         }
         let whisperTargetId: string | null | undefined = extra?.whisperTo;
-        if (!whisperTargetId && this.whisperTarget?.id) {
-          whisperTargetId = this.whisperTarget.id;
+        if (!whisperTargetId && this.whisperTargets[0]?.id) {
+          whisperTargetId = this.whisperTargets[0].id;
         }
         if (!whisperTargetId && extra?.messageId && this.editing?.messageId === extra.messageId && this.editing?.whisperTargetId) {
           whisperTargetId = this.editing.whisperTargetId;
@@ -2367,12 +2530,25 @@ export const useChatStore = defineStore({
       }
     },
 
-    setWhisperTarget(target?: User | null) {
-      this.whisperTarget = target ?? null;
+    toggleWhisperTarget(target: User) {
+      const index = this.whisperTargets.findIndex((item) => item.id === target.id);
+      if (index > -1) {
+        this.whisperTargets.splice(index, 1);
+        return;
+      }
+      this.whisperTargets.push(target);
     },
 
-    clearWhisperTarget() {
-      this.whisperTarget = null;
+    removeWhisperTarget(target: User) {
+      this.whisperTargets = this.whisperTargets.filter((item) => item.id !== target.id);
+    },
+
+    clearWhisperTargets() {
+      this.whisperTargets = [];
+    },
+
+    confirmWhisperTargets() {
+      // 保留已选目标，仅关闭面板
     },
 
     startEditingMessage(payload: { messageId: string; channelId: string; originalContent: string; draft: string; mode?: 'plain' | 'rich'; isWhisper?: boolean; whisperTargetId?: string | null; icMode?: 'ic' | 'ooc'; identityId?: string | null }) {
@@ -2623,7 +2799,7 @@ export const useChatStore = defineStore({
       backgroundAttachmentId?: string;
       backgroundSettings?: string;
     }) {
-      const resp = await api.post<{ message: string }>(`api/v1/channel-info-edit`, updates, { params: { id } });
+      const resp = await api.post<{ message: string }>(`api/v1/channel-background-edit`, updates, { params: { id } });
       if (this.curChannel?.id === id) {
         const channelResp = await this.channelInfoGet(id);
         if (channelResp?.item) {
@@ -3395,34 +3571,66 @@ export const useChatStore = defineStore({
         return null;
       }
 
-      // 检查是否已经配置了场外角色
+      // 获取已加载的角色列表
+      const identities = this.channelIdentities[channelId] || [];
+
+      // 检查是否已经配置了场外角色，并验证该角色是否仍然存在
       const config = this.getChannelIcOocRoleConfig(channelId);
       if (config.oocRoleId) {
-        return config.oocRoleId;
+        const configuredRoleExists = identities.some(
+          (identity) => identity.id === config.oocRoleId
+        );
+        if (configuredRoleExists) {
+          return config.oocRoleId;
+        }
+        // 配置的角色已不存在，清除无效配置
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: null });
+      }
+
+      // 检查是否有正在进行的创建任务（防止竞态条件）
+      const inFlight = defaultOocRoleCreateTasks.get(channelId);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      // 如果用户已有任意角色卡，不再自动创建
+      if (identities.length > 0) {
+        // 优先使用第一个角色作为默认 OOC 角色
+        const firstRole = identities[0];
+        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: firstRole.id });
+        return firstRole.id;
       }
 
       // 自动创建默认场外角色
       const displayName = user.info.nick || user.info.username || '场外';
       const avatarAttachmentId = normalizeAttachmentId(user.info.avatar || '');
 
-      try {
-        const identity = await this.channelIdentityCreate({
-          channelId,
-          displayName,
-          color: '',
-          avatarAttachmentId,
-          isDefault: false,
-        });
+      const task = (async () => {
+        try {
+          const identity = await this.channelIdentityCreate({
+            channelId,
+            displayName,
+            color: '',
+            avatarAttachmentId,
+            isDefault: false,
+          });
 
-        // 设置为场外默认角色
-        this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
+          // 设置为场外默认角色
+          this.setChannelIcOocRoleConfig(channelId, { oocRoleId: identity.id });
 
-        console.log(`Created default OOC role for channel ${channelId}`, identity);
-        return identity.id;
-      } catch (err) {
-        console.warn('Failed to create default OOC role', err);
-        return null;
-      }
+          console.log(`Created default OOC role for channel ${channelId}`, identity);
+          return identity.id;
+        } catch (err) {
+          console.warn('Failed to create default OOC role', err);
+          return null;
+        }
+      })();
+
+      defaultOocRoleCreateTasks.set(channelId, task);
+      task.finally(() => {
+        defaultOocRoleCreateTasks.delete(channelId);
+      });
+      return task;
     },
   }
 });
@@ -3439,6 +3647,15 @@ chatEvent.on('message-created-notice', (data: any) => {
   if (chat.channelTree.find(c => c.id === chId) || chat.channelTreePrivate.find(c => c.id === chId)) {
     chat.unreadCountMap[chId] = (chat.unreadCountMap[chId] || 0) + 1;
   }
+});
+
+chatEvent.on('message.reaction', (event: any) => {
+  const chat = useChatStore();
+  const payload = event?.messageReaction || event?.reaction || event;
+  if (!payload) {
+    return;
+  }
+  chat.handleReactionEvent(payload as MessageReactionEvent);
 });
 
 chatEvent.on('channel-updated', (event) => {

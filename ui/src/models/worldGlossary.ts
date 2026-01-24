@@ -8,12 +8,15 @@ export interface WorldKeywordItem {
   aliases: string[]
   matchMode: 'plain' | 'regex'
   description: string
+  descriptionFormat?: 'plain' | 'rich'
   display: 'standard' | 'minimal' | 'inherit'
+  sortOrder: number
   isEnabled: boolean
   createdAt: string
   updatedAt: string
   createdBy?: string
   updatedBy?: string
+  matchedVia?: string
 }
 
 export interface WorldKeywordListResponse {
@@ -29,8 +32,15 @@ export interface WorldKeywordPayload {
   aliases?: string[]
   matchMode?: 'plain' | 'regex'
   description?: string
+  descriptionFormat?: 'plain' | 'rich'
   display?: 'standard' | 'minimal' | 'inherit'
+  sortOrder?: number
   isEnabled?: boolean
+}
+
+export interface WorldKeywordReorderItem {
+  id: string
+  sortOrder: number
 }
 
 export interface WorldKeywordImportPayload {
@@ -67,6 +77,11 @@ export async function deleteWorldKeyword(worldId: string, keywordId: string) {
 export async function bulkDeleteWorldKeywords(worldId: string, ids: string[]) {
   const { data } = await api.post<{ deleted: number }>(`/api/v1/worlds/${worldId}/keywords/bulk-delete`, { ids })
   return data.deleted
+}
+
+export async function reorderWorldKeywords(worldId: string, items: WorldKeywordReorderItem[]) {
+  const { data } = await api.post<{ updated: number }>(`/api/v1/worlds/${worldId}/keywords/reorder`, { items })
+  return data.updated
 }
 
 export async function importWorldKeywords(worldId: string, payload: WorldKeywordImportPayload) {
