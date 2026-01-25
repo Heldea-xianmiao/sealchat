@@ -140,7 +140,7 @@ const lobbyMode = computed(() => chat.worldLobbyMode);
 
 const filteredMineWorlds = computed(() => {
   const keyword = searchKeyword.value.trim();
-  const items = (chat.myWorldCache.owned || []).concat(chat.myWorldCache.joined || []);
+  const items = chat.worldListCache?.items || [];
   if (!keyword) return items;
   return items.filter((item: any) => {
     const name = item.world?.name || '';
@@ -153,27 +153,22 @@ const exploreWorlds = computed(() => {
   const cache = chat.exploreWorldCache;
   const items = cache?.items || [];
   const keyword = searchKeyword.value.trim();
-  const favoriteSet = new Set(chat.favoriteWorldIds);
-  const filtered = keyword
-    ? items.filter((item: any) => {
-        const name = item.world?.name || '';
-        const desc = item.world?.description || '';
-        return matchText(keyword, name) || matchText(keyword, desc);
-      })
-    : items;
-  return [...filtered].sort((a, b) => {
-    const favA = favoriteSet.has(a.world.id);
-    const favB = favoriteSet.has(b.world.id);
-    if (favA !== favB) {
-      return favA ? -1 : 1;
-    }
-    return (a.world?.name || '').localeCompare(b.world?.name || '');
+  if (!keyword) return items;
+  return items.filter((item: any) => {
+    const name = item.world?.name || '';
+    const desc = item.world?.description || '';
+    return matchText(keyword, name) || matchText(keyword, desc);
   });
 });
 
 const toggleFavorite = async (worldId: string) => {
   try {
     await chat.toggleWorldFavorite(worldId);
+    if (chat.worldLobbyMode === 'mine') {
+      await fetchList(searchKeyword.value.trim());
+    } else {
+      await fetchExploreList(searchKeyword.value.trim());
+    }
   } catch (err: any) {
     message.error(err?.response?.data?.message || '更新收藏失败');
   }

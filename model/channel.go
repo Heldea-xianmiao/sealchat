@@ -53,6 +53,59 @@ func (m *ChannelModel) UpdateRecentSent() {
 	db.Model(m).Update("recent_sent_at", m.RecentSentAt)
 }
 
+// BackfillChannelRecentSentAt 根据历史消息回填频道最近发言时间。
+func BackfillChannelRecentSentAt() error {
+	const batchSize = 500
+	for {
+		var rows []struct {
+			ID string `gorm:"column:id"`
+		}
+		if err := db.Table("channels").
+			Select("channels.id").
+			Joins("JOIN messages ON messages.channel_id = channels.id").
+			Where("channels.recent_sent_at IS NULL OR channels.recent_sent_at = 0").
+			Group("channels.id").
+			Limit(batchSize).
+			Scan(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			if row.ID != "" {
+				ids = append(ids, row.ID)
+			}
+		}
+		if len(ids) == 0 {
+			break
+		}
+		var msgRows []struct {
+			ChannelID   string    `gorm:"column:channel_id"`
+			LastCreated time.Time `gorm:"column:last_created"`
+		}
+		if err := db.Table("messages").
+			Select("channel_id, MAX(created_at) as last_created").
+			Where("channel_id IN ?", ids).
+			Group("channel_id").
+			Scan(&msgRows).Error; err != nil {
+			return err
+		}
+		for _, row := range msgRows {
+			if row.ChannelID == "" || row.LastCreated.IsZero() {
+				continue
+			}
+			if err := db.Model(&ChannelModel{}).
+				Where("id = ?", row.ChannelID).
+				UpdateColumn("recent_sent_at", row.LastCreated.UnixMilli()).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ChannelBackgroundEdit 仅更新频道背景相关字段
 func ChannelBackgroundEdit(channelId string, updates *ChannelBackgroundUpdate) error {
 	return db.Model(&ChannelModel{}).
