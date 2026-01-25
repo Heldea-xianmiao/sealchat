@@ -6599,6 +6599,7 @@ const isWhisperTarget = (u: { id?: string } | null | undefined) => (
   Boolean(u?.id) && whisperTargets.value.some((item) => item.id === u?.id)
 );
 const whisperMode = computed(() => whisperTargets.value.length > 0);
+const whisperToggleActive = computed(() => whisperPanelVisible.value || whisperTargets.value.length > 0);
 const whisperPlaceholderText = computed(() => {
   if (!whisperMode.value) {
     return '';
@@ -7058,6 +7059,11 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
 const startWhisperSelection = () => {
   if (!canOpenWhisperPanel.value) {
     message.warning(t('inputBox.whisperNoOnline'));
+    return;
+  }
+  if (whisperPanelVisible.value || chat.whisperTargets.length > 0) {
+    closeWhisperPanel();
+    clearWhisperTargets();
     return;
   }
   openWhisperPanel('manual');
@@ -9012,10 +9018,6 @@ const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
     return true;
   },
   whisper: () => {
-    if (whisperPanelVisible.value && whisperPickerSource.value === 'manual') {
-      closeWhisperPanel();
-      return true;
-    }
     startWhisperSelection();
     return true;
   },
@@ -10138,6 +10140,7 @@ onBeforeUnmount(() => {
                 <n-checkbox
                   class="whisper-panel__checkbox"
                   :checked="isWhisperTarget(candidate.raw)"
+                  @update:checked="() => onWhisperTargetToggle(candidate)"
                   @click.stop
                 />
               </div>
@@ -10374,7 +10377,7 @@ onBeforeUnmount(() => {
                <div class="chat-input-actions__cell">
                  <n-tooltip trigger="hover">
                    <template #trigger>
-                     <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperMode }"
+                     <n-button quaternary circle class="whisper-toggle-button" :class="{ 'whisper-toggle-button--active': whisperToggleActive }"
                        @click="startWhisperSelection" :disabled="!canOpenWhisperPanel">
                         <span class="chat-input-actions__icon">W</span>
                       </n-button>
