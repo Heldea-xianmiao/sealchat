@@ -44,6 +44,13 @@ const badgeEnabled = computed({
 
 const badgeTemplate = ref('');
 const currentWorldId = computed(() => chatStore.currentWorldId || '');
+const canSyncBadgeTemplate = computed(() => {
+  const worldId = currentWorldId.value;
+  if (!worldId) return false;
+  const detail = chatStore.worldDetailMap[worldId];
+  const role = detail?.memberRole;
+  return role === 'owner' || role === 'admin';
+});
 
 const syncBadgeTemplate = () => {
   const worldId = currentWorldId.value;
@@ -72,6 +79,20 @@ const persistBadgeTemplate = () => {
 const resetBadgeTemplate = () => {
   badgeTemplate.value = DEFAULT_CARD_TEMPLATE;
   persistBadgeTemplate();
+};
+
+const syncBadgeTemplateToWorld = async () => {
+  const worldId = currentWorldId.value;
+  if (!worldId) return;
+  const normalized = badgeTemplate.value.trim() || DEFAULT_CARD_TEMPLATE;
+  badgeTemplate.value = normalized;
+  persistBadgeTemplate();
+  try {
+    await chatStore.worldUpdate(worldId, { characterCardBadgeTemplate: normalized });
+    message.success('模板已同步');
+  } catch (e: any) {
+    message.error(e?.response?.data?.message || '模板同步失败');
+  }
 };
 
 watch(() => props.visible, async (val) => {
@@ -453,6 +474,12 @@ const openPreview = async (card: CharacterCard) => {
               @blur="persistBadgeTemplate"
             />
             <n-button size="small" quaternary @click="resetBadgeTemplate">恢复默认</n-button>
+            <n-button
+              v-if="canSyncBadgeTemplate"
+              size="small"
+              tertiary
+              @click="syncBadgeTemplateToWorld"
+            >模板同步</n-button>
           </div>
         </div>
       </div>

@@ -308,6 +308,9 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 			return nil, err
 		}
 	}
+	if err := model.GetDB().Where("id = ? AND status = ?", worldID, "active").Limit(1).Find(world).Error; err != nil {
+		return nil, err
+	}
 	return world, nil
 }
 

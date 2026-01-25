@@ -305,6 +305,7 @@ const (
 	EventChannelIFormUpdated    EventName = "channel-iform-updated"
 	EventChannelIFormPushed     EventName = "channel-iform-pushed"
 	EventWorldKeywordsUpdated   EventName = "world-keywords-updated"
+	EventWorldUpdated           EventName = "world-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
 	EventStickyNoteUpdated EventName = "sticky-note-updated"

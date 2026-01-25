@@ -12,6 +12,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/protocol"
 	"sealchat/service"
 )
 
@@ -265,7 +266,25 @@ func WorldUpdateHandler(c *fiber.Ctx) error {
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "更新世界失败"})
 		}
 	}
+	if world != nil && world.ID != "" {
+		broadcastWorldUpdated(world)
+	}
 	return c.JSON(fiber.Map{"world": world})
+}
+
+func broadcastWorldUpdated(world *model.WorldModel) {
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return
+	}
+	event := &protocol.Event{
+		Type: protocol.EventWorldUpdated,
+		Argv: &protocol.Argv{
+			Options: map[string]interface{}{
+				"world": world,
+			},
+		},
+	}
+	broadcastEventToWorld(world.ID, event)
 }
 
 func WorldDeleteHandler(c *fiber.Ctx) error {
