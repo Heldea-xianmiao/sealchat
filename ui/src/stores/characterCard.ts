@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref, computed, watch } from 'vue';
-import { useChatStore } from './chat';
+import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
+import { useDisplayStore } from './display';
+import { extractTemplateKeys, getWorldCardTemplate } from '@/utils/characterCardTemplate';
 
 // Character card type for UI (matching old API format)
 export interface CharacterCard {
@@ -30,6 +32,14 @@ export interface CharacterCardData {
   avatarUrl?: string;
 }
 
+export interface CharacterCardBadgeEntry {
+  identityId: string;
+  channelId: string;
+  template: string;
+  attrs: Record<string, any>;
+  updatedAt: number;
+}
+
 // Convert API response to UI format
 const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
   id: card.id,
@@ -43,6 +53,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const cardList = ref<CharacterCard[]>([]);
   // Active card data per channel (from character.get)
   const activeCards = ref<Record<string, CharacterCardData>>({});
+  // Badge data broadcasted by identities in channel
+  const badgeByIdentity = ref<Record<string, CharacterCardBadgeEntry>>({});
   // Local identity bindings (cached for UI convenience)
   const identityBindings = ref<Record<string, string>>({});
 
@@ -51,7 +63,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const chatStore = useChatStore();
   const userStore = useUserStore();
+  const displayStore = useDisplayStore();
   let loadedBindingsKey = '';
+  let badgeGatewayBound = false;
 
   const getBindingsStorageKey = () => {
     const userId = getUserId();
@@ -95,6 +109,106 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     } catch (e) {
       console.warn('Failed to persist character card bindings to localStorage', e);
     }
+  };
+
+  const resolveWorldBadgeTemplate = (worldId: string) => {
+    if (!worldId) return '';
+    const world = (chatStore as any).worldMap?.[worldId];
+    const fromMap = typeof world?.characterCardBadgeTemplate === 'string' ? world.characterCardBadgeTemplate.trim() : '';
+    if (fromMap) return fromMap;
+    const fromDetail = (chatStore as any).worldDetailMap?.[worldId]?.world?.characterCardBadgeTemplate;
+    if (typeof fromDetail === 'string' && fromDetail.trim()) {
+      return fromDetail.trim();
+    }
+    return '';
+  };
+
+  const resolveBadgeTemplate = (worldId: string) => {
+    const worldTemplate = resolveWorldBadgeTemplate(worldId);
+    if (worldTemplate) return worldTemplate;
+    const localTemplate = displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId];
+    if (localTemplate && localTemplate.trim()) {
+      return localTemplate.trim();
+    }
+    return getWorldCardTemplate(worldId);
+  };
+
+  const upsertBadgeEntry = (entry: CharacterCardBadgeEntry) => {
+    const existing = badgeByIdentity.value[entry.identityId];
+    if (existing && entry.updatedAt <= existing.updatedAt) {
+      return;
+    }
+    badgeByIdentity.value = { ...badgeByIdentity.value, [entry.identityId]: entry };
+  };
+
+  const removeBadgeEntry = (identityId: string) => {
+    if (!identityId) return;
+    const next = { ...badgeByIdentity.value };
+    delete next[identityId];
+    badgeByIdentity.value = next;
+  };
+
+  const applyBadgeEvent = (event?: any) => {
+    const payload = event?.characterCardBadge;
+    const identityId = typeof payload?.identityId === 'string' ? payload.identityId : '';
+    if (!identityId) {
+      return;
+    }
+    const action = typeof payload?.action === 'string' ? payload.action : 'update';
+    if (action === 'clear') {
+      removeBadgeEntry(identityId);
+      return;
+    }
+    const channelId = typeof event?.channel?.id === 'string' ? event.channel.id : '';
+    const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
+    const template = typeof payload?.template === 'string' ? payload.template : '';
+    const attrs = payload?.attrs && typeof payload.attrs === 'object' ? payload.attrs : {};
+    upsertBadgeEntry({
+      identityId,
+      channelId,
+      template,
+      attrs,
+      updatedAt,
+    });
+  };
+
+  const applyBadgeSnapshot = (event?: any) => {
+    const channelId = typeof event?.channel?.id === 'string' ? event.channel.id : '';
+    if (!channelId) {
+      return;
+    }
+    const items = Array.isArray(event?.characterCardBadgeSnapshot?.items)
+      ? event.characterCardBadgeSnapshot.items
+      : [];
+    const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
+    const next = { ...badgeByIdentity.value };
+    Object.keys(next).forEach((key) => {
+      if (next[key]?.channelId === channelId) {
+        delete next[key];
+      }
+    });
+    for (const item of items) {
+      const identityId = typeof item?.identityId === 'string' ? item.identityId : '';
+      if (!identityId) continue;
+      if (item?.action === 'clear') continue;
+      const template = typeof item?.template === 'string' ? item.template : '';
+      const attrs = item?.attrs && typeof item.attrs === 'object' ? item.attrs : {};
+      next[identityId] = {
+        identityId,
+        channelId,
+        template,
+        attrs,
+        updatedAt,
+      };
+    }
+    badgeByIdentity.value = next;
+  };
+
+  const ensureBadgeGateway = () => {
+    if (badgeGatewayBound) return;
+    chatEvent.on('character-card-badge-updated' as any, applyBadgeEvent);
+    chatEvent.on('character-card-badge-snapshot' as any, applyBadgeSnapshot);
+    badgeGatewayBound = true;
   };
 
   // Get user ID for API calls
@@ -158,6 +272,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
           attrs: resp.data.data || {},
         };
         activeCards.value[channelId] = cardData;
+        void broadcastActiveBadge(channelId);
         return cardData;
       }
     } catch (e) {
@@ -436,6 +551,76 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return { ok: true };
   };
 
+  const requestBadgeSnapshot = async (channelId: string) => {
+    if (!channelId) return;
+    await chatStore.ensureConnectionReady();
+    try {
+      await chatStore.sendAPI('character.badge.snapshot', { channel_id: channelId });
+    } catch (e) {
+      console.warn('Failed to request badge snapshot', e);
+    }
+  };
+
+  const broadcastActiveBadge = async (channelId: string, identityId?: string, action: 'update' | 'clear' = 'update') => {
+    if (!channelId) return;
+    const resolvedIdentityId = identityId || chatStore.getActiveIdentityId(channelId);
+    if (!resolvedIdentityId) return;
+    await chatStore.ensureConnectionReady();
+    if (!displayStore.settings.characterCardBadgeEnabled) {
+      action = 'clear';
+    }
+    if (action === 'clear') {
+      try {
+        await chatStore.sendAPI('character.badge.broadcast', {
+          channel_id: channelId,
+          identity_id: resolvedIdentityId,
+          action: 'clear',
+        });
+      } catch (e) {
+        console.warn('Failed to clear badge', e);
+      }
+      return;
+    }
+    const attrsSource = activeCards.value[channelId]?.attrs;
+    if (!attrsSource) {
+      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
+      return;
+    }
+    const worldId = chatStore.currentWorldId || '';
+    const template = resolveBadgeTemplate(worldId);
+    if (!template) {
+      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
+      return;
+    }
+    const keys = extractTemplateKeys(template);
+    const filteredAttrs: Record<string, any> = {};
+    if (keys.length > 0) {
+      for (const key of keys) {
+        const value = attrsSource[key];
+        if (value !== undefined && value !== null && value !== '') {
+          filteredAttrs[key] = value;
+        }
+      }
+      if (Object.keys(filteredAttrs).length === 0) {
+        await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
+        return;
+      }
+    }
+    try {
+      await chatStore.sendAPI('character.badge.broadcast', {
+        channel_id: channelId,
+        identity_id: resolvedIdentityId,
+        template,
+        attrs: keys.length > 0 ? filteredAttrs : {},
+        action: 'update',
+      });
+    } catch (e) {
+      console.warn('Failed to broadcast badge', e);
+    }
+  };
+
+  const getBadgeByIdentity = (identityId: string) => badgeByIdentity.value[identityId];
+
   watch(
     () => userStore.info?.id,
     () => {
@@ -445,10 +630,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     { immediate: true },
   );
 
+  ensureBadgeGateway();
+
   return {
     cardList,
     cards,
     activeCards,
+    badgeByIdentity,
     identityBindings,
     panelVisible,
     loading,
@@ -466,8 +654,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getCardByName,
     getActiveCardId,
     getCardsByChannel,
+    getBadgeByIdentity,
     getBoundCardId,
     bindIdentity,
     unbindIdentity,
+    requestBadgeSnapshot,
+    broadcastActiveBadge,
   };
 });

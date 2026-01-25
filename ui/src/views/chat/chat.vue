@@ -795,6 +795,17 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => chat.curChannel?.id,
+  (channelId) => {
+    if (!channelId) return;
+    if (!display.settings.characterCardBadgeEnabled) return;
+    void characterCardStore.requestBadgeSnapshot(channelId);
+    void characterCardStore.getActiveCard(channelId);
+  },
+  { immediate: true },
+);
+
 const syncActionRibbonState = () => {
   chatEvent.emit('action-ribbon-state', showActionRibbon.value);
 };

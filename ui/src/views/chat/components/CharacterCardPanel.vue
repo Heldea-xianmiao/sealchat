@@ -96,6 +96,17 @@ watch(
   { immediate: true },
 );
 
+watch(badgeEnabled, (enabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) return;
+  if (enabled) {
+    void cardStore.requestBadgeSnapshot(channelId);
+    void cardStore.getActiveCard(channelId);
+    return;
+  }
+  void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
+});
+
 const handleClose = () => {
   emit('update:visible', false);
 };
