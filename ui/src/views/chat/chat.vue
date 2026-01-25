@@ -795,15 +795,71 @@ watch(
   { immediate: true },
 );
 
+const initCharacterCardBadge = (
+  channelId?: string,
+  enabled = display.settings.characterCardBadgeEnabled,
+  options?: { skipActiveCard?: boolean },
+) => {
+  if (!channelId) return;
+  if (!enabled) return;
+  void characterCardStore.requestBadgeSnapshot(channelId);
+  if (!options?.skipActiveCard) {
+    void characterCardStore.getActiveCard(channelId);
+  }
+};
+
+let identitySelectionEpoch = 0;
+const simulateCurrentIdentitySelection = async (channelId?: string) => {
+  if (!channelId || chat.isObserver) {
+    return false;
+  }
+  const currentEpoch = ++identitySelectionEpoch;
+  try {
+    await chat.loadChannelIdentities(channelId, false);
+    if (currentEpoch !== identitySelectionEpoch || channelId !== chat.curChannel?.id) {
+      return false;
+    }
+    const identityId = chat.getActiveIdentityId(channelId);
+    if (!identityId) {
+      return false;
+    }
+    const boundCardId = characterCardStore.getBoundCardId(identityId);
+    if (boundCardId) {
+      await characterCardStore.tagCard(channelId, undefined, boundCardId);
+    } else {
+      await characterCardStore.tagCard(channelId);
+    }
+    await characterCardStore.loadCards(channelId);
+    emitTypingPreview();
+    return true;
+  } catch (e) {
+    console.warn('Failed to simulate identity selection', e);
+    return false;
+  }
+};
+
+let presenceBadgeChannelId = '';
+let presenceBadgeInitialized = false;
+const presenceBadgeUsers = new Set<string>();
+
 watch(
   () => chat.curChannel?.id,
   (channelId) => {
     if (!channelId) return;
-    if (!display.settings.characterCardBadgeEnabled) return;
-    void characterCardStore.requestBadgeSnapshot(channelId);
-    void characterCardStore.getActiveCard(channelId);
+    void (async () => {
+      const didSync = await simulateCurrentIdentitySelection(channelId);
+      initCharacterCardBadge(channelId, undefined, { skipActiveCard: didSync });
+    })();
   },
   { immediate: true },
+);
+
+watch(
+  () => display.settings.characterCardBadgeEnabled,
+  (enabled) => {
+    if (!enabled) return;
+    initCharacterCardBadge(chat.curChannel?.id, enabled);
+  },
 );
 
 const syncActionRibbonState = () => {
@@ -8379,9 +8435,16 @@ chatEvent.on('typing-preview', (e?: Event) => {
 
 chatEvent.off('channel-presence-updated', '*');
 chatEvent.on('channel-presence-updated', (e?: Event) => {
-  if (!e?.presence || e.channel?.id !== chat.curChannel?.id) {
+  const channelId = e?.channel?.id || '';
+  if (!e?.presence || channelId !== chat.curChannel?.id) {
     return;
   }
+  if (channelId !== presenceBadgeChannelId) {
+    presenceBadgeChannelId = channelId;
+    presenceBadgeInitialized = false;
+    presenceBadgeUsers.clear();
+  }
+  let hasNewPresence = false;
   if (typeof (e as any)?.timestamp === 'number') {
     chat.syncServerTime((e as any).timestamp);
   }
@@ -8390,12 +8453,25 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     if (!userId) {
       return;
     }
+    if (!presenceBadgeUsers.has(userId)) {
+      presenceBadgeUsers.add(userId);
+      if (presenceBadgeInitialized) {
+        hasNewPresence = true;
+      }
+    }
     chat.updatePresence(userId, {
       lastPing: typeof item?.lastSeen === 'number' ? chat.serverTsToLocal(item.lastSeen) : Date.now(),
       latencyMs: typeof item?.latency === 'number' ? item.latency : Number(item?.latency) || 0,
       isFocused: !!item?.focused,
     });
   });
+  if (!presenceBadgeInitialized) {
+    presenceBadgeInitialized = true;
+    return;
+  }
+  if (hasNewPresence) {
+    initCharacterCardBadge(channelId);
+  }
 });
 
   chatEvent.off('channel-deleted', '*');

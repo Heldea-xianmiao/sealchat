@@ -57,6 +57,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const badgeByIdentity = ref<Record<string, CharacterCardBadgeEntry>>({});
   // Local identity bindings (cached for UI convenience)
   const identityBindings = ref<Record<string, string>>({});
+  const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
 
   const panelVisible = ref(false);
   const loading = ref(false);
@@ -65,6 +66,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const userStore = useUserStore();
   const displayStore = useDisplayStore();
   let loadedBindingsKey = '';
+  let loadedBadgeCacheKey = '';
   let badgeGatewayBound = false;
 
   const getBindingsStorageKey = () => {
@@ -109,6 +111,128 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     } catch (e) {
       console.warn('Failed to persist character card bindings to localStorage', e);
     }
+  };
+
+  const getBadgeCacheStorageKey = () => {
+    const userId = getUserId();
+    if (!userId || typeof window === 'undefined') {
+      return '';
+    }
+    return `characterCardBadgeCache:${userId}`;
+  };
+
+  const ensureBadgeCacheLoaded = () => {
+    const key = getBadgeCacheStorageKey();
+    if (!key || key === loadedBadgeCacheKey) {
+      return key;
+    }
+    loadedBadgeCacheKey = key;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) {
+        badgeCacheByChannel.value = {};
+        return key;
+      }
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        badgeCacheByChannel.value = parsed;
+      } else {
+        badgeCacheByChannel.value = {};
+      }
+    } catch (e) {
+      console.warn('Failed to load character card badges from localStorage', e);
+      badgeCacheByChannel.value = {};
+    }
+    return key;
+  };
+
+  const persistBadgeCache = () => {
+    const key = ensureBadgeCacheLoaded();
+    if (!key) {
+      return;
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(badgeCacheByChannel.value));
+    } catch (e) {
+      console.warn('Failed to persist character card badges to localStorage', e);
+    }
+  };
+
+  const loadBadgeCache = (channelId: string) => {
+    if (!channelId) return;
+    const key = ensureBadgeCacheLoaded();
+    if (!key) return;
+    const cached = badgeCacheByChannel.value[channelId];
+    if (!cached || typeof cached !== 'object') {
+      return;
+    }
+    const next = { ...badgeByIdentity.value };
+    let changed = false;
+    Object.values(cached).forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const identityId = typeof entry.identityId === 'string' ? entry.identityId : '';
+      if (!identityId) return;
+      const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
+      const normalized: CharacterCardBadgeEntry = {
+        identityId,
+        channelId: typeof entry.channelId === 'string' && entry.channelId ? entry.channelId : channelId,
+        template: typeof entry.template === 'string' ? entry.template : '',
+        attrs: entry?.attrs && typeof entry.attrs === 'object' ? entry.attrs : {},
+        updatedAt,
+      };
+      const existing = next[identityId];
+      if (!existing || normalized.updatedAt > existing.updatedAt) {
+        next[identityId] = normalized;
+        changed = true;
+      }
+    });
+    if (changed) {
+      badgeByIdentity.value = next;
+    }
+  };
+
+  const upsertBadgeCacheEntry = (entry: CharacterCardBadgeEntry) => {
+    if (!entry?.identityId || !entry.channelId) return;
+    const key = ensureBadgeCacheLoaded();
+    if (!key) return;
+    const channelId = entry.channelId;
+    const channelMap = { ...(badgeCacheByChannel.value[channelId] || {}) };
+    const existing = channelMap[entry.identityId];
+    if (existing && entry.updatedAt <= existing.updatedAt) {
+      return;
+    }
+    channelMap[entry.identityId] = entry;
+    badgeCacheByChannel.value = { ...badgeCacheByChannel.value, [channelId]: channelMap };
+    persistBadgeCache();
+  };
+
+  const removeBadgeCacheEntry = (channelId: string, identityId: string) => {
+    if (!channelId || !identityId) return;
+    const key = ensureBadgeCacheLoaded();
+    if (!key) return;
+    const channelMap = { ...(badgeCacheByChannel.value[channelId] || {}) };
+    if (!channelMap[identityId]) {
+      return;
+    }
+    delete channelMap[identityId];
+    if (Object.keys(channelMap).length === 0) {
+      const { [channelId]: _removed, ...rest } = badgeCacheByChannel.value;
+      badgeCacheByChannel.value = rest;
+    } else {
+      badgeCacheByChannel.value = { ...badgeCacheByChannel.value, [channelId]: channelMap };
+    }
+    persistBadgeCache();
+  };
+
+  const replaceBadgeCacheForChannel = (channelId: string, entries: Record<string, CharacterCardBadgeEntry>) => {
+    if (!channelId) return;
+    const key = ensureBadgeCacheLoaded();
+    if (!key) return;
+    badgeCacheByChannel.value = {
+      ...badgeCacheByChannel.value,
+      [channelId]: entries,
+    };
+    persistBadgeCache();
   };
 
   const resolveWorldBadgeTemplate = (worldId: string) => {
@@ -156,20 +280,28 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     const action = typeof payload?.action === 'string' ? payload.action : 'update';
     if (action === 'clear') {
+      const channelId = typeof event?.channel?.id === 'string'
+        ? event.channel.id
+        : badgeByIdentity.value[identityId]?.channelId || '';
       removeBadgeEntry(identityId);
+      if (channelId) {
+        removeBadgeCacheEntry(channelId, identityId);
+      }
       return;
     }
     const channelId = typeof event?.channel?.id === 'string' ? event.channel.id : '';
     const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
     const template = typeof payload?.template === 'string' ? payload.template : '';
     const attrs = payload?.attrs && typeof payload.attrs === 'object' ? payload.attrs : {};
-    upsertBadgeEntry({
+    const entry: CharacterCardBadgeEntry = {
       identityId,
       channelId,
       template,
       attrs,
       updatedAt,
-    });
+    };
+    upsertBadgeEntry(entry);
+    upsertBadgeCacheEntry(entry);
   };
 
   const applyBadgeSnapshot = (event?: any) => {
@@ -180,8 +312,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const items = Array.isArray(event?.characterCardBadgeSnapshot?.items)
       ? event.characterCardBadgeSnapshot.items
       : [];
+    if (!items.length) {
+      loadBadgeCache(channelId);
+      return;
+    }
     const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
     const next = { ...badgeByIdentity.value };
+    const cacheNext: Record<string, CharacterCardBadgeEntry> = {};
     Object.keys(next).forEach((key) => {
       if (next[key]?.channelId === channelId) {
         delete next[key];
@@ -193,15 +330,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (item?.action === 'clear') continue;
       const template = typeof item?.template === 'string' ? item.template : '';
       const attrs = item?.attrs && typeof item.attrs === 'object' ? item.attrs : {};
-      next[identityId] = {
+      const entry: CharacterCardBadgeEntry = {
         identityId,
         channelId,
         template,
         attrs,
         updatedAt,
       };
+      next[identityId] = entry;
+      cacheNext[identityId] = entry;
     }
     badgeByIdentity.value = next;
+    replaceBadgeCacheForChannel(channelId, cacheNext);
   };
 
   const ensureBadgeGateway = () => {
@@ -553,6 +693,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const requestBadgeSnapshot = async (channelId: string) => {
     if (!channelId) return;
+    loadBadgeCache(channelId);
     await chatStore.ensureConnectionReady();
     try {
       await chatStore.sendAPI('character.badge.snapshot', { channel_id: channelId });
