@@ -1344,6 +1344,7 @@ const isResizingInput = ref(false);
 const resizeStartY = ref(0);
 const resizeStartHeight = ref(0);
 const resizePointerId = ref<number | null>(null);
+const shouldExitWideInput = ref(false);
 const RESIZE_BORDER_THRESHOLD_DESKTOP = 8;
 const RESIZE_BORDER_THRESHOLD_MOBILE = 20;
 
@@ -1385,9 +1386,16 @@ const handleInputResizeMove = (e: PointerEvent) => {
   const deltaY = resizeStartY.value - e.clientY;
   const rawHeight = resizeStartHeight.value + deltaY;
   if (rawHeight <= INPUT_AREA_HEIGHT_LIMITS.MIN) {
-    inputAreaHeightPreview.value = 0;
+    if (wideInputMode.value) {
+      shouldExitWideInput.value = true;
+      inputAreaHeightPreview.value = INPUT_AREA_HEIGHT_LIMITS.MIN;
+    } else {
+      shouldExitWideInput.value = false;
+      inputAreaHeightPreview.value = 0;
+    }
     return;
   }
+  shouldExitWideInput.value = false;
   const newHeight = Math.min(INPUT_AREA_HEIGHT_LIMITS.MAX, rawHeight);
   inputAreaHeightPreview.value = Math.round(newHeight);
 };
@@ -1397,6 +1405,8 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   isResizingInput.value = false;
 
   const container = inputContainerRef.value;
+  const exitWideInput = shouldExitWideInput.value && wideInputMode.value;
+  shouldExitWideInput.value = false;
   const finalHeight = inputAreaHeightPreview.value ?? display.settings.inputAreaHeight;
   inputAreaHeightPreview.value = null;
   if (container) {
@@ -1414,6 +1424,19 @@ const handleInputResizeEnd = (e?: PointerEvent) => {
   resizePointerId.value = null;
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
+  if (exitWideInput) {
+    if (finalHeight !== display.settings.inputAreaHeight) {
+      display.updateSettings({ inputAreaHeight: finalHeight });
+    }
+    wideInputMode.value = false;
+    nextTick(() => {
+      textInputRef.value?.focus?.();
+      updateWideInputViewportHeight();
+      requestAnimationFrame(updateWideInputViewportHeight);
+      window.setTimeout(updateWideInputViewportHeight, 160);
+    });
+    return;
+  }
   if (finalHeight !== display.settings.inputAreaHeight) {
     display.updateSettings({ inputAreaHeight: finalHeight });
   }
