@@ -150,6 +150,7 @@ const handleCustomSearchInput = (event: Event) => {
 let searchInputListenerCleanup: (() => void) | null = null;
 let searchBindingCleanup: (() => void) | null = null;
 let searchObserver: MutationObserver | null = null;
+let emojiFallbackCleanup: (() => void) | null = null;
 
 const bindPickerSearch = () => {
   const picker = pickerRef.value?.querySelector('emoji-picker') as HTMLElement & { shadowRoot?: ShadowRoot } | null;
@@ -212,6 +213,38 @@ const bindPickerSearch = () => {
   return cleanup;
 };
 
+const bindPickerEmojiFallback = () => {
+  const picker = pickerRef.value?.querySelector('emoji-picker') as HTMLElement & { shadowRoot?: ShadowRoot } | null;
+  const root = picker?.shadowRoot;
+  if (!root) return;
+
+  const handleImgError = (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || target.tagName !== 'IMG') return;
+    const img = target as HTMLImageElement;
+    const emoji = img.dataset.emoji || img.alt || img.getAttribute('aria-label') || '';
+    if (!emoji) return;
+    const fallback = document.createElement('span');
+    fallback.textContent = emoji;
+    fallback.style.display = 'inline-flex';
+    fallback.style.alignItems = 'center';
+    fallback.style.justifyContent = 'center';
+    const width = img.getAttribute('width') || img.style.width;
+    const height = img.getAttribute('height') || img.style.height;
+    if (width) fallback.style.width = width;
+    if (height) fallback.style.height = height;
+    fallback.style.fontSize = '1em';
+    fallback.style.lineHeight = '1';
+    img.replaceWith(fallback);
+  };
+
+  root.addEventListener('error', handleImgError, true);
+
+  return () => {
+    root.removeEventListener('error', handleImgError, true);
+  };
+};
+
 onMounted(() => {
   const picker = pickerRef.value?.querySelector('emoji-picker');
   if (picker) {
@@ -220,6 +253,7 @@ onMounted(() => {
   void loadRecentEmojis();
   void ensureCustomEmojis();
   searchBindingCleanup = bindPickerSearch() ?? null;
+  emojiFallbackCleanup = bindPickerEmojiFallback() ?? null;
 });
 
 onUnmounted(() => {
@@ -230,6 +264,10 @@ onUnmounted(() => {
   if (searchBindingCleanup) {
     searchBindingCleanup();
     searchBindingCleanup = null;
+  }
+  if (emojiFallbackCleanup) {
+    emojiFallbackCleanup();
+    emojiFallbackCleanup = null;
   }
   if (searchObserver) {
     searchObserver.disconnect();
