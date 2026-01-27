@@ -319,6 +319,10 @@ onBeforeUnmount(() => {
   gap: 1rem;
   padding: 1.25rem;
   color: var(--sc-text-primary);
+  background-color: var(--sc-bg-surface);
+  background-image:
+    radial-gradient(1200px circle at 0% -20%, color-mix(in srgb, var(--sc-bg-elevated) 60%, transparent) 0%, transparent 55%),
+    linear-gradient(180deg, color-mix(in srgb, var(--sc-bg-header, var(--sc-bg-surface)) 70%, transparent) 0%, var(--sc-bg-surface) 45%, color-mix(in srgb, var(--sc-bg-elevated) 40%, var(--sc-bg-surface) 60%) 100%);
   height: 100vh;
   box-sizing: border-box;
   overflow-y: auto;
@@ -326,8 +330,13 @@ onBeforeUnmount(() => {
 
 .status-card {
   border-radius: 1rem;
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85) 0%, rgba(248, 250, 252, 0.9) 100%);
+  border: 1px solid var(--sc-border-mute);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--sc-bg-elevated) 85%, var(--sc-bg-surface) 15%) 0%,
+    color-mix(in srgb, var(--sc-bg-elevated) 55%, var(--sc-bg-surface) 45%) 100%
+  );
+  box-shadow: 0 18px 30px color-mix(in srgb, var(--sc-border-strong) 18%, transparent);
 }
 
 .status-card__label {
@@ -349,6 +358,8 @@ onBeforeUnmount(() => {
 
 .status-chart-card {
   border-radius: 1rem;
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-elevated);
 }
 
 .chart-wrapper {
@@ -359,7 +370,7 @@ onBeforeUnmount(() => {
 .chart-wrapper__series {
   margin-bottom: 1.5rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .chart-wrapper__series:last-child {
@@ -390,7 +401,7 @@ svg {
 }
 
 .chart-grid line {
-  stroke: rgba(148, 163, 184, 0.35);
+  stroke: color-mix(in srgb, var(--sc-border-mute) 65%, transparent);
   stroke-dasharray: 4 6;
 }
 
@@ -413,6 +424,8 @@ svg {
 
 .status-history-card {
   border-radius: 1rem;
+  border: 1px solid var(--sc-border-mute);
+  background: var(--sc-bg-elevated);
 }
 
 .status-history-card table {
@@ -424,9 +437,10 @@ svg {
 .status-history-card td {
   padding: 0.35rem 0.5rem;
   text-align: left;
+  border-bottom: 1px solid var(--sc-border-mute);
 }
 
 .status-history-card thead {
-  background-color: rgba(148, 163, 184, 0.2);
+  background-color: color-mix(in srgb, var(--sc-bg-elevated) 75%, var(--sc-border-mute) 25%);
 }
 </style>
