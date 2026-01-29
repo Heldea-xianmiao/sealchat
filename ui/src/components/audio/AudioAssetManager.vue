@@ -238,6 +238,9 @@
             <li>创建时间：{{ formatDate(currentFolder.createdAt) }}</li>
             <li>更新时间：{{ formatDate(currentFolder.updatedAt) }}</li>
           </ul>
+          <div class="audio-library__detail-actions" v-if="audio.canManage">
+            <n-button quaternary size="small" @click="openEditFolderMeta">编辑元数据</n-button>
+          </div>
         </template>
         <n-empty description="选择一条素材或文件夹以查看详情" v-else />
       </section>
@@ -288,13 +291,24 @@
               placeholder="未分类"
             />
           </n-form-item>
-          <n-form-item label="可见性" path="visibility">
-            <n-radio-group v-model:value="assetForm.visibility">
-              <n-radio value="public">公开</n-radio>
-              <n-radio value="restricted">受限</n-radio>
+        <n-form-item label="可见性" path="visibility">
+          <n-radio-group v-model:value="assetForm.visibility">
+            <n-radio value="public">公开</n-radio>
+            <n-radio value="restricted">受限</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <template v-if="audio.isSystemAdmin">
+          <n-form-item label="素材级别" path="scope">
+            <n-radio-group v-model:value="assetForm.scope">
+              <n-radio value="common">通用级</n-radio>
+              <n-radio value="world">世界级</n-radio>
             </n-radio-group>
           </n-form-item>
-        </n-form>
+          <n-form-item v-if="assetForm.scope === 'world'" label="所属世界" path="worldId">
+            <n-select v-model:value="assetForm.worldId" filterable :options="worldOptions" placeholder="选择世界" />
+          </n-form-item>
+        </template>
+      </n-form>
         <template #footer>
           <n-space justify="end">
             <n-button @click="assetDrawerVisible = false">取消</n-button>
@@ -320,7 +334,7 @@
             placeholder="根目录"
           />
         </n-form-item>
-        <template v-if="folderModalMode === 'create' && audio.isSystemAdmin">
+        <template v-if="(folderModalMode === 'create' || folderModalMode === 'edit') && audio.isSystemAdmin">
           <n-form-item label="级别" path="scope">
             <n-radio-group v-model:value="folderForm.scope">
               <n-radio value="common">通用级</n-radio>
@@ -409,7 +423,7 @@ import {
   type TreeOption,
 } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
-import type { AudioAsset, AudioAssetScope, AudioFolder } from '@/types/audio';
+import type { AudioAsset, AudioAssetMutationPayload, AudioAssetScope, AudioFolder } from '@/types/audio';
 import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
@@ -431,8 +445,12 @@ const durationRange = ref<[number, number]>(audio.filters.durationRange ?? [0, d
 const folderKeys = ref<string[]>(audio.filters.folderId ? [audio.filters.folderId] : ['all']);
 const uploadAnchor = ref<HTMLElement | null>(null);
 const folderModalVisible = ref(false);
-const folderModalMode = ref<'create' | 'rename'>('create');
-const folderModalTitle = computed(() => (folderModalMode.value === 'create' ? '新建文件夹' : '重命名文件夹'));
+const folderModalMode = ref<'create' | 'rename' | 'edit'>('create');
+const folderModalTitle = computed(() => {
+  if (folderModalMode.value === 'create') return '新建文件夹';
+  if (folderModalMode.value === 'edit') return '编辑文件夹元数据';
+  return '重命名文件夹';
+});
 const checkedRowKeys = ref<string[]>([]);
 const batchMoveModalVisible = ref(false);
 const batchMoveTarget = ref<string | null>(null);
@@ -467,6 +485,8 @@ const assetForm = reactive({
   tags: [] as string[],
   folderId: null as string | null,
   visibility: 'public' as 'public' | 'restricted',
+  scope: 'common' as AudioAssetScope,
+  worldId: null as string | null,
 });
 const assetFormRules: FormRules = {
   name: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
@@ -874,6 +894,17 @@ function openRenameFolder() {
   folderModalVisible.value = true;
 }
 
+function openEditFolderMeta() {
+  if (!currentFolder.value) return;
+  folderModalMode.value = 'edit';
+  folderForm.id = currentFolder.value.id;
+  folderForm.name = currentFolder.value.name;
+  folderForm.parentId = currentFolder.value.parentId;
+  folderForm.scope = currentFolder.value.scope;
+  folderForm.worldId = currentFolder.value.worldId ?? null;
+  folderModalVisible.value = true;
+}
+
 async function handleSaveFolder() {
   if (!audio.canManage) {
     message.error('没有权限管理文件夹');
@@ -905,7 +936,26 @@ async function handleSaveFolder() {
       await audio.createFolder(payload);
       message.success('文件夹已创建');
     } else {
-      await audio.updateFolder(folderForm.id, { name: folderForm.name.trim(), parentId: folderForm.parentId });
+      const payload: Partial<AudioFolderPayload> = {
+        name: folderForm.name.trim(),
+        parentId: folderForm.parentId,
+      };
+      if (folderModalMode.value === 'edit' && audio.isSystemAdmin) {
+        const targetScope = folderForm.scope ?? currentFolder.value?.scope ?? 'common';
+        if (targetScope === 'world') {
+          const worldId = folderForm.worldId ?? currentFolder.value?.worldId ?? null;
+          if (!worldId) {
+            message.warning('世界级文件夹必须指定归属世界');
+            return;
+          }
+          payload.scope = 'world';
+          payload.worldId = worldId;
+        } else {
+          payload.scope = 'common';
+          payload.worldId = null;
+        }
+      }
+      await audio.updateFolder(folderForm.id, payload);
       message.success('文件夹已更新');
     }
     folderModalVisible.value = false;
@@ -942,19 +992,35 @@ function openAssetEditor(asset: AudioAsset) {
   assetForm.tags = [...asset.tags];
   assetForm.folderId = asset.folderId;
   assetForm.visibility = asset.visibility;
+  assetForm.scope = asset.scope;
+  assetForm.worldId = asset.worldId ?? null;
   assetDrawerVisible.value = true;
 }
 
 async function handleSaveAsset() {
   await assetFormRef.value?.validate();
   try {
-    await audio.updateAssetMeta(assetForm.id, {
+    const payload: AudioAssetMutationPayload = {
       name: assetForm.name.trim(),
       description: assetForm.description,
       tags: [...assetForm.tags],
       folderId: assetForm.folderId,
       visibility: assetForm.visibility,
-    });
+    };
+    if (audio.isSystemAdmin) {
+      if (assetForm.scope === 'world') {
+        if (!assetForm.worldId) {
+          message.warning('世界级素材必须指定归属世界');
+          return;
+        }
+        payload.scope = 'world';
+        payload.worldId = assetForm.worldId;
+      } else {
+        payload.scope = 'common';
+        payload.worldId = null;
+      }
+    }
+    await audio.updateAssetMeta(assetForm.id, payload);
     message.success('素材信息已保存');
     assetDrawerVisible.value = false;
   } catch (err) {
@@ -1125,6 +1191,19 @@ watch(
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => assetForm.scope,
+  (scope) => {
+    if (scope === 'common') {
+      assetForm.worldId = null;
+      return;
+    }
+    if (!assetForm.worldId) {
+      assetForm.worldId = audio.currentWorldId ?? audio.filters.worldId ?? null;
+    }
+  }
 );
 
 watch(

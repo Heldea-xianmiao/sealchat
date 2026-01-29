@@ -829,6 +829,28 @@ func AudioUpdateFolder(id string, payload AudioFolderPayload) (*model.AudioFolde
 	if err != nil {
 		return nil, err
 	}
+	targetScope := folder.Scope
+	targetWorldID := cloneStringPtr(folder.WorldID)
+	if payload.Scope != "" {
+		if payload.Scope != model.AudioScopeCommon && payload.Scope != model.AudioScopeWorld {
+			return nil, errors.New("文件夹级别无效")
+		}
+		targetScope = payload.Scope
+	}
+	if payload.WorldID != nil {
+		trimmed := strings.TrimSpace(*payload.WorldID)
+		if trimmed == "" {
+			targetWorldID = nil
+		} else {
+			targetWorldID = &trimmed
+		}
+	}
+	if targetScope == model.AudioScopeCommon {
+		targetWorldID = nil
+	}
+	if targetScope == model.AudioScopeWorld && normalizeOptionalString(targetWorldID) == "" {
+		return nil, errors.New("世界级文件夹必须指定 worldId")
+	}
 	var parentPath string
 	if payload.ParentID != nil && *payload.ParentID != "" {
 		if *payload.ParentID == id {
@@ -838,11 +860,11 @@ func AudioUpdateFolder(id string, payload AudioFolderPayload) (*model.AudioFolde
 		if err != nil {
 			return nil, err
 		}
-		if parent.Scope != folder.Scope {
+		if parent.Scope != targetScope {
 			return nil, errors.New("父级文件夹与子文件夹级别不一致")
 		}
 		parentWorldID := normalizeOptionalString(parent.WorldID)
-		folderWorldID := normalizeOptionalString(folder.WorldID)
+		folderWorldID := normalizeOptionalString(targetWorldID)
 		if parentWorldID != folderWorldID {
 			return nil, errors.New("父级文件夹与子文件夹世界不一致")
 		}
@@ -865,18 +887,53 @@ func AudioUpdateFolder(id string, payload AudioFolderPayload) (*model.AudioFolde
 		updates["parent_id"] = cloneStringPtr(payload.ParentID)
 	}
 	if newPath != folder.Path {
-		if err := updateFolderPath(folder.Path, newPath); err != nil {
-			return nil, err
-		}
 		updates["path"] = newPath
 	}
-	if err := model.GetDB().Model(folder).Updates(updates).Error; err != nil {
+	scopeChanged := folder.Scope != targetScope
+	worldChanged := normalizeOptionalString(folder.WorldID) != normalizeOptionalString(targetWorldID)
+	if payload.Scope != "" || payload.WorldID != nil {
+		updates["scope"] = targetScope
+		updates["world_id"] = targetWorldID
+	}
+	err = model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if newPath != folder.Path {
+			if err := updateFolderPathWithTx(tx, folder.Path, newPath); err != nil {
+				return err
+			}
+		}
+		if scopeChanged || worldChanged {
+			pathForScope := newPath
+			if pathForScope == "" {
+				pathForScope = folder.Path
+			}
+			if err := tx.Model(&model.AudioFolder{}).
+				Where("path = ? OR path LIKE ?", pathForScope, pathForScope+"/%").
+				Updates(map[string]interface{}{"scope": targetScope, "world_id": targetWorldID}).Error; err != nil {
+				return err
+			}
+			sub := tx.Model(&model.AudioFolder{}).
+				Select("id").
+				Where("path = ? OR path LIKE ?", pathForScope, pathForScope+"/%")
+			if err := tx.Model(&model.AudioAsset{}).
+				Where("folder_id IN (?)", sub).
+				Updates(map[string]interface{}{"scope": targetScope, "world_id": targetWorldID}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(folder).Updates(updates).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	folder.Name = name
 	folder.ParentID = cloneStringPtr(payload.ParentID)
 	folder.Path = newPath
 	folder.UpdatedBy = payload.ActorID
+	folder.Scope = targetScope
+	folder.WorldID = cloneStringPtr(targetWorldID)
 	return folder, nil
 }
 
@@ -1049,15 +1106,22 @@ func updateFolderPath(oldPath, newPath string) error {
 		return nil
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.AudioFolder{}).
-			Where("path = ?", oldPath).
-			Update("path", newPath).Error; err != nil {
-			return err
-		}
-		return tx.Model(&model.AudioFolder{}).
-			Where("path LIKE ?", oldPath+"/%").
-			Update("path", gorm.Expr("REPLACE(path, ?, ?)", oldPath+"/", newPath+"/")).Error
+		return updateFolderPathWithTx(tx, oldPath, newPath)
 	})
+}
+
+func updateFolderPathWithTx(tx *gorm.DB, oldPath, newPath string) error {
+	if oldPath == newPath {
+		return nil
+	}
+	if err := tx.Model(&model.AudioFolder{}).
+		Where("path = ?", oldPath).
+		Update("path", newPath).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.AudioFolder{}).
+		Where("path LIKE ?", oldPath+"/%").
+		Update("path", gorm.Expr("REPLACE(path, ?, ?)", oldPath+"/", newPath+"/")).Error
 }
 
 func audioAssetIDsInScenes() ([]string, error) {
