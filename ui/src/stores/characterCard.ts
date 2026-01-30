@@ -357,12 +357,14 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   // Load character card list from SealDice via WebSocket
-  const loadCardList = async () => {
+  const loadCardList = async (channelId?: string) => {
     const userId = getUserId();
     if (!userId) {
       console.warn('[CharacterCard] loadCardList skipped: no userId');
       return;
     }
+
+    const resolvedChannelId = channelId || chatStore.curChannel?.id || '';
 
     // Ensure WebSocket is connected before sending API request
     await chatStore.ensureConnectionReady();
@@ -370,9 +372,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     loading.value = true;
     try {
       console.log('[CharacterCard] Sending character.list request for user:', userId);
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[] } }>('character.list', {
-        user_id: userId,
-      });
+      const payload: Record<string, string> = { user_id: userId };
+      if (resolvedChannelId) {
+        payload.group_id = resolvedChannelId;
+      }
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[] } }>('character.list', payload);
       console.log('[CharacterCard] character.list response:', resp);
       if (resp?.data?.ok && Array.isArray(resp.data.list)) {
         cardList.value = resp.data.list.map(toUICard);
@@ -386,7 +390,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   // Backwards compatible loadCards (accepts optional channelId)
   const loadCards = async (channelId?: string) => {
-    await loadCardList();
+    await loadCardList(channelId);
     loadIdentityBindings();
     if (channelId) {
       await getActiveCard(channelId);
@@ -436,7 +440,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         sheet_type: sheetType,
       });
       if (resp?.data?.ok) {
-        await loadCardList();
+        await loadCardList(channelId);
         return {
           id: resp.data.id,
           name: resp.data.name,
@@ -464,7 +468,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
         sheet_type: sheetType,
       });
       if (resp?.data?.ok) {
-        await loadCardList();
+        await loadCardList(channelId);
         return resp.data;
       }
     } catch (e) {
@@ -508,7 +512,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       });
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
-        await loadCardList();
+        await loadCardList(channelId);
         return true;
       }
     } catch (e) {
@@ -552,9 +556,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
     try {
       const payload: Record<string, string> = { user_id: userId };
+      const resolvedChannelId = channelId || chatStore.curChannel?.id || '';
       if (cardName) payload.name = cardName;
       if (cardId) payload.id = cardId;
-      if (channelId) payload.group_id = channelId;
+      if (resolvedChannelId) payload.group_id = resolvedChannelId;
 
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; unbound_count?: number } }>('character.untagAll', payload);
       if (resp?.data?.ok) {
@@ -601,6 +606,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
     try {
       const payload: Record<string, string> = { user_id: userId };
+      const resolvedChannelId = chatStore.curChannel?.id || '';
+      if (resolvedChannelId) {
+        payload.group_id = resolvedChannelId;
+      }
 
       // If second param is provided, first is name, second is id
       // If only first param, treat it as cardId
@@ -622,7 +631,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string; binding_groups?: string[] } }>('character.delete', payload);
       if (resp?.data?.ok) {
-        await loadCardList();
+        await loadCardList(resolvedChannelId);
         return resp.data;
       } else if (resp?.data?.error) {
         throw new Error(resp.data.error);
