@@ -731,6 +731,7 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		Position:     req.Position,
 		LoopEnabled:  req.LoopEnabled,
 		PlaybackRate: req.PlaybackRate,
+		WorldPlaybackEnabled: req.WorldPlaybackEnabled,
 		ActorID:      user.ID,
 	})
 	if err != nil {
@@ -864,6 +865,7 @@ type audioPlaybackStateRequest struct {
 	Position     float64                   `json:"position"`
 	LoopEnabled  bool                      `json:"loopEnabled"`
 	PlaybackRate float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
 }
 
 func ensureChannelMembership(userID, channelID string) error {
@@ -890,6 +892,7 @@ func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
 		"position":     state.Position,
 		"loopEnabled":  state.LoopEnabled,
 		"playbackRate": state.PlaybackRate,
+		"worldPlaybackEnabled": state.WorldPlaybackEnabled,
 		"updatedBy":    state.UpdatedBy,
 		"updatedAt":    state.UpdatedAt,
 	}
@@ -910,6 +913,7 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		Position:     state.Position,
 		LoopEnabled:  state.LoopEnabled,
 		PlaybackRate: state.PlaybackRate,
+		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
 		UpdatedBy:    state.UpdatedBy,
 		UpdatedAt:    state.UpdatedAt.Unix(),
 	}
@@ -930,6 +934,12 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		User:            operator,
 		ChannelUsersMap: channelUsersMapGlobal,
 		UserId2ConnInfo: userId2ConnInfoGlobal,
+	}
+	if state.WorldPlaybackEnabled {
+		if ch, err := model.ChannelGet(state.ChannelID); err == nil && ch != nil && ch.WorldID != "" {
+			broadcastEventToWorld(ch.WorldID, event)
+			return
+		}
 	}
 	ctx.BroadcastEventInChannel(state.ChannelID, event)
 }

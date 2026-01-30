@@ -84,6 +84,7 @@ interface AudioStudioState {
   loopEnabled: boolean;
   playbackRate: number;
   masterVolume: number;
+  worldPlaybackEnabled: boolean;
   error: string | null;
   currentChannelId: string | null;
   currentWorldId: string | null;
@@ -324,6 +325,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     loopEnabled: false,
     playbackRate: 1,
     masterVolume: 1,
+    worldPlaybackEnabled: false,
     error: null,
     currentChannelId: null,
     currentWorldId: null,
@@ -435,7 +437,26 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.remoteState = null;
         return;
       }
+      if (this.worldPlaybackEnabled) {
+        return;
+      }
       this.fetchPlaybackState(channelId);
+    },
+
+    setWorldPlaybackEnabled(enabled: boolean) {
+      if (this.worldPlaybackEnabled === enabled) {
+        return;
+      }
+      this.worldPlaybackEnabled = enabled;
+      if (enabled) {
+        if (this.canManage) {
+          this.queuePlaybackSync();
+        }
+        return;
+      }
+      if (this.currentChannelId) {
+        void this.fetchPlaybackState(this.currentChannelId);
+      }
     },
 
     ensureInteractionListener() {
@@ -461,10 +482,14 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     },
 
     async applyRemotePlayback(payload: AudioPlaybackStatePayload | null) {
-      if (!this.currentChannelId) {
+      if (payload && typeof payload.worldPlaybackEnabled === 'boolean') {
+        this.worldPlaybackEnabled = payload.worldPlaybackEnabled;
+      }
+      const allowWorld = !!payload?.worldPlaybackEnabled;
+      if (!this.currentChannelId && !allowWorld) {
         return;
       }
-      if (payload && payload.channelId !== this.currentChannelId) {
+      if (payload && !allowWorld && payload.channelId !== this.currentChannelId) {
         return;
       }
       const user = useUserStore();
@@ -755,6 +780,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         position: this.estimatePlaybackPosition(),
         loopEnabled: this.loopEnabled,
         playbackRate: this.playbackRate,
+        worldPlaybackEnabled: this.worldPlaybackEnabled,
       };
     },
 

@@ -129,6 +129,7 @@ type AudioPlaybackUpdateInput struct {
 	Position     float64
 	LoopEnabled  bool
 	PlaybackRate float64
+	WorldPlaybackEnabled bool
 	ActorID      string
 }
 
@@ -594,6 +595,7 @@ func AudioUpsertPlaybackState(input AudioPlaybackUpdateInput) (*model.AudioPlayb
 	state.Position = input.Position
 	state.LoopEnabled = input.LoopEnabled
 	state.PlaybackRate = input.PlaybackRate
+	state.WorldPlaybackEnabled = input.WorldPlaybackEnabled
 	state.UpdatedBy = input.ActorID
 	state.UpdatedAt = time.Now()
 	if err := db.Save(&state).Error; err != nil {
