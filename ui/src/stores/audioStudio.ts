@@ -448,14 +448,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
       this.worldPlaybackEnabled = enabled;
-      if (enabled) {
-        if (this.canManage) {
-          this.queuePlaybackSync();
-        }
-        return;
-      }
-      if (this.currentChannelId) {
-        void this.fetchPlaybackState(this.currentChannelId);
+      if (this.canManage) {
+        this.queuePlaybackSync();
       }
     },
 

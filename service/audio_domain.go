@@ -548,13 +548,34 @@ func AudioGetPlaybackState(channelID string) (*model.AudioPlaybackState, error) 
 	if strings.TrimSpace(channelID) == "" {
 		return nil, errors.New("channelId 必填")
 	}
+	db := model.GetDB()
 	var state model.AudioPlaybackState
-	err := model.GetDB().Where("channel_id = ?", channelID).First(&state).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+	err := db.Where("channel_id = ?", channelID).
+		Order("updated_at desc").
+		Limit(1).
+		First(&state).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	// 查找频道所属世界，世界模式下优先返回最新的世界状态
+	ch, chErr := model.ChannelGet(channelID)
+	if chErr == nil && ch != nil && ch.WorldID != "" {
+		var worldState model.AudioPlaybackState
+		worldErr := db.Table("audio_playback_states AS aps").
+			Joins("JOIN channels c ON c.id = aps.channel_id").
+			Where("c.world_id = ?", ch.WorldID).
+			Order("aps.updated_at desc").
+			Limit(1).
+			First(&worldState).Error
+		if worldErr != nil && !errors.Is(worldErr, gorm.ErrRecordNotFound) {
+			return nil, worldErr
+		}
+		if worldErr == nil && worldState.WorldPlaybackEnabled {
+			return &worldState, nil
+		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 	return &state, nil
 }
