@@ -2581,7 +2581,20 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
       return;
     }
 
-    await chat.loadChannelIdentities(targetChannelId, true);
+    const targetIdentities = await chat.loadChannelIdentities(targetChannelId, true);
+    const targetList = Array.isArray(targetIdentities) ? targetIdentities : [];
+    const normalizeIdentityName = (name: string) => name.trim().toLowerCase();
+    const targetIdentityByName = new Map<string, (typeof targetList)[number]>();
+    const duplicateTargetNames = new Set<string>();
+    for (const identity of targetList) {
+      const key = normalizeIdentityName(identity.displayName || '');
+      if (!key) continue;
+      if (targetIdentityByName.has(key)) {
+        duplicateTargetNames.add(key);
+        continue;
+      }
+      targetIdentityByName.set(key, identity);
+    }
 
     const sourceFolders = chat.channelIdentityFolders[sourceChannelId] || [];
     const sourceFavorites = new Set(chat.channelIdentityFavorites[sourceChannelId] || []);
@@ -2609,9 +2622,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     }
 
     let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
     let failedCount = 0;
     let emptyNameCount = 0;
-    const identityIdMap = new Map<string, string>();
+    const processedIdentityByName = new Map<string, string>();
 
     for (const identity of sourceList) {
       const displayName = (identity.displayName || '').trim();
@@ -2619,6 +2634,8 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         emptyNameCount += 1;
         continue;
       }
+      const nameKey = normalizeIdentityName(displayName);
+      const matchedIdentity = nameKey ? targetIdentityByName.get(nameKey) : undefined;
       const avatarPayload = identity.avatarAttachmentId
         ? {
             attachmentId: normalizeAttachmentId(identity.avatarAttachmentId),
@@ -2635,6 +2652,25 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
         .filter((id): id is string => !!id);
       try {
         const avatarId = await ensureImportAttachment(avatarPayload);
+        if (matchedIdentity) {
+          if (mode === 'append') {
+            skippedCount += 1;
+            continue;
+          }
+          const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
+            channelId: targetChannelId,
+            displayName,
+            color: identity.color || '',
+            avatarAttachmentId: avatarId,
+            isDefault: !!identity.isDefault,
+            folderIds: mappedFolderIds,
+          });
+          if (nameKey) {
+            processedIdentityByName.set(nameKey, updated.id);
+          }
+          updatedCount += 1;
+          continue;
+        }
         const created = await chat.channelIdentityCreate({
           channelId: targetChannelId,
           displayName,
@@ -2643,7 +2679,12 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
           isDefault: !!identity.isDefault,
           folderIds: mappedFolderIds,
         });
-        identityIdMap.set(identity.id, created.id);
+        if (nameKey && !targetIdentityByName.has(nameKey)) {
+          targetIdentityByName.set(nameKey, created);
+        }
+        if (nameKey) {
+          processedIdentityByName.set(nameKey, created.id);
+        }
         createdCount += 1;
       } catch (error) {
         failedCount += 1;
@@ -2653,7 +2694,11 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
 
     const resolveMappedIdentityId = (sourceId?: string | null) => {
       if (!sourceId) return null;
-      return identityIdMap.get(sourceId) || null;
+      const sourceIdentity = sourceList.find(item => item.id === sourceId);
+      if (!sourceIdentity) return null;
+      const nameKey = normalizeIdentityName(sourceIdentity.displayName || '');
+      if (!nameKey) return null;
+      return processedIdentityByName.get(nameKey) || targetIdentityByName.get(nameKey)?.id || null;
     };
 
     const sourceConfig = chat.getChannelIcOocRoleConfig(sourceChannelId);
@@ -2686,18 +2731,25 @@ const handleIdentitySync = async (mode: 'overwrite' | 'append') => {
     await chat.loadChannelIdentities(targetChannelId, true);
     identitySyncDialogVisible.value = false;
 
-    const syncedCount = createdCount;
-    if (syncedCount === 0 && !mappingChanged) {
+    const syncedCount = createdCount + updatedCount;
+    const hasAnyWork = syncedCount > 0 || skippedCount > 0 || mappingChanged;
+    if (!hasAnyWork) {
       message.warning('没有可同步的角色或映射');
       return;
     }
     const details: string[] = [];
     if (createdCount) details.push(`新增 ${createdCount}`);
+    if (updatedCount) details.push(`覆盖 ${updatedCount}`);
+    if (skippedCount) details.push(`跳过 ${skippedCount}`);
     if (failedCount) details.push(`失败 ${failedCount}`);
     if (emptyNameCount) details.push(`忽略 ${emptyNameCount} 个无名角色`);
     const mappingNote = mappingChanged ? '，已同步场内/场外映射' : '';
     const detailNote = details.length ? `（${details.join('，')}）` : '';
-    message.success(`已同步 ${syncedCount} 个角色${detailNote}${mappingNote}`);
+    const summaryText = syncedCount > 0 ? `已同步 ${syncedCount} 个角色` : '没有新增角色';
+    message.success(`${summaryText}${detailNote}${mappingNote}`);
+    if (duplicateTargetNames.size > 0) {
+      message.warning(`目标频道存在 ${duplicateTargetNames.size} 个重名角色，同步时按第一个匹配处理`);
+    }
   } catch (error) {
     console.error('同步频道角色失败', error);
     message.error('同步失败，请稍后重试');
