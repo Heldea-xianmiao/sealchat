@@ -6777,6 +6777,24 @@ const getInputSelection = (): SelectionRange => {
   return { start: length, end: length };
 };
 
+const isInputEffectivelyEmpty = () => {
+  if (inlineImages.size > 0) {
+    return false;
+  }
+  const raw = textToSend.value;
+  if (!raw) {
+    return true;
+  }
+  if (inputMode.value === 'rich') {
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      return editorInstance.isEmpty;
+    }
+    return isRichContentEmpty(raw);
+  }
+  return raw.trim().length === 0;
+};
+
 const setInputSelection = (start: number, end: number) => {
   if (textInputRef.value?.setSelectionRange) {
     textInputRef.value.setSelectionRange(start, end);
@@ -9263,6 +9281,16 @@ const keyDown = function (e: KeyboardEvent) {
     }
   }
 
+  if (!e.isComposing && e.key === 'Backspace' && chat.curReplyTo) {
+    const selection = getInputSelection();
+    const atStart = selection.start <= 1 && selection.end <= 1;
+    if (atStart && isInputEffectivelyEmpty()) {
+      chat.curReplyTo = null;
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (e.key === 'Escape' && isEditing.value) {
     cancelEditing();
     e.preventDefault();
@@ -10264,9 +10292,15 @@ onBeforeUnmount(() => {
         </n-button>
       </div>
 
-      <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; right: 1rem" v-if="chat.curReplyTo">
-        正在回复: {{ chat.curReplyTo.member?.nick }}
-        <n-button @click="chat.curReplyTo = null">取消</n-button>
+      <div class="reply-banner absolute rounded px-4 py-2" style="top: -4rem; left: 1rem" v-if="chat.curReplyTo">
+        <div class="reply-banner__main">
+          <span class="reply-banner__badge">回复中</span>
+          <span class="reply-banner__target">{{ chat.curReplyTo.member?.nick }}</span>
+        </div>
+        <div class="reply-banner__actions">
+          <span class="reply-banner__hint">Backspace</span>
+          <n-button size="small" quaternary @click="chat.curReplyTo = null">取消</n-button>
+        </div>
       </div>
 
       <div class="chat-input-wrapper flex flex-col w-full relative">
@@ -12871,9 +12905,46 @@ onBeforeUnmount(() => {
 }
 
 .reply-banner {
-  background-color: var(--sc-chip-bg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background-color: var(--sc-bg-layer-strong, rgba(248, 250, 252, 0.85));
   color: var(--sc-text-primary);
   border: 1px solid var(--sc-border-mute);
+  border-left: 3px solid var(--sc-primary, #3b82f6);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.reply-banner__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-banner__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sc-primary-color, #2563eb);
+  background-color: rgba(var(--sc-primary-rgb, 37, 99, 235), 0.15);
+  border: 1px solid rgba(var(--sc-primary-rgb, 37, 99, 235), 0.35);
+}
+
+.reply-banner__target {
+  font-weight: 600;
+}
+
+.reply-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-banner__hint {
+  font-size: 12px;
+  color: var(--sc-text-secondary, #6b7280);
 }
 
 .scroll-bottom-button {
