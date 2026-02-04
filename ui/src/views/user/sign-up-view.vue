@@ -7,6 +7,7 @@ import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useLoginGlass } from '@/composables/useLoginGlass';
 
 declare global {
   interface Window {
@@ -163,6 +164,13 @@ const loginOverlayStyle = computed(() => {
     backgroundColor: cfg.overlayColor,
     opacity: cfg.overlayOpacity / 100,
   };
+});
+
+const { glassStyle: loginGlassStyle } = useLoginGlass({
+  imageUrl: loginBgUrl,
+  config: loginBgConfig,
+  enabled: hasLoginBg,
+  radius: '8px',
 });
 
 const captchaImageUrl = computed(() => {
@@ -450,7 +458,8 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card sc-form-scroll"
-      :class="{ 'has-bg': hasLoginBg }"
+      :class="{ 'sc-glass-panel': hasLoginBg }"
+      :style="hasLoginBg ? loginGlassStyle : undefined"
       v-if="config?.registerOpen">
       <div class="px-6 py-4">
         <div class="flex justify-center mx-auto">
@@ -468,7 +477,7 @@ onBeforeUnmount(() => {
           <div class="w-full mt-4">
             <div class="relative">
               <input v-model="form.username"
-                class="block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                class="sc-glass-input block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                 type="username" placeholder="用户名，用于登录和识别，可被其他人看到" aria-label="用户名" />
               <button @click.prevent="randomUsername"
                 class="absolute right-0 h-full top-0 px-1 mr-1 text-sm font-medium text-blue-500 capitalize" tabindex="-1">随机
@@ -479,13 +488,13 @@ onBeforeUnmount(() => {
 
           <div class="w-full mt-4">
             <input v-model="form.nickname"
-              class="block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+              class="sc-glass-input block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
               type="text" placeholder="昵称" aria-label="昵称" />
           </div>
 
           <div class="w-full mt-4">
             <input v-model="form.password"
-              class="block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+              class="sc-glass-input block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
               type="password" placeholder="密码" aria-label="密码" />
           </div>
 
@@ -494,7 +503,7 @@ onBeforeUnmount(() => {
             <div class="w-full mt-4">
               <label class="block text-xs text-gray-500 dark:text-gray-300">邮箱地址</label>
               <input v-model="form.email"
-                class="block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                class="sc-glass-input block w-full px-4 py-2 mt-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                 type="email" placeholder="邮箱地址" aria-label="邮箱地址" />
               <p v-if="emailError" class="mt-1 text-xs text-red-500 dark:text-red-400">{{ emailError }}</p>
             </div>
@@ -504,7 +513,7 @@ onBeforeUnmount(() => {
               <label class="block text-xs text-gray-500 dark:text-gray-300">图形验证码</label>
               <div class="flex flex-col gap-2 mt-2">
                 <input v-model="captchaInput"
-                  class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                  class="sc-glass-input block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                   type="text" placeholder="请输入图形验证码" aria-label="图形验证码"
                 />
                 <div class="flex items-center gap-3">
@@ -540,7 +549,7 @@ onBeforeUnmount(() => {
               <label class="block text-xs text-gray-500 dark:text-gray-300">邮箱验证码</label>
               <div class="flex items-center gap-3 mt-2">
                 <input v-model="form.emailCode"
-                  class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                  class="sc-glass-input block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                   type="text" placeholder="请输入邮箱验证码" maxlength="6" aria-label="邮箱验证码"
                 />
                 <button type="button" @click.prevent="sendEmailCode"
@@ -558,7 +567,7 @@ onBeforeUnmount(() => {
             <label class="block text-xs text-gray-500 dark:text-gray-300">验证码</label>
             <div class="flex flex-col gap-2 mt-2">
               <input v-model="captchaInput"
-                class="block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
+                class="sc-glass-input block w-full px-4 py-2 text-gray-700 placeholder-gray-500 bg-white border rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:placeholder-gray-400 focus:border-blue-400 dark:focus:border-blue-300 focus:ring-opacity-40 focus:outline-none focus:ring focus:ring-blue-300"
                 type="text" placeholder="请输入验证码" aria-label="验证码"
               />
               <div class="flex items-center gap-3">
@@ -616,7 +625,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
-      :class="{ 'has-bg': hasLoginBg }" v-else>
+      :class="{ 'sc-glass-panel': hasLoginBg }"
+      :style="hasLoginBg ? loginGlassStyle : undefined" v-else>
       <div class="p-6">你来晚了，门已经悄然关闭。</div>
     </div>
   </div>
@@ -660,14 +670,8 @@ onBeforeUnmount(() => {
   background: #1f2937;
 }
 
-.sign-up-card.has-bg {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
-}
-
-:global(.dark) .sign-up-card.has-bg {
-  background: rgba(31, 41, 55, 0.85);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+.sign-up-card.sc-glass-panel {
+  background: var(--sc-glass-bg);
+  box-shadow: var(--sc-glass-shadow);
 }
 </style>

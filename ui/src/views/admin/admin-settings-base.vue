@@ -13,6 +13,7 @@ import dayjs from 'dayjs';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useImageCompressor } from '@/composables/useImageCompressor';
+import { useLoginGlass } from '@/composables/useLoginGlass';
 
 const chat = useChatStore();
 
@@ -637,6 +638,86 @@ const loginBgOverlayOpacity = computed({
   },
 });
 
+const loginPanelAutoTint = computed({
+  get: () => model.value.loginBackground?.panelAutoTint ?? true,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelAutoTint = val;
+  },
+});
+
+const loginPanelTintColor = computed({
+  get: () => model.value.loginBackground?.panelTintColor || '',
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelTintColor = val;
+  },
+});
+
+const loginPanelTintOpacity = computed({
+  get: () => model.value.loginBackground?.panelTintOpacity ?? 72,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelTintOpacity = val;
+  },
+});
+
+const loginPanelBlur = computed({
+  get: () => model.value.loginBackground?.panelBlur ?? 14,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelBlur = val;
+  },
+});
+
+const loginPanelSaturate = computed({
+  get: () => model.value.loginBackground?.panelSaturate ?? 120,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelSaturate = val;
+  },
+});
+
+const loginPanelContrast = computed({
+  get: () => model.value.loginBackground?.panelContrast ?? 105,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelContrast = val;
+  },
+});
+
+const loginPanelBorderOpacity = computed({
+  get: () => model.value.loginBackground?.panelBorderOpacity ?? 18,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelBorderOpacity = val;
+  },
+});
+
+const loginPanelShadowStrength = computed({
+  get: () => model.value.loginBackground?.panelShadowStrength ?? 22,
+  set: (val) => {
+    if (!model.value.loginBackground) {
+      model.value.loginBackground = {};
+    }
+    model.value.loginBackground.panelShadowStrength = val;
+  },
+});
+
 const loginBgUrl = computed(() => {
   const id = loginBgAttachmentId.value;
   if (!id) return '';
@@ -686,6 +767,18 @@ const loginBgOverlayStyle = computed(() => {
     opacity: loginBgOverlayOpacity.value / 100,
   };
 });
+
+const { glassStyle: loginGlassStyle } = useLoginGlass({
+  imageUrl: loginBgUrl,
+  config: computed(() => model.value.loginBackground),
+  enabled: computed(() => !!loginBgUrl.value),
+  radius: '8px',
+});
+
+const loginGlassPreviewStyle = computed(() => ({
+  ...loginGlassStyle.value,
+  '--sc-glass-radius': '8px',
+}));
 
 const triggerLoginBgUpload = () => {
   loginBgFileInput.value?.click();
@@ -857,11 +950,55 @@ const clearLoginBg = () => {
             <span class="login-bg-value">{{ loginBgOverlayOpacity }}%</span>
           </div>
         </n-form-item>
+        <n-divider>玻璃卡片</n-divider>
+        <n-form-item label="自动色调">
+          <n-switch v-model:value="loginPanelAutoTint" />
+        </n-form-item>
+        <n-form-item label="玻璃色">
+          <n-color-picker v-model:value="loginPanelTintColor" :show-alpha="false" style="width: 100px;" />
+          <n-button v-if="loginPanelTintColor" size="tiny" quaternary class="ml-2" @click="loginPanelTintColor = ''">清除</n-button>
+        </n-form-item>
+        <n-form-item label="玻璃透明度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelTintOpacity" :min="30" :max="95" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelTintOpacity }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="玻璃模糊">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelBlur" :min="0" :max="30" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelBlur }}px</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="饱和度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelSaturate" :min="80" :max="180" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelSaturate }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="对比度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelContrast" :min="90" :max="140" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelContrast }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="边框强度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelBorderOpacity" :min="0" :max="60" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelBorderOpacity }}%</span>
+          </div>
+        </n-form-item>
+        <n-form-item label="阴影强度">
+          <div class="flex items-center">
+            <n-slider v-model:value="loginPanelShadowStrength" :min="0" :max="60" :step="1" style="width: 200px;" />
+            <span class="login-bg-value">{{ loginPanelShadowStrength }}%</span>
+          </div>
+        </n-form-item>
         <n-form-item label="预览">
           <div class="login-bg-preview">
             <div class="login-bg-preview-layer" :style="loginBgPreviewStyle"></div>
             <div v-if="loginBgOverlayStyle" class="login-bg-preview-overlay" :style="loginBgOverlayStyle"></div>
-            <div class="login-bg-preview-form">
+            <div class="login-bg-preview-card sc-glass-panel" :style="loginGlassPreviewStyle">
               <div class="login-bg-preview-input"></div>
               <div class="login-bg-preview-input"></div>
               <div class="login-bg-preview-btn"></div>
@@ -1143,34 +1280,32 @@ const clearLoginBg = () => {
   z-index: 1;
 }
 
-.login-bg-preview-form {
+.login-bg-preview-card {
   position: absolute;
-  inset: 0;
+  inset: 18px 24px;
   z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 16px;
+  padding: 12px;
 }
 
 .login-bg-preview-input {
   width: 100%;
-  height: 24px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(8px);
+  height: 18px;
+  background: rgba(255, 255, 255, 0.65);
   border-radius: 4px;
 }
 .dark .login-bg-preview-input {
-  background: rgba(31, 41, 55, 0.85);
+  background: rgba(15, 23, 42, 0.6);
 }
 
 .login-bg-preview-btn {
   width: 60%;
-  height: 24px;
+  height: 20px;
   background: rgba(59, 130, 246, 0.9);
-  backdrop-filter: blur(8px);
   border-radius: 4px;
   margin-top: 4px;
 }

@@ -96,6 +96,24 @@ export interface CaptchaConfig {
   turnstile?: TurnstileConfig;
 }
 
+export interface LoginBackgroundConfig {
+  attachmentId?: string;
+  mode?: 'cover' | 'contain' | 'tile' | 'center';
+  opacity?: number;
+  blur?: number;
+  brightness?: number;
+  overlayColor?: string;
+  overlayOpacity?: number;
+  panelAutoTint?: boolean;
+  panelTintColor?: string;
+  panelTintOpacity?: number;
+  panelBlur?: number;
+  panelSaturate?: number;
+  panelContrast?: number;
+  panelBorderOpacity?: number;
+  panelShadowStrength?: number;
+}
+
 export interface ExportTaskItem {
   task_id: string;
   format: string;
@@ -171,15 +189,7 @@ export interface ServerConfig {
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;
-  loginBackground?: {
-    attachmentId?: string;
-    mode?: 'cover' | 'contain' | 'tile' | 'center';
-    opacity?: number;
-    blur?: number;
-    brightness?: number;
-    overlayColor?: string;
-    overlayOpacity?: number;
-  };
+  loginBackground?: LoginBackgroundConfig;
 }
 
 export interface UserInfo {

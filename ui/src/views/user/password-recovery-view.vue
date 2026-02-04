@@ -7,6 +7,7 @@ import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { useLoginGlass } from '@/composables/useLoginGlass';
 
 declare global {
   interface Window {
@@ -114,6 +115,13 @@ const loginOverlayStyle = computed(() => {
     backgroundColor: cfg.overlayColor,
     opacity: cfg.overlayOpacity / 100,
   };
+});
+
+const { glassStyle: loginGlassStyle } = useLoginGlass({
+  imageUrl: loginBgUrl,
+  config: loginBgConfig,
+  enabled: hasLoginBg,
+  radius: '12px',
 });
 
 const captchaImageUrl = computed(() => {
@@ -440,7 +448,11 @@ onBeforeUnmount(() => {
     <div v-if="hasLoginBg" class="login-bg-layer" :style="loginBgStyle"></div>
     <div v-if="hasLoginBg && loginOverlayStyle" class="login-overlay-layer" :style="loginOverlayStyle"></div>
 
-    <div class="recovery-content sc-form-scroll" :class="{ 'has-bg': hasLoginBg }">
+    <div
+      class="recovery-content sc-form-scroll"
+      :class="{ 'sc-glass-panel': hasLoginBg }"
+      :style="hasLoginBg ? loginGlassStyle : undefined"
+    >
       <h2 class="font-bold text-xl mb-6">找回密码</h2>
 
       <!-- 未启用邮箱认证 -->
@@ -614,15 +626,7 @@ onBeforeUnmount(() => {
   transition: all 0.3s;
 }
 
-.recovery-content.has-bg {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(8px);
+.recovery-content.sc-glass-panel {
   border-radius: 12px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
-}
-
-:global(.dark) .recovery-content.has-bg {
-  background: rgba(31, 41, 55, 0.85);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
 }
 </style>

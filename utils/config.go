@@ -179,13 +179,21 @@ type BackupConfig struct {
 
 // LoginBackgroundConfig 登录页背景配置
 type LoginBackgroundConfig struct {
-	AttachmentId   string `json:"attachmentId" yaml:"attachmentId"`
-	Mode           string `json:"mode" yaml:"mode"`
-	Opacity        int    `json:"opacity" yaml:"opacity"`
-	Blur           int    `json:"blur" yaml:"blur"`
-	Brightness     int    `json:"brightness" yaml:"brightness"`
-	OverlayColor   string `json:"overlayColor" yaml:"overlayColor"`
-	OverlayOpacity int    `json:"overlayOpacity" yaml:"overlayOpacity"`
+	AttachmentId       string `json:"attachmentId" yaml:"attachmentId"`
+	Mode               string `json:"mode" yaml:"mode"`
+	Opacity            int    `json:"opacity" yaml:"opacity"`
+	Blur               int    `json:"blur" yaml:"blur"`
+	Brightness         int    `json:"brightness" yaml:"brightness"`
+	OverlayColor       string `json:"overlayColor" yaml:"overlayColor"`
+	OverlayOpacity     int    `json:"overlayOpacity" yaml:"overlayOpacity"`
+	PanelAutoTint      bool   `json:"panelAutoTint" yaml:"panelAutoTint"`
+	PanelTintColor     string `json:"panelTintColor" yaml:"panelTintColor"`
+	PanelTintOpacity   int    `json:"panelTintOpacity" yaml:"panelTintOpacity"`
+	PanelBlur          int    `json:"panelBlur" yaml:"panelBlur"`
+	PanelSaturate      int    `json:"panelSaturate" yaml:"panelSaturate"`
+	PanelContrast      int    `json:"panelContrast" yaml:"panelContrast"`
+	PanelBorderOpacity int    `json:"panelBorderOpacity" yaml:"panelBorderOpacity"`
+	PanelShadowStrength int   `json:"panelShadowStrength" yaml:"panelShadowStrength"`
 }
 
 type AppConfig struct {
@@ -362,10 +370,17 @@ func ReadConfig() *AppConfig {
 			Path:           defaultBackupPath,
 		},
 		LoginBackground: LoginBackgroundConfig{
-			Mode:       "cover",
-			Opacity:    30,
-			Blur:       0,
-			Brightness: 100,
+			Mode:               "cover",
+			Opacity:            30,
+			Blur:               0,
+			Brightness:         100,
+			PanelAutoTint:      true,
+			PanelTintOpacity:   72,
+			PanelBlur:          14,
+			PanelSaturate:      120,
+			PanelContrast:      105,
+			PanelBorderOpacity: 18,
+			PanelShadowStrength: 22,
 		},
 	}
 
@@ -735,6 +750,14 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("loginBackground.brightness", config.LoginBackground.Brightness)
 		_ = k.Set("loginBackground.overlayColor", config.LoginBackground.OverlayColor)
 		_ = k.Set("loginBackground.overlayOpacity", config.LoginBackground.OverlayOpacity)
+		_ = k.Set("loginBackground.panelAutoTint", config.LoginBackground.PanelAutoTint)
+		_ = k.Set("loginBackground.panelTintColor", config.LoginBackground.PanelTintColor)
+		_ = k.Set("loginBackground.panelTintOpacity", config.LoginBackground.PanelTintOpacity)
+		_ = k.Set("loginBackground.panelBlur", config.LoginBackground.PanelBlur)
+		_ = k.Set("loginBackground.panelSaturate", config.LoginBackground.PanelSaturate)
+		_ = k.Set("loginBackground.panelContrast", config.LoginBackground.PanelContrast)
+		_ = k.Set("loginBackground.panelBorderOpacity", config.LoginBackground.PanelBorderOpacity)
+		_ = k.Set("loginBackground.panelShadowStrength", config.LoginBackground.PanelShadowStrength)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)
