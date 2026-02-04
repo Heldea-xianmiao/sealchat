@@ -231,8 +231,9 @@ watch(
 
 watch(
   () => [props.show, currentWorldId.value] as const,
-  ([visible, worldId], [prevVisible, prevWorldId]) => {
+  ([visible, worldId], prevValue) => {
     if (!visible) return
+    const prevWorldId = prevValue?.[1]
     const worldChanged = worldId && worldId !== prevWorldId
     if (worldChanged) {
       favoriteCandidates.value = []

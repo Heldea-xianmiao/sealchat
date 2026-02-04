@@ -37,6 +37,8 @@ type EmbedStateMessage = {
   canImport?: boolean;
   channelTree?: SplitChannelNode[];
   searchPanelVisible?: boolean;
+  stickyNoteVisible?: boolean;
+  characterCardVisible?: boolean;
   iFormButtonActive?: boolean;
   iFormHasAttention?: boolean;
 };
@@ -74,6 +76,8 @@ interface PaneState {
   canImport: boolean;
   channelTree: SplitChannelNode[];
   searchPanelVisible: boolean;
+  stickyNoteVisible: boolean;
+  characterCardVisible: boolean;
   embedPanelActive: boolean;
   embedPanelHasAttention: boolean;
   notifyOwner: boolean;
@@ -114,7 +118,7 @@ const normalizeFilterState = (filters: FilterState): FilterState => {
   };
 };
 const storagePrefix = 'sealchat.split.pane';
-const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url') => `${storagePrefix}.${paneId}.${key}`;
+const paneStorageKey = (paneId: PaneId, key: 'mode' | 'url' | 'stickyNoteVisible' | 'characterCardVisible') => `${storagePrefix}.${paneId}.${key}`;
 const normalizeUrl = (value: string) => value.trim();
 const isHttpUrl = (value: string) => {
   try {
@@ -142,11 +146,21 @@ const loadPaneStorage = (pane: PaneState) => {
   if (typeof url === 'string') {
     pane.webUrl = url;
   }
+  const stickyVisible = window.localStorage.getItem(paneStorageKey(pane.id, 'stickyNoteVisible'));
+  if (stickyVisible === 'true' || stickyVisible === 'false') {
+    pane.stickyNoteVisible = stickyVisible === 'true';
+  }
+  const cardVisible = window.localStorage.getItem(paneStorageKey(pane.id, 'characterCardVisible'));
+  if (cardVisible === 'true' || cardVisible === 'false') {
+    pane.characterCardVisible = cardVisible === 'true';
+  }
 };
 const persistPaneStorage = (pane: PaneState) => {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(paneStorageKey(pane.id, 'mode'), pane.mode);
   window.localStorage.setItem(paneStorageKey(pane.id, 'url'), pane.webUrl);
+  window.localStorage.setItem(paneStorageKey(pane.id, 'stickyNoteVisible'), String(!!pane.stickyNoteVisible));
+  window.localStorage.setItem(paneStorageKey(pane.id, 'characterCardVisible'), String(!!pane.characterCardVisible));
 };
 
 const splitContainerRef = ref<HTMLElement | null>(null);
@@ -174,6 +188,8 @@ const paneA = reactive<PaneState>({
   canImport: false,
   channelTree: [],
   searchPanelVisible: false,
+  stickyNoteVisible: false,
+  characterCardVisible: false,
   embedPanelActive: false,
   embedPanelHasAttention: false,
   notifyOwner: false,
@@ -200,6 +216,8 @@ const paneB = reactive<PaneState>({
   canImport: false,
   channelTree: [],
   searchPanelVisible: false,
+  stickyNoteVisible: false,
+  characterCardVisible: false,
   embedPanelActive: false,
   embedPanelHasAttention: false,
   notifyOwner: false,
@@ -228,6 +246,8 @@ const activePaneConnectState = computed<ConnectState>(() => (activePane.value.mo
 const activePaneOnlineMembersCount = computed(() => (activePane.value.mode === 'chat' ? activePane.value.onlineMembersCount : 0));
 const activePaneAudioStudioActive = computed(() => activePane.value.mode === 'chat' && activePane.value.audioStudioDrawerVisible);
 const activePaneSearchActive = computed(() => activePane.value.mode === 'chat' && activePane.value.searchPanelVisible);
+const activePaneStickyNoteActive = computed(() => activePane.value.mode === 'chat' && activePane.value.stickyNoteVisible);
+const activePaneCharacterCardActive = computed(() => activePane.value.mode === 'chat' && activePane.value.characterCardVisible);
 const activePaneEmbedPanelActive = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelActive);
 const activePaneEmbedPanelHasAttention = computed(() => activePane.value.mode === 'chat' && activePane.value.embedPanelHasAttention);
 
@@ -328,6 +348,7 @@ const handleEmbedMessage = (event: MessageEvent) => {
     const target = msg.paneId === 'A' ? paneA : msg.paneId === 'B' ? paneB : null;
     if (!target) return;
     if (target.mode !== 'chat') return;
+    const isReadyMessage = type === 'sealchat.embed.ready';
     target.ready = true;
     if (typeof msg.worldId === 'string') target.worldId = msg.worldId;
     if (typeof msg.worldName === 'string') target.worldName = msg.worldName;
@@ -343,11 +364,19 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (typeof msg.canImport === 'boolean') target.canImport = msg.canImport;
     if (Array.isArray(msg.channelTree)) target.channelTree = msg.channelTree;
     if (typeof msg.searchPanelVisible === 'boolean') target.searchPanelVisible = msg.searchPanelVisible;
+    if (!isReadyMessage) {
+      if (typeof msg.stickyNoteVisible === 'boolean') target.stickyNoteVisible = msg.stickyNoteVisible;
+      if (typeof msg.characterCardVisible === 'boolean') target.characterCardVisible = msg.characterCardVisible;
+    }
     if (typeof msg.iFormButtonActive === 'boolean') target.embedPanelActive = msg.iFormButtonActive;
     if (typeof msg.iFormHasAttention === 'boolean') target.embedPanelHasAttention = msg.iFormHasAttention;
 
+    persistPaneStorage(target);
     persistRouteQuery();
     ensureWorldAlignment(target.id);
+    if (isReadyMessage) {
+      syncPanePanelVisibility(target);
+    }
   }
 };
 
@@ -356,6 +385,22 @@ const initialize = () => {
   loadPaneStorage(paneB);
   refreshPaneSrc(paneA);
   refreshPaneSrc(paneB);
+};
+
+const syncPanePanelVisibility = (pane: PaneState) => {
+  if (pane.mode !== 'chat') return;
+  postToPane(pane.id, {
+    type: 'sealchat.embed.setStickyNoteVisible',
+    paneId: pane.id,
+    visible: !!pane.stickyNoteVisible,
+  });
+  if (pane.characterCardVisible) {
+    postToPane(pane.id, {
+      type: 'sealchat.embed.setCharacterCardVisible',
+      paneId: pane.id,
+      visible: true,
+    });
+  }
 };
 
 const setPaneMode = (paneId: PaneId, mode: PaneMode) => {
@@ -464,6 +509,22 @@ const openEmbedPanel = () => {
   if (!activePaneHasChannel.value) return;
   if (!canOperateChatPane(activePaneId.value)) return;
   postToPane(activePaneId.value, { type: 'sealchat.embed.openIFormDrawer', paneId: activePaneId.value });
+};
+
+const setStickyNoteVisibleForActivePane = (visible: boolean) => {
+  if (!activePaneHasChannel.value) return;
+  if (!canOperateChatPane(activePaneId.value)) return;
+  postToPane(activePaneId.value, { type: 'sealchat.embed.setStickyNoteVisible', paneId: activePaneId.value, visible });
+};
+
+const toggleStickyNoteForActivePane = () => {
+  setStickyNoteVisibleForActivePane(!activePane.value.stickyNoteVisible);
+};
+
+const openCharacterCardForActivePane = () => {
+  if (!activePaneHasChannel.value) return;
+  if (!canOperateChatPane(activePaneId.value)) return;
+  postToPane(activePaneId.value, { type: 'sealchat.embed.setCharacterCardVisible', paneId: activePaneId.value, visible: true });
 };
 
 const toggleActionRibbon = () => {
@@ -628,7 +689,10 @@ const collapsedWidth = computed(() => 0);
               :import-active="false"
               :split-enabled="false"
               :split-active="false"
-              :sticky-note-enabled="false"
+              :sticky-note-enabled="activePaneHasChannel"
+              :sticky-note-active="activePaneStickyNoteActive"
+              :character-card-enabled="activePaneHasChannel"
+              :character-card-active="activePaneCharacterCardActive"
               @update:filters="setFilters"
               @clear-filters="clearFilters"
               @open-archive="openPanel('archive')"
@@ -639,6 +703,8 @@ const collapsedWidth = computed(() => 0);
               @open-display-settings="openPanel('display')"
               @open-favorites="openPanel('favorites')"
               @open-channel-images="openPanel('channel-images')"
+              @toggle-sticky-note="toggleStickyNoteForActivePane"
+              @open-character-card="openCharacterCardForActivePane"
             />
           </div>
 

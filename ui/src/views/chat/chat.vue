@@ -163,7 +163,9 @@ type ExternalPanelKey =
   | 'gallery'
   | 'display'
   | 'favorites'
-  | 'channel-images';
+  | 'channel-images'
+  | 'character-card'
+  | 'sticky-note';
 
 const openPanelForShell = (panel: ExternalPanelKey) => {
   switch (panel) {
@@ -194,6 +196,12 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'channel-images':
       openChannelImagesPanel();
       return;
+    case 'character-card':
+      characterCardPanelVisible.value = true;
+      return;
+    case 'sticky-note':
+      setStickyNoteVisible(true);
+      return;
     default:
       return;
   }
@@ -203,9 +211,25 @@ const setFiltersForShell = (filters: any) => {
   chat.setFilterState(filters);
 };
 
+const setStickyNoteVisible = (visible: boolean) => {
+  stickyNoteStore.setVisible(visible);
+};
+
+const setCharacterCardVisible = (visible: boolean) => {
+  characterCardPanelVisible.value = visible;
+};
+
+const getStickyNoteVisible = () => stickyNoteStore.uiVisible.value;
+
+const getCharacterCardVisible = () => characterCardPanelVisible.value;
+
 defineExpose({
   openPanelForShell,
   setFiltersForShell,
+  setStickyNoteVisible,
+  setCharacterCardVisible,
+  getStickyNoteVisible,
+  getCharacterCardVisible,
 });
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
@@ -225,24 +249,6 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     }
   },
 });
-
-watch(
-  () => chat.currentWorldId,
-  (worldId) => {
-    if (!worldId) {
-      return
-    }
-    worldGlossary.ensureKeywords(worldId)
-    chat.worldDetail(worldId)
-    hideSelectionBar()
-  },
-  { immediate: true },
-)
-
-watch(
-  () => chat.curChannel?.id,
-  () => hideSelectionBar(),
-)
 
 const canManageWorldKeywords = computed(() => {
   const worldId = chat.currentWorldId
@@ -1148,6 +1154,24 @@ const hideSelectionBar = () => {
   selectionBar.visible = false
   selectionBar.text = ''
 }
+
+watch(
+  () => chat.currentWorldId,
+  (worldId) => {
+    if (!worldId) {
+      return
+    }
+    worldGlossary.ensureKeywords(worldId)
+    chat.worldDetail(worldId)
+    hideSelectionBar()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => chat.curChannel?.id,
+  () => hideSelectionBar(),
+)
 
 const updateSelectionPosition = (rect: DOMRect) => {
   const width = 220
