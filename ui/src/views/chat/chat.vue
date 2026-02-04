@@ -5651,6 +5651,7 @@ const setupTypingViewportObserver = () => {
     lastTypingViewportHeight = nextHeight;
   });
   typingViewportResizeObserver.observe(el);
+  scheduleRemotePreviewAutoScroll();
 };
 
 const disposeTypingViewportObserver = () => {
