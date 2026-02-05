@@ -443,6 +443,50 @@ func ChannelRolePermGet(c *fiber.Ctx) error {
 	})
 }
 
+// ChannelRolePermBatchGet 批量获取角色权限
+func ChannelRolePermBatchGet(c *fiber.Ctx) error {
+	var req struct {
+		RoleIds []string `json:"roleIds"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "无效的请求体",
+		})
+	}
+	if len(req.RoleIds) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "roleIds不能为空",
+		})
+	}
+	if len(req.RoleIds) > 500 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "roleIds数量过多",
+		})
+	}
+
+	rolePerms := make(map[string][]string, len(req.RoleIds))
+	seen := make(map[string]struct{}, len(req.RoleIds))
+	for _, roleId := range req.RoleIds {
+		roleId = strings.TrimSpace(roleId)
+		if roleId == "" {
+			continue
+		}
+		if _, ok := seen[roleId]; ok {
+			continue
+		}
+		seen[roleId] = struct{}{}
+		perms := pm.ChannelRolePermsGet(roleId)
+		if perms == nil {
+			perms = []string{}
+		}
+		rolePerms[roleId] = perms
+	}
+
+	return c.JSON(fiber.Map{
+		"data": rolePerms,
+	})
+}
+
 // RolePermApply 更新角色权限
 func RolePermApply(c *fiber.Ctx) error {
 	// 获取请求体

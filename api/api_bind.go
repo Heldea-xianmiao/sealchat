@@ -408,6 +408,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-info", ChannelInfoGet)
 	v1Auth.Get("/channel-perm-tree", ChannelPermTree)
 	v1Auth.Get("/channel-role-perms", ChannelRolePermGet)
+	v1Auth.Post("/channel-role-perms-batch", ChannelRolePermBatchGet)
 	v1Auth.Post("/role-perms-apply", RolePermApply)
 
 	worldGroup := v1Auth.Group("/worlds")

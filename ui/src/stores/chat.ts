@@ -1785,20 +1785,36 @@ export const useChatStore = defineStore({
         return [];
       }
       if (!this.channelRoleCache[roleId]) {
-        try {
-          const resp = await api.get<{ data: string[] }>('api/v1/channel-role-perms', { params: { roleId } });
-          this.channelRoleCache = {
-            ...this.channelRoleCache,
-            [roleId]: resp.data.data || [],
-          };
-        } catch (error) {
-          this.channelRoleCache = {
-            ...this.channelRoleCache,
-            [roleId]: [],
-          };
-        }
+        await this.ensureRolePermissionsBatch([roleId]);
       }
       return this.channelRoleCache[roleId] || [];
+    },
+
+    async ensureRolePermissionsBatch(roleIds: string[]) {
+      const ids = Array.from(new Set((roleIds || []).map(id => id?.trim()).filter(Boolean)));
+      if (ids.length === 0) {
+        return;
+      }
+      const missing = ids.filter(id => !this.channelRoleCache[id]);
+      if (missing.length === 0) {
+        return;
+      }
+      try {
+        const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: missing });
+        const payload = resp?.data?.data || {};
+        const nextCache = { ...this.channelRoleCache };
+        for (const roleId of missing) {
+          const perms = payload[roleId];
+          nextCache[roleId] = Array.isArray(perms) ? perms : [];
+        }
+        this.channelRoleCache = nextCache;
+      } catch (error) {
+        const nextCache = { ...this.channelRoleCache };
+        for (const roleId of missing) {
+          nextCache[roleId] = [];
+        }
+        this.channelRoleCache = nextCache;
+      }
     },
 
     async loadChannelMemberRoles(channelId: string, force = false) {
@@ -1858,10 +1874,12 @@ export const useChatStore = defineStore({
           }
         });
       });
+      const roleIds = Array.from(uniqueRoleIds);
+      await this.ensureRolePermissionsBatch(roleIds);
       const rolePermMap: Record<string, string[]> = {};
-      await Promise.all(Array.from(uniqueRoleIds).map(async (roleId) => {
-        rolePermMap[roleId] = await this.ensureRolePermissions(roleId);
-      }));
+      roleIds.forEach((roleId) => {
+        rolePermMap[roleId] = this.channelRoleCache[roleId] || [];
+      });
       const adminPerms = new Set([
         'func_channel_message_archive',
         'func_channel_message_delete',
@@ -2977,6 +2995,16 @@ export const useChatStore = defineStore({
     // 获取频道角色权限
     async channelRolePermsGet(channelId: string, roleId: string) {
       const resp = await api.get<{ data: any }>('api/v1/channel-role-perms', { params: { channelId, roleId } });
+      return resp?.data;
+    },
+
+    // 批量获取频道角色权限
+    async channelRolePermsBatch(roleIds: string[]) {
+      const ids = Array.from(new Set((roleIds || []).map(id => id?.trim()).filter(Boolean)));
+      if (ids.length === 0) {
+        return { data: {} as Record<string, string[]> };
+      }
+      const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: ids });
       return resp?.data;
     },
 
