@@ -49,6 +49,7 @@ const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
 });
 
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
+const botCharacterUnsupportedText = 'BOT未启用角色卡功能';
 
 export const useCharacterCardStore = defineStore('characterCard', () => {
   // List of user's character cards
@@ -60,6 +61,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   // Local identity bindings (cached for UI convenience)
   const identityBindings = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
+  const botCharacterDisabledByChannel = ref<Record<string, boolean>>({});
 
   const panelVisible = ref(false);
   const loading = ref(false);
@@ -70,6 +72,54 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
   let badgeGatewayBound = false;
+
+  const isBotCharacterDisabled = (channelId?: string) => {
+    if (!channelId) {
+      return false;
+    }
+    return botCharacterDisabledByChannel.value[channelId] === true;
+  };
+
+  const markBotCharacterDisabled = (channelId: string) => {
+    if (!channelId || botCharacterDisabledByChannel.value[channelId]) {
+      return;
+    }
+    botCharacterDisabledByChannel.value = {
+      ...botCharacterDisabledByChannel.value,
+      [channelId]: true,
+    };
+    if (isDebugEnabled()) {
+      console.warn('[CharacterCard] character api disabled by bot capability', { channelId });
+    }
+  };
+
+  const maybeDisableFromResponse = (channelId: string, resp: any) => {
+    const err = resp?.data?.error;
+    if (resp?.data?.ok === false && err === botCharacterUnsupportedText) {
+      markBotCharacterDisabled(channelId);
+    }
+  };
+
+  const shouldSkipCharacterApi = (channelId: string, label: string) => {
+    if (!channelId) {
+      return false;
+    }
+    if (isBotCharacterDisabled(channelId)) {
+      if (isDebugEnabled()) {
+        console.warn(`[CharacterCard] ${label} skipped: bot character api disabled`, { channelId });
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const assertCharacterApiEnabled = (channelId: string, label: string) => {
+    if (shouldSkipCharacterApi(channelId, label)) {
+      const error = new Error(botCharacterUnsupportedText);
+      (error as any).response = { data: { error: botCharacterUnsupportedText } };
+      throw error;
+    }
+  };
 
   const getBindingsStorageKey = () => {
     const userId = getUserId();
@@ -369,6 +419,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
 
     const resolvedChannelId = channelId || chatStore.curChannel?.id || '';
+    if (shouldSkipCharacterApi(resolvedChannelId, 'loadCardList')) {
+      return;
+    }
 
     // Ensure WebSocket is connected before sending API request
     await chatStore.ensureConnectionReady();
@@ -382,7 +435,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (resolvedChannelId) {
         payload.group_id = resolvedChannelId;
       }
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[] } }>('character.list', payload);
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[]; error?: string } }>('character.list', payload);
+      maybeDisableFromResponse(resolvedChannelId, resp);
       if (isDebugEnabled()) {
         console.log('[CharacterCard] character.list response:', resp);
       }
@@ -409,14 +463,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const getActiveCard = async (channelId: string) => {
     const userId = getUserId();
     if (!userId || !channelId) return null;
+    if (shouldSkipCharacterApi(channelId, 'getActiveCard')) {
+      return null;
+    }
 
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; data?: Record<string, any>; name?: string; type?: string } }>('character.get', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; data?: Record<string, any>; name?: string; type?: string; error?: string } }>('character.get', {
         group_id: channelId,
         user_id: userId,
       });
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         const cardData: CharacterCardData = {
           name: resp.data.name || '',
@@ -437,16 +495,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const createCard = async (channelId: string, name: string, sheetType: string = 'coc7', _attrs: Record<string, any> = {}) => {
     const userId = getUserId();
     if (!userId || !channelId) return null;
+    assertCharacterApiEnabled(channelId, 'createCard');
 
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; sheet_type?: string } }>('character.new', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; sheet_type?: string; error?: string } }>('character.new', {
         user_id: userId,
         group_id: channelId,
         name,
         sheet_type: sheetType,
       });
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await loadCardList(channelId);
         return {
@@ -465,16 +525,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const saveCard = async (channelId: string, name: string, sheetType: string = 'coc7') => {
     const userId = getUserId();
     if (!userId || !channelId) return null;
+    assertCharacterApiEnabled(channelId, 'saveCard');
 
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; action?: string } }>('character.save', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; action?: string; error?: string } }>('character.save', {
         user_id: userId,
         group_id: channelId,
         name,
         sheet_type: sheetType,
       });
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await loadCardList(channelId);
         return resp.data;
@@ -508,16 +570,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
 
     if (!channelId) return null;
+    assertCharacterApiEnabled(channelId, 'updateCard');
 
     await chatStore.ensureConnectionReady();
 
     try {
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean } }>('character.set', {
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string } }>('character.set', {
         group_id: channelId,
         user_id: userId,
         name,
         attrs,
       });
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
         await loadCardList(channelId);
@@ -533,6 +597,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const tagCard = async (channelId: string, cardName?: string, cardId?: string) => {
     const userId = getUserId();
     if (!userId || !channelId) return null;
+    if (shouldSkipCharacterApi(channelId, 'tagCard')) {
+      return null;
+    }
 
     await chatStore.ensureConnectionReady();
 
@@ -544,7 +611,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (cardName) payload.name = cardName;
       if (cardId) payload.id = cardId;
 
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; action?: string; id?: string; name?: string } }>('character.tag', payload);
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; action?: string; id?: string; name?: string; error?: string } }>('character.tag', payload);
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
         return resp.data;
@@ -565,11 +633,15 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     try {
       const payload: Record<string, string> = { user_id: userId };
       const resolvedChannelId = channelId || chatStore.curChannel?.id || '';
+      if (shouldSkipCharacterApi(resolvedChannelId, 'untagAllCard')) {
+        return null;
+      }
       if (cardName) payload.name = cardName;
       if (cardId) payload.id = cardId;
       if (resolvedChannelId) payload.group_id = resolvedChannelId;
 
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; unbound_count?: number } }>('character.untagAll', payload);
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; unbound_count?: number; error?: string } }>('character.untagAll', payload);
+      maybeDisableFromResponse(resolvedChannelId, resp);
       if (resp?.data?.ok) {
         return resp.data;
       }
@@ -583,6 +655,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const loadCard = async (channelId: string, cardName?: string, cardId?: string) => {
     const userId = getUserId();
     if (!userId || !channelId) return null;
+    if (shouldSkipCharacterApi(channelId, 'loadCard')) {
+      return null;
+    }
 
     await chatStore.ensureConnectionReady();
 
@@ -594,7 +669,8 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (cardName) payload.name = cardName;
       if (cardId) payload.id = cardId;
 
-      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; sheet_type?: string } }>('character.load', payload);
+      const resp = await chatStore.sendAPI<{ data: { ok: boolean; id?: string; name?: string; sheet_type?: string; error?: string } }>('character.load', payload);
+      maybeDisableFromResponse(channelId, resp);
       if (resp?.data?.ok) {
         await getActiveCard(channelId);
         return resp.data;
@@ -616,6 +692,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       const payload: Record<string, string> = { user_id: userId };
       const resolvedChannelId = chatStore.curChannel?.id || '';
       if (resolvedChannelId) {
+        assertCharacterApiEnabled(resolvedChannelId, 'deleteCard');
+      }
+      if (resolvedChannelId) {
         payload.group_id = resolvedChannelId;
       }
 
@@ -633,11 +712,13 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       }
 
       const untagResp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string } }>('character.untagAll', payload);
+      maybeDisableFromResponse(resolvedChannelId, untagResp);
       if (!untagResp?.data?.ok) {
         throw new Error(untagResp?.data?.error || '解绑失败');
       }
 
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string; binding_groups?: string[] } }>('character.delete', payload);
+      maybeDisableFromResponse(resolvedChannelId, resp);
       if (resp?.data?.ok) {
         await loadCardList(resolvedChannelId);
         return resp.data;
@@ -710,6 +791,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const requestBadgeSnapshot = async (channelId: string) => {
     if (!channelId) return;
+    if (shouldSkipCharacterApi(channelId, 'requestBadgeSnapshot')) {
+      return;
+    }
     loadBadgeCache(channelId);
     await chatStore.ensureConnectionReady();
     try {
@@ -721,6 +805,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const broadcastActiveBadge = async (channelId: string, identityId?: string, action: 'update' | 'clear' = 'update') => {
     if (!channelId) return;
+    if (shouldSkipCharacterApi(channelId, 'broadcastActiveBadge')) {
+      return;
+    }
     const resolvedIdentityId = identityId || chatStore.getActiveIdentityId(channelId);
     if (!resolvedIdentityId) return;
     await chatStore.ensureConnectionReady();

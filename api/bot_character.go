@@ -26,8 +26,22 @@ type CharacterPendingRequest struct {
 // characterPendingRequests stores pending character API requests by echo ID
 var characterPendingRequests = &sync.Map{}
 
+type BotCharacterSupportState int8
+
+const (
+	BotCharacterSupportUnknown BotCharacterSupportState = iota
+	BotCharacterSupportNo
+	BotCharacterSupportYes
+)
+
 // characterRequestTimeout is the timeout for character API requests
-const characterRequestTimeout = 5 * time.Second
+const (
+	characterRequestTimeout     = 5 * time.Second
+	botCharacterProbeTimeout    = characterRequestTimeout
+	botCharacterProbeMaxAttempts = 3
+	botCharacterProbeRetryDelay  = 2 * time.Second
+	botCharacterUnsupportedText = "BOT未启用角色卡功能"
+)
 
 // apiCharacterGet handles character.get requests
 // This is a SealChat → SealDice API that retrieves character card data
@@ -45,9 +59,12 @@ func apiCharacterGet(ctx *ChatContext, msg []byte) {
 	}
 
 	// Find selected BOT for this channel
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -78,9 +95,12 @@ func apiCharacterSet(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -115,9 +135,12 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 	}
 	data.Data.GroupID = channelID
 
-	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, channelID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -131,20 +154,21 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 }
 
 // findBotConnectionForChannel finds a BOT WebSocket connection for a specific channel
-func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncConn, error) {
+func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncConn, *ConnInfo, error) {
 	if userId2ConnInfoGlobal == nil {
-		return nil, errors.New("未找到可用的 BOT 连接")
+		return nil, nil, errors.New("未找到可用的 BOT 连接")
 	}
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
-		return nil, errors.New("缺少频道ID")
+		return nil, nil, errors.New("缺少频道ID")
 	}
 	botID, err := service.SelectedBotIdByChannelId(channelID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if x, ok := userId2ConnInfoGlobal.Load(botID); ok {
 		var activeConn *WsSyncConn
+		var activeInfo *ConnInfo
 		var activeAt int64 = -1
 		x.Range(func(conn *WsSyncConn, value *ConnInfo) bool {
 			if value == nil {
@@ -157,14 +181,27 @@ func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncCon
 			if lastAlive > activeAt {
 				activeAt = lastAlive
 				activeConn = conn
+				activeInfo = value
 			}
 			return true
 		})
 		if activeConn != nil {
-			return activeConn, nil
+			return activeConn, activeInfo, nil
 		}
 	}
-	return nil, errors.New("所选 BOT 未在线")
+	return nil, nil, errors.New("所选 BOT 未在线")
+}
+
+func gateBotCharacterSupport(ctx *ChatContext, echo string, info *ConnInfo) bool {
+	if info == nil {
+		return true
+	}
+	startBotCharacterCapabilityProbe(info)
+	if info.BotCharacterSupport == BotCharacterSupportNo {
+		sendCharacterError(ctx, echo, botCharacterUnsupportedText)
+		return false
+	}
+	return true
 }
 
 // findAnyBotConnection finds any available BOT WebSocket connection
@@ -205,8 +242,58 @@ func resolveCharacterChannelID(ctx *ChatContext, groupID string) string {
 	return channelID
 }
 
+func startBotCharacterCapabilityProbe(info *ConnInfo) {
+	if info == nil || info.User == nil || !info.User.IsBot {
+		return
+	}
+	if info.BotCharacterSupport == BotCharacterSupportYes || info.BotCharacterProbeOn {
+		return
+	}
+	if info.BotCharacterProbeFail >= botCharacterProbeMaxAttempts {
+		info.BotCharacterSupport = BotCharacterSupportNo
+		return
+	}
+	info.BotCharacterProbeOn = true
+	botConn := info.Conn
+	if botConn == nil {
+		info.BotCharacterProbeFail++
+		if info.BotCharacterProbeFail >= botCharacterProbeMaxAttempts {
+			info.BotCharacterSupport = BotCharacterSupportNo
+		}
+		info.BotCharacterProbeOn = false
+		return
+	}
+	echo := "bot-cap-probe-" + utils.NewID()
+	go func() {
+		resp := forwardCharacterRequestWithTimeout(botConn, "character.list", echo, map[string]any{
+			"user_id": info.User.ID,
+		}, botCharacterProbeTimeout)
+		if resp == nil {
+			info.BotCharacterProbeFail++
+			if info.BotCharacterProbeFail >= botCharacterProbeMaxAttempts {
+				info.BotCharacterSupport = BotCharacterSupportNo
+				info.BotCharacterProbeOn = false
+				return
+			}
+			info.BotCharacterProbeOn = false
+			time.AfterFunc(botCharacterProbeRetryDelay, func() {
+				startBotCharacterCapabilityProbe(info)
+			})
+			return
+		} else {
+			info.BotCharacterSupport = BotCharacterSupportYes
+			info.BotCharacterProbeFail = 0
+		}
+		info.BotCharacterProbeOn = false
+	}()
+}
+
 // forwardCharacterRequest forwards a character API request to a BOT
 func forwardCharacterRequest(botConn *WsSyncConn, api, echo string, data any) json.RawMessage {
+	return forwardCharacterRequestWithTimeout(botConn, api, echo, data, characterRequestTimeout)
+}
+
+func forwardCharacterRequestWithTimeout(botConn *WsSyncConn, api, echo string, data any, timeout time.Duration) json.RawMessage {
 	if botConn == nil {
 		return nil
 	}
@@ -237,7 +324,7 @@ func forwardCharacterRequest(botConn *WsSyncConn, api, echo string, data any) js
 	select {
 	case resp := <-respChan:
 		return resp
-	case <-time.After(characterRequestTimeout):
+	case <-time.After(timeout):
 		return nil
 	}
 }
@@ -304,9 +391,12 @@ func apiCharacterNew(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -335,9 +425,12 @@ func apiCharacterSave(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -366,9 +459,12 @@ func apiCharacterTag(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -403,9 +499,12 @@ func apiCharacterUntagAll(ctx *ChatContext, msg []byte) {
 		return
 	}
 	data.Data.GroupID = channelID
-	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, channelID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -434,9 +533,12 @@ func apiCharacterLoad(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	botConn, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 
@@ -472,9 +574,12 @@ func apiCharacterDelete(ctx *ChatContext, msg []byte) {
 	}
 	data.Data.GroupID = channelID
 
-	botConn, err := findBotConnectionForChannel(ctx, channelID)
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, channelID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+	if !gateBotCharacterSupport(ctx, data.Echo, botInfo) {
 		return
 	}
 

@@ -56,6 +56,9 @@ type ConnInfo struct {
 	Focused               bool
 	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
 	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
+	BotCharacterSupport   BotCharacterSupportState
+	BotCharacterProbeOn   bool
+	BotCharacterProbeFail int
 }
 
 type BotHiddenDicePending struct {
@@ -244,6 +247,9 @@ func websocketWorks(app *fiber.App) {
 						"user": curUser,
 					},
 				})
+				if user.IsBot {
+					startBotCharacterCapabilityProbe(curConnInfo)
+				}
 				return
 			}
 		}

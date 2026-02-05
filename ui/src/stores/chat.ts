@@ -23,6 +23,67 @@ const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>
 const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
 const inFlightRolePermLoads = new Map<string, Promise<void>>();
 
+const botApiPrefixes = ['character.', 'bot.'];
+let botApiPending = 0;
+let normalApiInFlight = 0;
+let botApiChain: Promise<void> = Promise.resolve();
+const botIdleWaiters: Array<() => void> = [];
+const normalDrainWaiters: Array<() => void> = [];
+
+const isBotRelatedApi = (api: string) => botApiPrefixes.some((prefix) => api.startsWith(prefix));
+const waitForBotIdle = () => new Promise<void>((resolve) => {
+  if (botApiPending === 0) {
+    resolve();
+    return;
+  }
+  botIdleWaiters.push(resolve);
+});
+const waitForNormalDrain = () => new Promise<void>((resolve) => {
+  if (normalApiInFlight === 0) {
+    resolve();
+    return;
+  }
+  normalDrainWaiters.push(resolve);
+});
+const notifyBotIdle = () => {
+  if (botApiPending !== 0) {
+    return;
+  }
+  const waiters = botIdleWaiters.splice(0);
+  waiters.forEach((resolve) => resolve());
+};
+const notifyNormalDrain = () => {
+  if (normalApiInFlight !== 0) {
+    return;
+  }
+  const waiters = normalDrainWaiters.splice(0);
+  waiters.forEach((resolve) => resolve());
+};
+const enqueueBotApi = async <T>(fn: () => Promise<T>): Promise<T> => {
+  botApiPending += 1;
+  const run = botApiChain.then(async () => {
+    await waitForNormalDrain();
+    return fn();
+  });
+  botApiChain = run.then(() => undefined, () => undefined);
+  try {
+    return await run;
+  } finally {
+    botApiPending -= 1;
+    notifyBotIdle();
+  }
+};
+const enqueueNormalApi = async <T>(fn: () => Promise<T>): Promise<T> => {
+  await waitForBotIdle();
+  normalApiInFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    normalApiInFlight -= 1;
+    notifyNormalDrain();
+  }
+};
+
 interface ChatState {
   subject: WebSocketSubject<any> | null;
   // user: User,
@@ -837,11 +898,17 @@ export const useChatStore = defineStore({
     },
 
     async sendAPI<T = any>(api: string, data: APIMessage): Promise<T> {
-      const echo = nanoid();
-      return new Promise((resolve, reject) => {
-        apiMap.set(echo, { resolve, reject });
-        this.subject?.next({ api, data, echo });
-      }).then((resp: any) => {
+      const doSend = () => {
+        const echo = nanoid();
+        return new Promise((resolve, reject) => {
+          apiMap.set(echo, { resolve, reject });
+          this.subject?.next({ api, data, echo });
+        });
+      };
+      const run = isBotRelatedApi(api)
+        ? enqueueBotApi(doSend)
+        : enqueueNormalApi(doSend);
+      return run.then((resp: any) => {
         if (resp?.err) {
           const error = new Error(resp.err);
           (error as any).response = resp;
