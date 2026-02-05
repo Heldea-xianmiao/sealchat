@@ -21,6 +21,7 @@ import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKe
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
+const inFlightRolePermLoads = new Map<string, Promise<void>>();
 
 interface ChatState {
   subject: WebSocketSubject<any> | null;
@@ -1824,22 +1825,51 @@ export const useChatStore = defineStore({
       if (missing.length === 0) {
         return;
       }
-      try {
-        const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: missing });
-        const payload = resp?.data?.data || {};
-        const nextCache = { ...this.channelRoleCache };
-        for (const roleId of missing) {
-          const perms = payload[roleId];
-          nextCache[roleId] = Array.isArray(perms) ? perms : [];
+      const waitingPromises: Promise<void>[] = [];
+      const toFetch: string[] = [];
+      for (const roleId of missing) {
+        const inFlight = inFlightRolePermLoads.get(roleId);
+        if (inFlight) {
+          waitingPromises.push(inFlight);
+          continue;
         }
-        this.channelRoleCache = nextCache;
-      } catch (error) {
-        const nextCache = { ...this.channelRoleCache };
-        for (const roleId of missing) {
-          nextCache[roleId] = [];
-        }
-        this.channelRoleCache = nextCache;
+        toFetch.push(roleId);
       }
+      const waiters = Array.from(new Set(waitingPromises));
+      if (toFetch.length === 0) {
+        if (waiters.length > 0) {
+          await Promise.all(waiters);
+        }
+        return;
+      }
+      const task = (async () => {
+        try {
+          const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: toFetch });
+          const payload = resp?.data?.data || {};
+          const nextCache = { ...this.channelRoleCache };
+          for (const roleId of toFetch) {
+            const perms = payload[roleId];
+            nextCache[roleId] = Array.isArray(perms) ? perms : [];
+          }
+          this.channelRoleCache = nextCache;
+        } catch (error) {
+          const nextCache = { ...this.channelRoleCache };
+          for (const roleId of toFetch) {
+            nextCache[roleId] = [];
+          }
+          this.channelRoleCache = nextCache;
+        } finally {
+          for (const roleId of toFetch) {
+            if (inFlightRolePermLoads.get(roleId) === task) {
+              inFlightRolePermLoads.delete(roleId);
+            }
+          }
+        }
+      })();
+      for (const roleId of toFetch) {
+        inFlightRolePermLoads.set(roleId, task);
+      }
+      await Promise.all([...waiters, task]);
     },
 
     async loadChannelMemberRoles(channelId: string, force = false) {
