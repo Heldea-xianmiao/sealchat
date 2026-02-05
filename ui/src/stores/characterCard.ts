@@ -48,6 +48,8 @@ const toUICard = (card: CharacterCardFromAPI): CharacterCard => ({
   updatedAt: card.updated_at,
 });
 
+const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
+
 export const useCharacterCardStore = defineStore('characterCard', () => {
   // List of user's character cards
   const cardList = ref<CharacterCard[]>([]);
@@ -360,7 +362,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const loadCardList = async (channelId?: string) => {
     const userId = getUserId();
     if (!userId) {
-      console.warn('[CharacterCard] loadCardList skipped: no userId');
+      if (isDebugEnabled()) {
+        console.warn('[CharacterCard] loadCardList skipped: no userId');
+      }
       return;
     }
 
@@ -371,13 +375,17 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
     loading.value = true;
     try {
-      console.log('[CharacterCard] Sending character.list request for user:', userId);
+      if (isDebugEnabled()) {
+        console.log('[CharacterCard] Sending character.list request for user:', userId);
+      }
       const payload: Record<string, string> = { user_id: userId };
       if (resolvedChannelId) {
         payload.group_id = resolvedChannelId;
       }
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; list?: CharacterCardFromAPI[] } }>('character.list', payload);
-      console.log('[CharacterCard] character.list response:', resp);
+      if (isDebugEnabled()) {
+        console.log('[CharacterCard] character.list response:', resp);
+      }
       if (resp?.data?.ok && Array.isArray(resp.data.list)) {
         cardList.value = resp.data.list.map(toUICard);
       }
