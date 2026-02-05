@@ -1226,8 +1226,15 @@ export const useChatStore = defineStore({
         }
         return true;
       }
+      const previousChannelId = this.curChannel?.id || '';
       const switchEpoch = ++channelSwitchEpoch;
       const isStale = () => switchEpoch !== channelSwitchEpoch;
+      console.info('[channel-load] switch-start', {
+        channelId: id,
+        previousChannelId,
+        switchEpoch,
+        ts: Date.now(),
+      });
 
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
@@ -1355,10 +1362,20 @@ export const useChatStore = defineStore({
       if (isStale()) {
         return true;
       }
+      console.info('[channel-load] channel-entered', {
+        channelId: id,
+        switchEpoch,
+        ts: Date.now(),
+      });
       chatEvent.emit('channel-switch-to', undefined);
 
       const postEnterChannelId = id;
       void (async () => {
+        console.info('[channel-load] post-enter-tasks-start', {
+          channelId: postEnterChannelId,
+          switchEpoch,
+          ts: Date.now(),
+        });
         let identitiesLoaded = false;
         try {
           await this.loadChannelIdentities(postEnterChannelId);
@@ -1398,6 +1415,11 @@ export const useChatStore = defineStore({
         } catch (error) {
           console.warn('ensureChannelPermissionCache failed', error);
         }
+        console.info('[channel-load] post-enter-tasks-finish', {
+          channelId: postEnterChannelId,
+          switchEpoch,
+          ts: Date.now(),
+        });
       })();
 
       // 设置网页标题为频道名字，并检查是否需要清除未读通知

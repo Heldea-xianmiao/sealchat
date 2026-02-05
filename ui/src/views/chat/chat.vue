@@ -540,6 +540,11 @@ const ensureBotOptionsLoaded = async (force = false) => {
 		return;
 	}
 	botOptionsLoading.value = true;
+	console.info('[dice-bot] bot-options-load-start', {
+		channelId: chat.curChannel?.id || '',
+		force,
+		ts: Date.now(),
+	});
 	try {
 		const resp = await chat.botList(force);
 		botOptions.value = resp?.items || [];
@@ -548,6 +553,11 @@ const ensureBotOptionsLoaded = async (force = false) => {
 		message.error(error?.response?.data?.message || '获取机器人列表失败');
 	} finally {
 		botOptionsLoading.value = false;
+		console.info('[dice-bot] bot-options-load-finish', {
+			channelId: chat.curChannel?.id || '',
+			count: botOptions.value.length,
+			ts: Date.now(),
+		});
 	}
 };
 
@@ -573,6 +583,10 @@ const refreshChannelBotSelection = async () => {
     return;
   }
   channelBotsLoading.value = true;
+  console.info('[dice-bot] channel-bot-refresh-start', {
+    channelId,
+    ts: Date.now(),
+  });
   try {
     const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
     const items = resp?.data?.items || [];
@@ -582,6 +596,11 @@ const refreshChannelBotSelection = async () => {
     message.error(error?.response?.data?.error || '加载频道机器人失败');
   } finally {
     channelBotsLoading.value = false;
+    console.info('[dice-bot] channel-bot-refresh-finish', {
+      channelId,
+      selectedBotId: channelBotSelection.value,
+      ts: Date.now(),
+    });
   }
 };
 
@@ -592,6 +611,11 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     return;
   }
   syncingChannelBot.value = true;
+  console.info('[dice-bot] channel-bot-sync-start', {
+    channelId,
+    nextBotId,
+    ts: Date.now(),
+  });
   try {
     const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
     const items = resp?.data?.items || [];
@@ -611,6 +635,11 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     throw error;
   } finally {
     syncingChannelBot.value = false;
+    console.info('[dice-bot] channel-bot-sync-finish', {
+      channelId,
+      selectedBotId: channelBotSelection.value,
+      ts: Date.now(),
+    });
   }
 };
 
@@ -8212,20 +8241,8 @@ const emit = defineEmits(['drawer-show'])
 let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
-  await utils.configGet();
-  if (!chat.isObserver) {
-    await utils.commandsRefresh();
-  }
-
-  chat.channelRefreshSetup()
-
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
-
-  // 检查并启动新用户引导
-  if (!chat.isObserver) {
-    onboarding.checkAndStartOnboarding();
-  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -8665,16 +8682,16 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
-  stopTypingPreviewNow();
-  resetTypingPreview();
-  stopEditingPreviewNow();
-  chat.cancelEditing();
-  textToSend.value = '';
-  clearInputModeCache();
-  resetWindowState('live');
-  resetDragState();
-  localReorderOps.clear();
-  showButton.value = false;
+    stopTypingPreviewNow();
+    resetTypingPreview();
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    textToSend.value = '';
+    clearInputModeCache();
+    resetWindowState('live');
+    resetDragState();
+    localReorderOps.clear();
+    showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
@@ -8688,6 +8705,18 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   await fetchLatestMessages();
   firstLoad = true;
   await maybePromptIdentitySync();
+
+  await utils.configGet();
+  if (!chat.isObserver) {
+    await utils.commandsRefresh();
+  }
+
+  chat.channelRefreshSetup()
+
+  // 检查并启动新用户引导
+  if (!chat.isObserver) {
+    onboarding.checkAndStartOnboarding();
+  }
 })
 
 onBeforeUnmount(() => {
@@ -8833,6 +8862,11 @@ const fetchLatestMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
     return;
   }
+  console.info('[channel-load] messages-fetch-start', {
+    channelId: chat.curChannel?.id || '',
+    ts: Date.now(),
+  });
+  let fetchSucceeded = false;
   const previousRows = rows.value.slice();
   resetWindowState('live', { preserveRows: true });
   resetTypingPreview();
@@ -8843,6 +8877,12 @@ const fetchLatestMessages = async () => {
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
+    fetchSucceeded = true;
+    console.info('[channel-load] messages-fetch-success', {
+      channelId: chat.curChannel?.id || '',
+      count: Array.isArray(resp.data) ? resp.data.length : 0,
+      ts: Date.now(),
+    });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
     applyCursorUpdate({ before: resp?.next ?? '' });
@@ -8852,12 +8892,22 @@ const fetchLatestMessages = async () => {
     showButton.value = false;
     await autoFillIfNeeded();
     tryAutoRestoreHistory();
+    console.info('[channel-load] messages-rendered', {
+      channelId: chat.curChannel?.id || '',
+      rows: rows.value.length,
+      ts: Date.now(),
+    });
   } catch (error) {
     rows.value = previousRows;
     resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
     throw error;
   } finally {
     messageWindow.loadingLatest = false;
+    console.info('[channel-load] messages-fetch-finish', {
+      channelId: chat.curChannel?.id || '',
+      ok: fetchSucceeded,
+      ts: Date.now(),
+    });
   }
 };
 
