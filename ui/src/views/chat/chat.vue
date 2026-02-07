@@ -316,7 +316,8 @@ const channelBackgroundOverlayStyle = computed(() => {
   };
 });
 
-const diceTrayVisible = ref(false);
+const diceTrayDesktopVisible = ref(false);
+const diceTrayMobileVisible = ref(false);
 const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
@@ -325,7 +326,30 @@ const botOptionsFetched = ref(false);
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
-const diceTrayFollowerClass = 'dice-tray-mobile-wrapper';
+const chatRootContainerRef = ref<HTMLElement | null>(null);
+const DICE_TRAY_EDGE_OVERLAY_CLASS = 'dice-tray-popover-edge';
+const DICE_TRAY_RIGHT_OFFSET_TUNE_PX = -10;
+const isCoarsePointerDevice = typeof window !== 'undefined'
+  ? window.matchMedia('(pointer: coarse)').matches
+  : false;
+const isDiceTrayEdgeAnchored = computed(() => isMobileUa && isCoarsePointerDevice);
+const closeAllDiceTrays = () => {
+  diceTrayDesktopVisible.value = false;
+  diceTrayMobileVisible.value = false;
+};
+const setCurrentDiceTrayVisible = (visible: boolean) => {
+  if (isDiceTrayEdgeAnchored.value) {
+    diceTrayMobileVisible.value = visible;
+    if (visible) {
+      diceTrayDesktopVisible.value = false;
+    }
+  } else {
+    diceTrayDesktopVisible.value = visible;
+    if (visible) {
+      diceTrayMobileVisible.value = false;
+    }
+  }
+};
 const channelBotSelection = ref('');
 const channelBotsLoading = ref(false);
 const syncingChannelBot = ref(false);
@@ -446,16 +470,20 @@ watch(
 const toggleDiceTray = () => {
   if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
     return;
   }
-  diceTrayVisible.value = !diceTrayVisible.value;
+  if (isDiceTrayEdgeAnchored.value) {
+    setCurrentDiceTrayVisible(!diceTrayMobileVisible.value);
+  } else {
+    setCurrentDiceTrayVisible(!diceTrayDesktopVisible.value);
+  }
 };
 watch(() => chat.curChannel, (channel) => {
   channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
   channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
   if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
   }
 }, { immediate: true });
 watch(() => chat.curChannel?.id, () => {
@@ -470,54 +498,145 @@ watch(canManageChannelFeatures, (canManage) => {
 });
 watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
 	if (!enabled && !channelFeatures.botFeatureEnabled && !diceSettingsVisible.value) {
-		diceTrayVisible.value = false;
+		closeAllDiceTrays();
 	}
 });
 watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
 	if (!enabled && !channelFeatures.builtInDiceEnabled && !diceSettingsVisible.value) {
-		diceTrayVisible.value = false;
+		closeAllDiceTrays();
 	}
 });
 
 const markDiceTrayMobileWrapper = (enabled: boolean) => {
-  if (!isMobileUa || typeof document === 'undefined') return;
+  if (typeof document === 'undefined') return;
+  if (!isDiceTrayEdgeAnchored.value) {
+    const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
+    followers.forEach((el) => {
+      if (!el) return;
+      if (!el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS) && !el.querySelector('.dice-tray')) return;
+      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.removeProperty('--dice-tray-right-offset');
+      el.style.removeProperty('--dice-tray-left-offset');
+      el.style.removeProperty('position');
+      el.style.removeProperty('left');
+      el.style.removeProperty('right');
+      el.style.removeProperty('transform');
+      el.style.removeProperty('box-sizing');
+      el.style.removeProperty('width');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('border');
+      el.style.removeProperty('box-shadow');
+      el.style.removeProperty('background');
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.removeProperty('padding');
+        popoverContent.style.removeProperty('border');
+        popoverContent.style.removeProperty('box-shadow');
+        popoverContent.style.removeProperty('background');
+      }
+    });
+    return;
+  }
+  const shouldAnchorRightEdge = enabled && isDiceTrayEdgeAnchored.value;
+  const rootRect = chatRootContainerRef.value?.getBoundingClientRect();
+  const rawRightOffset = rootRect ? Math.max(0, window.innerWidth - rootRect.right) : 0;
+  const rightOffset = Math.max(0, rawRightOffset + DICE_TRAY_RIGHT_OFFSET_TUNE_PX);
+  const leftOffset = rootRect ? Math.max(0, rootRect.left) : 0;
   const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
   followers.forEach((el) => {
     if (!el) return;
-    if (el.querySelector('.dice-tray')) {
-      if (enabled) {
-        el.classList.add(diceTrayFollowerClass);
-      } else {
-        el.classList.remove(diceTrayFollowerClass);
+    const hasDiceTray = !!el.querySelector('.dice-tray');
+    const tracked = hasDiceTray || el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS);
+    if (!tracked) return;
+
+    if (shouldAnchorRightEdge && hasDiceTray) {
+      const availableWidth = Math.max(0, window.innerWidth - leftOffset - rightOffset);
+      const targetWidth = Math.min(420, availableWidth);
+
+      el.classList.add(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.setProperty('--dice-tray-right-offset', `${rightOffset}px`);
+      el.style.setProperty('--dice-tray-left-offset', `${leftOffset}px`);
+      el.style.setProperty('position', 'fixed', 'important');
+      el.style.setProperty('left', 'auto', 'important');
+      el.style.setProperty('right', `${rightOffset}px`, 'important');
+      el.style.setProperty('transform', 'none', 'important');
+      el.style.setProperty('box-sizing', 'border-box');
+      el.style.setProperty('width', `${targetWidth}px`, 'important');
+      el.style.setProperty('max-width', `${availableWidth}px`, 'important');
+      el.style.setProperty('border', 'none', 'important');
+      el.style.setProperty('box-shadow', 'none', 'important');
+      el.style.setProperty('background', 'transparent', 'important');
+
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.setProperty('padding', '0', 'important');
+        popoverContent.style.setProperty('border', 'none', 'important');
+        popoverContent.style.setProperty('box-shadow', 'none', 'important');
+        popoverContent.style.setProperty('background', 'transparent', 'important');
       }
-    } else if (!enabled) {
-      el.classList.remove(diceTrayFollowerClass);
+    } else {
+      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.removeProperty('--dice-tray-right-offset');
+      el.style.removeProperty('--dice-tray-left-offset');
+      el.style.removeProperty('position');
+      el.style.removeProperty('left');
+      el.style.removeProperty('right');
+      el.style.removeProperty('transform');
+      el.style.removeProperty('box-sizing');
+      el.style.removeProperty('width');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('border');
+      el.style.removeProperty('box-shadow');
+      el.style.removeProperty('background');
+
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.removeProperty('padding');
+        popoverContent.style.removeProperty('border');
+        popoverContent.style.removeProperty('box-shadow');
+        popoverContent.style.removeProperty('background');
+      }
     }
   });
 };
 
 watch(
-  () => diceTrayVisible.value,
+  () => diceTrayMobileVisible.value,
   (visible) => {
-    if (!isMobileUa) return;
+    if (!isDiceTrayEdgeAnchored.value) {
+      markDiceTrayMobileWrapper(false);
+      return;
+    }
     if (visible) {
-      nextTick(() => markDiceTrayMobileWrapper(true));
+      nextTick(() => {
+        markDiceTrayMobileWrapper(true);
+        requestAnimationFrame(() => {
+          markDiceTrayMobileWrapper(true);
+        });
+        window.setTimeout(() => {
+          markDiceTrayMobileWrapper(true);
+        }, 32);
+      });
     } else {
       markDiceTrayMobileWrapper(false);
     }
   },
 );
-watch(diceTrayVisible, (visible) => {
+watch(
+  () => [diceTrayDesktopVisible.value, diceTrayMobileVisible.value] as const,
+  ([desktopVisible, mobileVisible]) => {
+    const visible = desktopVisible || mobileVisible;
   if (!visible) {
     diceSettingsVisible.value = false;
   }
-});
+  },
+);
 watch(diceSettingsVisible, (visible) => {
   if (visible) {
     ensureBotOptionsLoaded();
     refreshChannelBotSelection();
   } else if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
   }
 });
 
@@ -525,7 +644,7 @@ const handleGlobalOverlayToggle = (payload?: { source?: string; open?: boolean }
   if (!payload?.open) {
     return;
   }
-  diceTrayVisible.value = false;
+  closeAllDiceTrays();
   diceSettingsVisible.value = false;
   if (payload.source !== 'emoji-panel') {
     emojiPopoverShow.value = false;
@@ -10211,14 +10330,12 @@ onBeforeUnmount(() => {
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
-  if (isMobileUa) {
-    markDiceTrayMobileWrapper(false);
-  }
+  markDiceTrayMobileWrapper(false);
 });
 </script>
 
 <template>
-  <div class="flex flex-col h-full justify-between chat-root-container">
+  <div ref="chatRootContainerRef" class="flex flex-col h-full justify-between chat-root-container">
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
@@ -11028,8 +11145,14 @@ onBeforeUnmount(() => {
                     </div>
                   </n-popover>
                 </div>
-                <div class="chat-input-actions__cell">
-                  <n-popover trigger="manual" placement="top" :show="diceTrayVisible">
+                <div class="chat-input-actions__cell" v-if="isDiceTrayEdgeAnchored">
+                  <n-popover
+                    trigger="manual"
+                    placement="top-end"
+                    :show="diceTrayMobileVisible"
+                    :show-arrow="false"
+                    :overlay-class="DICE_TRAY_EDGE_OVERLAY_CLASS"
+                  >
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
@@ -11053,7 +11176,7 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
-                      @close="diceTrayVisible = false"
+                      @close="diceTrayMobileVisible = false"
                     >
                       <template v-if="canManageChannelFeatures" #header-actions>
                         <template v-if="isMobileUa">
@@ -11079,6 +11202,168 @@ onBeforeUnmount(() => {
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
+                            :bordered="false"
+                            title="掷骰设置"
+                          >
+                            <div class="dice-settings-panel dice-settings-panel--modal">
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">内置骰点</p>
+                                    <p class="dice-settings-panel__desc">自动解析输入并生成骰点结果。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.builtInDiceEnabled" :disabled="diceFeatureUpdating" @update:value="handleDiceFeatureToggle" />
+                                </div>
+                              </div>
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">机器人骰点</p>
+                                    <p class="dice-settings-panel__desc">交由机器人处理掷骰，避免与内置功能冲突。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.botFeatureEnabled" :disabled="diceFeatureUpdating" @update:value="handleBotFeatureToggle" />
+                                </div>
+                                <div class="dice-settings-panel__body" v-if="channelFeatures.botFeatureEnabled">
+                                  <n-select
+                                    :value="channelBotSelection"
+                                    class="dice-settings-panel__select"
+                                    :options="botSelectOptions"
+                                    :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
+                                    :disabled="syncingChannelBot || !hasBotOptions"
+                                    placeholder="选择要启用的机器人"
+                                    clearable
+                                    @update:value="handleBotSelectionChange"
+                                  />
+                                  <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
+                                    暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                </div>
+                                <div class="dice-settings-panel__footer">
+                                  <n-button text size="tiny" @click="openChannelMemberSettings">前往成员管理</n-button>
+                                </div>
+                              </div>
+                            </div>
+                          </n-modal>
+                        </template>
+                        <template v-else>
+                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                            <template #trigger>
+                              <n-tooltip trigger="hover">
+                                <template #trigger>
+                                  <div class="dice-mode-status">
+                                    <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                    <n-button
+                                      quaternary
+                                      size="tiny"
+                                      circle
+                                      class="dice-tray-settings-trigger"
+                                      :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                      @click.stop="diceSettingsVisible = !diceSettingsVisible"
+                                    >
+                                      <n-icon :component="Settings" size="14" />
+                                    </n-button>
+                                  </div>
+                                </template>
+                                {{ diceModeTooltip }}
+                              </n-tooltip>
+                            </template>
+                            <div class="dice-settings-panel">
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">内置骰点</p>
+                                    <p class="dice-settings-panel__desc">自动解析输入并生成骰点结果。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.builtInDiceEnabled" :disabled="diceFeatureUpdating" @update:value="handleDiceFeatureToggle" />
+                                </div>
+                              </div>
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">机器人骰点</p>
+                                    <p class="dice-settings-panel__desc">交由机器人处理掷骰，避免与内置功能冲突。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.botFeatureEnabled" :disabled="diceFeatureUpdating" @update:value="handleBotFeatureToggle" />
+                                </div>
+                                <div class="dice-settings-panel__body" v-if="channelFeatures.botFeatureEnabled">
+                                  <n-select
+                                    :value="channelBotSelection"
+                                    class="dice-settings-panel__select"
+                                    :options="botSelectOptions"
+                                    :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
+                                    :disabled="syncingChannelBot || !hasBotOptions"
+                                    placeholder="选择要启用的机器人"
+                                    clearable
+                                    @update:value="handleBotSelectionChange"
+                                  />
+                                  <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
+                                    暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                </div>
+                                <div class="dice-settings-panel__footer">
+                                  <n-button text size="tiny" @click="openChannelMemberSettings">前往成员管理</n-button>
+                                </div>
+                              </div>
+                            </div>
+                          </n-popover>
+                        </template>
+                      </template>
+                    </DiceTray>
+                  </n-popover>
+                </div>
+                <div class="chat-input-actions__cell" v-else>
+                  <n-popover trigger="manual" placement="top" :show="diceTrayDesktopVisible">
+                    <template #trigger>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                            <template #icon>
+                              <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
+                                <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
+                                <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
+                              </svg>
+                            </template>
+                          </n-button>
+                        </template>
+                        掷骰
+                      </n-tooltip>
+                    </template>
+                    <DiceTray
+                      :default-dice="defaultDiceExpr"
+                      :can-edit-default="canEditDefaultDice"
+                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
+                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      @insert="handleDiceInsert"
+                      @roll="handleDiceRollNow"
+                      @update-default="handleDiceDefaultUpdate"
+                      @close="diceTrayDesktopVisible = false"
+                    >
+                      <template v-if="canManageChannelFeatures" #header-actions>
+                        <template v-if="isMobileUa">
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                <n-button
+                                  quaternary
+                                  size="tiny"
+                                  circle
+                                  class="dice-tray-settings-trigger"
+                                  :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                  @click.stop="diceSettingsVisible = true"
+                                >
+                                  <n-icon :component="Settings" size="14" />
+                                </n-button>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
+                          <n-modal
+                            v-model:show="diceSettingsVisible"
+                            preset="card"
+                            class="dice-settings-modal-mobile"
+                            :mask-closable="true"
+                            :closable="false"
                             :bordered="false"
                             title="掷骰设置"
                           >
@@ -14805,29 +15090,34 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
-:global(.dice-tray-mobile-wrapper) {
-  width: min(92vw, 420px) !important;
-  max-width: 100vw;
-  left: 4vw !important;
-  right: 4vw !important;
+:global(.dice-tray-popover-edge) {
+  width: min(420px, calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px))) !important;
+  max-width: calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px));
+  left: auto !important;
+  right: var(--dice-tray-right-offset, 0px) !important;
   position: fixed !important;
+  transform: none !important;
+  box-sizing: border-box;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray) {
+:global(.dice-tray-popover-edge .dice-tray) {
   width: 100%;
   min-width: 0;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__body) {
+:global(.dice-tray-popover-edge .dice-tray__body) {
   flex-direction: column;
   gap: 0.75rem;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__column--quick) {
+:global(.dice-tray-popover-edge .dice-tray__column--quick) {
   flex: 1;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__history) {
+:global(.dice-tray-popover-edge .dice-tray__history) {
   max-height: 45vh;
   overflow-y: auto;
 }
