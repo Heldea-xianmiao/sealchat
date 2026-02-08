@@ -19,8 +19,8 @@ import (
 )
 
 type ApiMsgPayload struct {
-	Api  string `json:"api"`
-	Echo string `json:"echo"`
+	Api  string          `json:"api"`
+	Echo string          `json:"echo"`
 	Data json.RawMessage `json:"data"`
 }
 
@@ -56,6 +56,9 @@ type ConnInfo struct {
 	Focused               bool
 	BotLastMessageContext *utils.SyncMap[string, *protocol.MessageContext]
 	BotHiddenDicePending  *utils.SyncMap[string, *BotHiddenDicePending]
+	BotCharacterSupport   BotCharacterSupportState
+	BotCharacterProbeOn   bool
+	BotCharacterProbeFail int
 }
 
 type BotHiddenDicePending struct {
@@ -106,6 +109,7 @@ func websocketWorks(app *fiber.App) {
 		"channel.member.list.online": {},
 		"message.list":               {},
 		"message.get":                {},
+		"message.context":            {},
 	}
 
 	clientEnter := func(c *WsSyncConn, body any) (curUser *model.UserModel, curConnInfo *ConnInfo) {
@@ -244,6 +248,9 @@ func websocketWorks(app *fiber.App) {
 						"user": curUser,
 					},
 				})
+				if user.IsBot {
+					startBotCharacterCapabilityProbe(curConnInfo)
+				}
 				return
 			}
 		}
@@ -552,16 +559,16 @@ func websocketWorks(app *fiber.App) {
 						// 私聊
 						apiWrap(ctx, msg, apiChannelPrivateCreate)
 						solved = true
-				case "channel.list":
-					apiWrap(ctx, msg, apiChannelList)
-					solved = true
-				case "channel.favorite.list":
-					apiWrap(ctx, msg, apiChannelFavoriteList)
-					solved = true
+					case "channel.list":
+						apiWrap(ctx, msg, apiChannelList)
+						solved = true
+					case "channel.favorite.list":
+						apiWrap(ctx, msg, apiChannelFavoriteList)
+						solved = true
 
-				case "channel.members_count": // 自设API
-					apiWrap(ctx, msg, apiChannelMemberCount)
-					solved = true
+					case "channel.members_count": // 自设API
+						apiWrap(ctx, msg, apiChannelMemberCount)
+						solved = true
 					case "channel.member.list.online": // 自设API: 获取频道内在线用户
 						apiWrap(ctx, msg, apiChannelMemberListOnline)
 						solved = true
@@ -621,6 +628,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "message.get":
 						apiWrap(ctx, msg, apiMessageGet)
+						solved = true
+					case "message.context":
+						apiWrap(ctx, msg, apiMessageContext)
 						solved = true
 					case "chat.export.test":
 						apiWrap(ctx, msg, apiChatExportTest)
@@ -769,14 +779,14 @@ func websocketWorks(app *fiber.App) {
 			ChannelUsersMap: channelUsersMap,
 			UserId2ConnInfo: userId2ConnInfo,
 		}
-	channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
-		if curUser != nil && value.Exists(curUser.ID) {
-			if !userHasChannelConnection(curUser.ID, chId, userId2ConnInfo, nil) {
-				value.Delete(curUser.ID)
+		channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
+			if curUser != nil && value.Exists(curUser.ID) {
+				if !userHasChannelConnection(curUser.ID, chId, userId2ConnInfo, nil) {
+					value.Delete(curUser.ID)
+				}
+				ctx.BroadcastChannelPresence(chId)
 			}
-			ctx.BroadcastChannelPresence(chId)
-		}
-		return true
-	})
+			return true
+		})
 	}))
 }

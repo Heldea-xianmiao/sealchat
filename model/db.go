@@ -128,6 +128,8 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelLatestReadModel{})
 	db.AutoMigrate(&ChannelIdentityModel{})
 	db.AutoMigrate(&CharacterCardModel{})
+	db.AutoMigrate(&CharacterCardTemplateModel{})
+	db.AutoMigrate(&CharacterCardTemplateBindingModel{})
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{})

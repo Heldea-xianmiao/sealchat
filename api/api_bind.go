@@ -174,7 +174,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	corsConfig := cors.New(cors.Config{
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, ObjectId",
-		ExposeHeaders:    "Content-Length",
+		ExposeHeaders:    "Content-Length, X-Access-Token-Refresh",
 		MaxAge:           3600,
 		AllowOrigins:     "",
 		AllowCredentials: true,
@@ -317,6 +317,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/character-cards/:id", CharacterCardGet)
 	v1Auth.Put("/character-cards/:id", CharacterCardUpdate)
 	v1Auth.Delete("/character-cards/:id", CharacterCardDelete)
+	v1Auth.Get("/character-card-templates", CharacterCardTemplateList)
+	v1Auth.Post("/character-card-templates", CharacterCardTemplateCreate)
+	v1Auth.Put("/character-card-templates/:id", CharacterCardTemplateUpdate)
+	v1Auth.Delete("/character-card-templates/:id", CharacterCardTemplateDelete)
+	v1Auth.Post("/character-card-templates/:id/set-default", CharacterCardTemplateSetDefault)
+	v1Auth.Get("/character-card-template-bindings", CharacterCardTemplateBindingList)
+	v1Auth.Post("/character-card-template-bindings/upsert", CharacterCardTemplateBindingUpsert)
 
 	v1Auth.Get("/channel-identity-folders", ChannelIdentityFolderList)
 	v1Auth.Post("/channel-identity-folders", ChannelIdentityFolderCreate)
@@ -408,6 +415,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1Auth.Get("/channel-info", ChannelInfoGet)
 	v1Auth.Get("/channel-perm-tree", ChannelPermTree)
 	v1Auth.Get("/channel-role-perms", ChannelRolePermGet)
+	v1Auth.Post("/channel-role-perms-batch", ChannelRolePermBatchGet)
 	v1Auth.Post("/role-perms-apply", RolePermApply)
 
 	worldGroup := v1Auth.Group("/worlds")

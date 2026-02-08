@@ -58,6 +58,8 @@ const (
 	defaultBackupPath               = "./backups"
 	defaultBackupIntervalHours      = 12
 	defaultBackupRetentionCount     = 5
+	defaultAuthTokenMaxAgeDays      = 15
+	defaultAuthRefreshThresholdDays = 7
 )
 
 type CaptchaMode string
@@ -177,15 +179,29 @@ type BackupConfig struct {
 	Path           string `json:"path" yaml:"path"`
 }
 
+// AuthSessionConfig 登录会话配置
+type AuthSessionConfig struct {
+	MaxAgeDays           int `json:"maxAgeDays" yaml:"maxAgeDays"`
+	RefreshThresholdDays int `json:"refreshThresholdDays" yaml:"refreshThresholdDays"`
+}
+
 // LoginBackgroundConfig 登录页背景配置
 type LoginBackgroundConfig struct {
-	AttachmentId   string `json:"attachmentId" yaml:"attachmentId"`
-	Mode           string `json:"mode" yaml:"mode"`
-	Opacity        int    `json:"opacity" yaml:"opacity"`
-	Blur           int    `json:"blur" yaml:"blur"`
-	Brightness     int    `json:"brightness" yaml:"brightness"`
-	OverlayColor   string `json:"overlayColor" yaml:"overlayColor"`
-	OverlayOpacity int    `json:"overlayOpacity" yaml:"overlayOpacity"`
+	AttachmentId        string `json:"attachmentId" yaml:"attachmentId"`
+	Mode                string `json:"mode" yaml:"mode"`
+	Opacity             int    `json:"opacity" yaml:"opacity"`
+	Blur                int    `json:"blur" yaml:"blur"`
+	Brightness          int    `json:"brightness" yaml:"brightness"`
+	OverlayColor        string `json:"overlayColor" yaml:"overlayColor"`
+	OverlayOpacity      int    `json:"overlayOpacity" yaml:"overlayOpacity"`
+	PanelAutoTint       bool   `json:"panelAutoTint" yaml:"panelAutoTint"`
+	PanelTintColor      string `json:"panelTintColor" yaml:"panelTintColor"`
+	PanelTintOpacity    int    `json:"panelTintOpacity" yaml:"panelTintOpacity"`
+	PanelBlur           int    `json:"panelBlur" yaml:"panelBlur"`
+	PanelSaturate       int    `json:"panelSaturate" yaml:"panelSaturate"`
+	PanelContrast       int    `json:"panelContrast" yaml:"panelContrast"`
+	PanelBorderOpacity  int    `json:"panelBorderOpacity" yaml:"panelBorderOpacity"`
+	PanelShadowStrength int    `json:"panelShadowStrength" yaml:"panelShadowStrength"`
 }
 
 type AppConfig struct {
@@ -215,6 +231,7 @@ type AppConfig struct {
 	EmailAuth                 EmailAuthConfig         `json:"emailAuth" yaml:"emailAuth"`
 	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
 	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
+	AuthSession               AuthSessionConfig       `json:"authSession" yaml:"authSession"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 }
 
@@ -262,8 +279,8 @@ func ReadConfig() *AppConfig {
 		RegisterOpen:              true,
 		WebUrl:                    "/",
 		PageTitle:                 defaultPageTitle,
-	ChatHistoryPersistentDays: -1,
-	TypingOrderWindowMs:       1000,
+		ChatHistoryPersistentDays: -1,
+		TypingOrderWindowMs:       1000,
 		ImageSizeLimit:            8192,
 		ImageCompress:             true,
 		ImageCompressQuality:      85,
@@ -361,11 +378,22 @@ func ReadConfig() *AppConfig {
 			RetentionCount: defaultBackupRetentionCount,
 			Path:           defaultBackupPath,
 		},
+		AuthSession: AuthSessionConfig{
+			MaxAgeDays:           defaultAuthTokenMaxAgeDays,
+			RefreshThresholdDays: defaultAuthRefreshThresholdDays,
+		},
 		LoginBackground: LoginBackgroundConfig{
-			Mode:       "cover",
-			Opacity:    30,
-			Blur:       0,
-			Brightness: 100,
+			Mode:                "cover",
+			Opacity:             30,
+			Blur:                0,
+			Brightness:          100,
+			PanelAutoTint:       true,
+			PanelTintOpacity:    72,
+			PanelBlur:           14,
+			PanelSaturate:       120,
+			PanelContrast:       105,
+			PanelBorderOpacity:  18,
+			PanelShadowStrength: 22,
 		},
 	}
 
@@ -421,21 +449,22 @@ func ReadConfig() *AppConfig {
 
 	config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 	config.Storage.normalize()
-		applyStorageEnvOverrides(&config.Storage)
-		if strings.TrimSpace(config.Storage.Local.AudioDir) == "" {
-			config.Storage.Local.AudioDir = config.Audio.StorageDir
-		}
-		if strings.TrimSpace(config.Audio.ImportDir) == "" && strings.TrimSpace(config.Audio.StorageDir) != "" {
-			config.Audio.ImportDir = filepath.Join(config.Audio.StorageDir, "import")
-		}
-		applyImageBaseURLFallback(&config)
-		applySQLiteDefaults(&config.SQLite)
-		applyExportDefaults(&config.Export)
+	applyStorageEnvOverrides(&config.Storage)
+	if strings.TrimSpace(config.Storage.Local.AudioDir) == "" {
+		config.Storage.Local.AudioDir = config.Audio.StorageDir
+	}
+	if strings.TrimSpace(config.Audio.ImportDir) == "" && strings.TrimSpace(config.Audio.StorageDir) != "" {
+		config.Audio.ImportDir = filepath.Join(config.Audio.StorageDir, "import")
+	}
+	applyImageBaseURLFallback(&config)
+	applySQLiteDefaults(&config.SQLite)
+	applyExportDefaults(&config.Export)
 	config.Captcha.normalize()
 	applyEmailNotificationDefaults(&config.EmailNotification)
 	applyEmailAuthDefaults(&config.EmailAuth)
 	applyUpdateCheckDefaults(&config.UpdateCheck)
 	applyBackupDefaults(&config.Backup)
+	applyAuthSessionDefaults(&config.AuthSession)
 
 	k.Print()
 	currentConfig = &config
@@ -568,6 +597,41 @@ func applyBackupDefaults(cfg *BackupConfig) {
 	if strings.TrimSpace(cfg.Path) == "" {
 		cfg.Path = defaultBackupPath
 	}
+}
+
+func applyAuthSessionDefaults(cfg *AuthSessionConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.MaxAgeDays <= 0 {
+		cfg.MaxAgeDays = defaultAuthTokenMaxAgeDays
+	}
+	if cfg.RefreshThresholdDays <= 0 {
+		cfg.RefreshThresholdDays = defaultAuthRefreshThresholdDays
+	}
+	if cfg.RefreshThresholdDays > cfg.MaxAgeDays {
+		cfg.RefreshThresholdDays = cfg.MaxAgeDays
+	}
+}
+
+func ResolveAuthSessionMaxAgeDays() int {
+	maxAgeDays := defaultAuthTokenMaxAgeDays
+	if cfg := GetConfig(); cfg != nil && cfg.AuthSession.MaxAgeDays > 0 {
+		maxAgeDays = cfg.AuthSession.MaxAgeDays
+	}
+	return maxAgeDays
+}
+
+func ResolveAuthSessionRefreshThresholdDays() int {
+	refreshThresholdDays := defaultAuthRefreshThresholdDays
+	if cfg := GetConfig(); cfg != nil && cfg.AuthSession.RefreshThresholdDays > 0 {
+		refreshThresholdDays = cfg.AuthSession.RefreshThresholdDays
+	}
+	maxAgeDays := ResolveAuthSessionMaxAgeDays()
+	if refreshThresholdDays > maxAgeDays {
+		refreshThresholdDays = maxAgeDays
+	}
+	return refreshThresholdDays
 }
 
 func (cfg *CaptchaConfig) normalize() {
@@ -727,6 +791,10 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("backup.retentionCount", config.Backup.RetentionCount)
 		_ = k.Set("backup.path", config.Backup.Path)
 
+		// 登录会话配置
+		_ = k.Set("authSession.maxAgeDays", config.AuthSession.MaxAgeDays)
+		_ = k.Set("authSession.refreshThresholdDays", config.AuthSession.RefreshThresholdDays)
+
 		// 登录页背景配置
 		_ = k.Set("loginBackground.attachmentId", config.LoginBackground.AttachmentId)
 		_ = k.Set("loginBackground.mode", config.LoginBackground.Mode)
@@ -735,6 +803,14 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("loginBackground.brightness", config.LoginBackground.Brightness)
 		_ = k.Set("loginBackground.overlayColor", config.LoginBackground.OverlayColor)
 		_ = k.Set("loginBackground.overlayOpacity", config.LoginBackground.OverlayOpacity)
+		_ = k.Set("loginBackground.panelAutoTint", config.LoginBackground.PanelAutoTint)
+		_ = k.Set("loginBackground.panelTintColor", config.LoginBackground.PanelTintColor)
+		_ = k.Set("loginBackground.panelTintOpacity", config.LoginBackground.PanelTintOpacity)
+		_ = k.Set("loginBackground.panelBlur", config.LoginBackground.PanelBlur)
+		_ = k.Set("loginBackground.panelSaturate", config.LoginBackground.PanelSaturate)
+		_ = k.Set("loginBackground.panelContrast", config.LoginBackground.PanelContrast)
+		_ = k.Set("loginBackground.panelBorderOpacity", config.LoginBackground.PanelBorderOpacity)
+		_ = k.Set("loginBackground.panelShadowStrength", config.LoginBackground.PanelShadowStrength)
 
 		if err := k.Unmarshal("", config); err != nil {
 			fmt.Printf("配置解析失败: %v\n", err)

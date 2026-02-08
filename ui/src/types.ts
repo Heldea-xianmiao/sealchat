@@ -28,6 +28,8 @@ declare module '@satorijs/protocol' {
     defaultDiceExpr?: string;
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
+    characterApiEnabled?: boolean;
+    characterApiReason?: string;
   }
 }
 
@@ -94,6 +96,24 @@ export interface CaptchaConfig {
   passwordReset?: CaptchaTargetConfig;
   mode?: 'off' | 'local' | 'turnstile';
   turnstile?: TurnstileConfig;
+}
+
+export interface LoginBackgroundConfig {
+  attachmentId?: string;
+  mode?: 'cover' | 'contain' | 'tile' | 'center';
+  opacity?: number;
+  blur?: number;
+  brightness?: number;
+  overlayColor?: string;
+  overlayOpacity?: number;
+  panelAutoTint?: boolean;
+  panelTintColor?: string;
+  panelTintOpacity?: number;
+  panelBlur?: number;
+  panelSaturate?: number;
+  panelContrast?: number;
+  panelBorderOpacity?: number;
+  panelShadowStrength?: number;
 }
 
 export interface ExportTaskItem {
@@ -171,15 +191,7 @@ export interface ServerConfig {
   audio?: ServerAudioConfig;
   ffmpegAvailable?: boolean;
   audioImportEnabled?: boolean;
-  loginBackground?: {
-    attachmentId?: string;
-    mode?: 'cover' | 'contain' | 'tile' | 'center';
-    opacity?: number;
-    blur?: number;
-    brightness?: number;
-    overlayColor?: string;
-    overlayOpacity?: number;
-  };
+  loginBackground?: LoginBackgroundConfig;
 }
 
 export interface UserInfo {
@@ -253,6 +265,8 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  characterApiEnabled?: boolean;
+  characterApiReason?: string;
   backgroundAttachmentId?: string;
   backgroundSettings?: ChannelBackgroundSettings | string;
 }
@@ -416,6 +430,9 @@ export interface CharacterCard {
   name: string;
   sheetType: string;
   attrs: Record<string, any>;
+  templateMode?: 'managed' | 'detached';
+  templateId?: string;
+  templateSnapshot?: string;
   createdAt?: string;
   updatedAt?: string;
 }

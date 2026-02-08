@@ -81,7 +81,7 @@ import { useRoute, useRouter } from 'vue-router';
 import WebhookIntegrationManager from '@/views/split/components/WebhookIntegrationManager.vue';
 import EmailNotificationManager from '@/views/split/components/EmailNotificationManager.vue';
 import CharacterCardPanel from './components/CharacterCardPanel.vue';
-import { useCharacterCardStore } from '@/stores/characterCard';
+import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
@@ -126,7 +126,7 @@ const scheduleCharacterSheetRefresh = () => {
   if (stRefreshTimer) clearTimeout(stRefreshTimer);
   stRefreshTimer = setTimeout(() => {
     const channelId = chat.curChannel?.id;
-    if (channelId) {
+    if (channelId && !characterCardStore.isBotCharacterDisabled(channelId)) {
       void characterCardStore.getActiveCard(channelId);
     }
     if (characterSheetStore.activeWindowIds.length > 0) {
@@ -163,7 +163,9 @@ type ExternalPanelKey =
   | 'gallery'
   | 'display'
   | 'favorites'
-  | 'channel-images';
+  | 'channel-images'
+  | 'character-card'
+  | 'sticky-note';
 
 const openPanelForShell = (panel: ExternalPanelKey) => {
   switch (panel) {
@@ -194,6 +196,12 @@ const openPanelForShell = (panel: ExternalPanelKey) => {
     case 'channel-images':
       openChannelImagesPanel();
       return;
+    case 'character-card':
+      openCharacterCardPanel();
+      return;
+    case 'sticky-note':
+      setStickyNoteVisible(true);
+      return;
     default:
       return;
   }
@@ -203,9 +211,29 @@ const setFiltersForShell = (filters: any) => {
   chat.setFilterState(filters);
 };
 
+const setStickyNoteVisible = (visible: boolean) => {
+  stickyNoteStore.setVisible(visible);
+};
+
+const setCharacterCardVisible = (visible: boolean) => {
+  if (!visible) {
+    characterCardPanelVisible.value = false;
+    return;
+  }
+  openCharacterCardPanel();
+};
+
+const getStickyNoteVisible = () => stickyNoteStore.uiVisible.value;
+
+const getCharacterCardVisible = () => characterCardPanelVisible.value;
+
 defineExpose({
   openPanelForShell,
   setFiltersForShell,
+  setStickyNoteVisible,
+  setCharacterCardVisible,
+  getStickyNoteVisible,
+  getCharacterCardVisible,
 });
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
@@ -225,24 +253,6 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     }
   },
 });
-
-watch(
-  () => chat.currentWorldId,
-  (worldId) => {
-    if (!worldId) {
-      return
-    }
-    worldGlossary.ensureKeywords(worldId)
-    chat.worldDetail(worldId)
-    hideSelectionBar()
-  },
-  { immediate: true },
-)
-
-watch(
-  () => chat.curChannel?.id,
-  () => hideSelectionBar(),
-)
 
 const canManageWorldKeywords = computed(() => {
   const worldId = chat.currentWorldId
@@ -310,7 +320,8 @@ const channelBackgroundOverlayStyle = computed(() => {
   };
 });
 
-const diceTrayVisible = ref(false);
+const diceTrayDesktopVisible = ref(false);
+const diceTrayMobileVisible = ref(false);
 const diceSettingsVisible = ref(false);
 const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
@@ -319,7 +330,30 @@ const botOptionsFetched = ref(false);
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
   : false;
-const diceTrayFollowerClass = 'dice-tray-mobile-wrapper';
+const chatRootContainerRef = ref<HTMLElement | null>(null);
+const DICE_TRAY_EDGE_OVERLAY_CLASS = 'dice-tray-popover-edge';
+const DICE_TRAY_RIGHT_OFFSET_TUNE_PX = -10;
+const isCoarsePointerDevice = typeof window !== 'undefined'
+  ? window.matchMedia('(pointer: coarse)').matches
+  : false;
+const isDiceTrayEdgeAnchored = computed(() => isMobileUa && isCoarsePointerDevice);
+const closeAllDiceTrays = () => {
+  diceTrayDesktopVisible.value = false;
+  diceTrayMobileVisible.value = false;
+};
+const setCurrentDiceTrayVisible = (visible: boolean) => {
+  if (isDiceTrayEdgeAnchored.value) {
+    diceTrayMobileVisible.value = visible;
+    if (visible) {
+      diceTrayDesktopVisible.value = false;
+    }
+  } else {
+    diceTrayDesktopVisible.value = visible;
+    if (visible) {
+      diceTrayMobileVisible.value = false;
+    }
+  }
+};
 const channelBotSelection = ref('');
 const channelBotsLoading = ref(false);
 const syncingChannelBot = ref(false);
@@ -409,6 +443,24 @@ const webhookDrawerVisible = ref(false);
 const webhookManageAllowed = ref(false);
 const emailNotificationDrawerVisible = ref(false);
 const characterCardPanelVisible = ref(false);
+const characterCardAvailable = computed(() => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) return false;
+  return !characterCardStore.isBotCharacterDisabled(channelId);
+});
+
+const openCharacterCardPanel = () => {
+  const channelId = chat.curChannel?.id || '';
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  characterCardPanelVisible.value = true;
+  if (!characterCardAvailable.value) {
+    const tip = characterCardStore.getCharacterApiDisabledReason(channelId) || characterApiUnsupportedText;
+    message.warning(tip);
+  }
+};
 let webhookPermissionSeq = 0;
 
 watch(
@@ -440,16 +492,20 @@ watch(
 const toggleDiceTray = () => {
   if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
     message.warning('内置骰点已关闭，请在设置中启用或切换机器人。');
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
     return;
   }
-  diceTrayVisible.value = !diceTrayVisible.value;
+  if (isDiceTrayEdgeAnchored.value) {
+    setCurrentDiceTrayVisible(!diceTrayMobileVisible.value);
+  } else {
+    setCurrentDiceTrayVisible(!diceTrayDesktopVisible.value);
+  }
 };
 watch(() => chat.curChannel, (channel) => {
   channelFeatures.builtInDiceEnabled = channel?.builtInDiceEnabled !== false;
   channelFeatures.botFeatureEnabled = channel?.botFeatureEnabled === true;
   if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
   }
 }, { immediate: true });
 watch(() => chat.curChannel?.id, () => {
@@ -464,54 +520,145 @@ watch(canManageChannelFeatures, (canManage) => {
 });
 watch(() => channelFeatures.builtInDiceEnabled, (enabled) => {
 	if (!enabled && !channelFeatures.botFeatureEnabled && !diceSettingsVisible.value) {
-		diceTrayVisible.value = false;
+		closeAllDiceTrays();
 	}
 });
 watch(() => channelFeatures.botFeatureEnabled, (enabled) => {
 	if (!enabled && !channelFeatures.builtInDiceEnabled && !diceSettingsVisible.value) {
-		diceTrayVisible.value = false;
+		closeAllDiceTrays();
 	}
 });
 
 const markDiceTrayMobileWrapper = (enabled: boolean) => {
-  if (!isMobileUa || typeof document === 'undefined') return;
+  if (typeof document === 'undefined') return;
+  if (!isDiceTrayEdgeAnchored.value) {
+    const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
+    followers.forEach((el) => {
+      if (!el) return;
+      if (!el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS) && !el.querySelector('.dice-tray')) return;
+      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.removeProperty('--dice-tray-right-offset');
+      el.style.removeProperty('--dice-tray-left-offset');
+      el.style.removeProperty('position');
+      el.style.removeProperty('left');
+      el.style.removeProperty('right');
+      el.style.removeProperty('transform');
+      el.style.removeProperty('box-sizing');
+      el.style.removeProperty('width');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('border');
+      el.style.removeProperty('box-shadow');
+      el.style.removeProperty('background');
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.removeProperty('padding');
+        popoverContent.style.removeProperty('border');
+        popoverContent.style.removeProperty('box-shadow');
+        popoverContent.style.removeProperty('background');
+      }
+    });
+    return;
+  }
+  const shouldAnchorRightEdge = enabled && isDiceTrayEdgeAnchored.value;
+  const rootRect = chatRootContainerRef.value?.getBoundingClientRect();
+  const rawRightOffset = rootRect ? Math.max(0, window.innerWidth - rootRect.right) : 0;
+  const rightOffset = Math.max(0, rawRightOffset + DICE_TRAY_RIGHT_OFFSET_TUNE_PX);
+  const leftOffset = rootRect ? Math.max(0, rootRect.left) : 0;
   const followers = Array.from(document.querySelectorAll('.v-binder-follower-content')) as HTMLElement[];
   followers.forEach((el) => {
     if (!el) return;
-    if (el.querySelector('.dice-tray')) {
-      if (enabled) {
-        el.classList.add(diceTrayFollowerClass);
-      } else {
-        el.classList.remove(diceTrayFollowerClass);
+    const hasDiceTray = !!el.querySelector('.dice-tray');
+    const tracked = hasDiceTray || el.classList.contains(DICE_TRAY_EDGE_OVERLAY_CLASS);
+    if (!tracked) return;
+
+    if (shouldAnchorRightEdge && hasDiceTray) {
+      const availableWidth = Math.max(0, window.innerWidth - leftOffset - rightOffset);
+      const targetWidth = Math.min(420, availableWidth);
+
+      el.classList.add(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.setProperty('--dice-tray-right-offset', `${rightOffset}px`);
+      el.style.setProperty('--dice-tray-left-offset', `${leftOffset}px`);
+      el.style.setProperty('position', 'fixed', 'important');
+      el.style.setProperty('left', 'auto', 'important');
+      el.style.setProperty('right', `${rightOffset}px`, 'important');
+      el.style.setProperty('transform', 'none', 'important');
+      el.style.setProperty('box-sizing', 'border-box');
+      el.style.setProperty('width', `${targetWidth}px`, 'important');
+      el.style.setProperty('max-width', `${availableWidth}px`, 'important');
+      el.style.setProperty('border', 'none', 'important');
+      el.style.setProperty('box-shadow', 'none', 'important');
+      el.style.setProperty('background', 'transparent', 'important');
+
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.setProperty('padding', '0', 'important');
+        popoverContent.style.setProperty('border', 'none', 'important');
+        popoverContent.style.setProperty('box-shadow', 'none', 'important');
+        popoverContent.style.setProperty('background', 'transparent', 'important');
       }
-    } else if (!enabled) {
-      el.classList.remove(diceTrayFollowerClass);
+    } else {
+      el.classList.remove(DICE_TRAY_EDGE_OVERLAY_CLASS);
+      el.style.removeProperty('--dice-tray-right-offset');
+      el.style.removeProperty('--dice-tray-left-offset');
+      el.style.removeProperty('position');
+      el.style.removeProperty('left');
+      el.style.removeProperty('right');
+      el.style.removeProperty('transform');
+      el.style.removeProperty('box-sizing');
+      el.style.removeProperty('width');
+      el.style.removeProperty('max-width');
+      el.style.removeProperty('border');
+      el.style.removeProperty('box-shadow');
+      el.style.removeProperty('background');
+
+      const popoverContent = el.querySelector('.n-popover__content') as HTMLElement | null;
+      if (popoverContent) {
+        popoverContent.style.removeProperty('padding');
+        popoverContent.style.removeProperty('border');
+        popoverContent.style.removeProperty('box-shadow');
+        popoverContent.style.removeProperty('background');
+      }
     }
   });
 };
 
 watch(
-  () => diceTrayVisible.value,
+  () => diceTrayMobileVisible.value,
   (visible) => {
-    if (!isMobileUa) return;
+    if (!isDiceTrayEdgeAnchored.value) {
+      markDiceTrayMobileWrapper(false);
+      return;
+    }
     if (visible) {
-      nextTick(() => markDiceTrayMobileWrapper(true));
+      nextTick(() => {
+        markDiceTrayMobileWrapper(true);
+        requestAnimationFrame(() => {
+          markDiceTrayMobileWrapper(true);
+        });
+        window.setTimeout(() => {
+          markDiceTrayMobileWrapper(true);
+        }, 32);
+      });
     } else {
       markDiceTrayMobileWrapper(false);
     }
   },
 );
-watch(diceTrayVisible, (visible) => {
+watch(
+  () => [diceTrayDesktopVisible.value, diceTrayMobileVisible.value] as const,
+  ([desktopVisible, mobileVisible]) => {
+    const visible = desktopVisible || mobileVisible;
   if (!visible) {
     diceSettingsVisible.value = false;
   }
-});
+  },
+);
 watch(diceSettingsVisible, (visible) => {
   if (visible) {
     ensureBotOptionsLoaded();
     refreshChannelBotSelection();
   } else if (!channelFeatures.builtInDiceEnabled && !channelFeatures.botFeatureEnabled) {
-    diceTrayVisible.value = false;
+    closeAllDiceTrays();
   }
 });
 
@@ -519,7 +666,7 @@ const handleGlobalOverlayToggle = (payload?: { source?: string; open?: boolean }
   if (!payload?.open) {
     return;
   }
-  diceTrayVisible.value = false;
+  closeAllDiceTrays();
   diceSettingsVisible.value = false;
   if (payload.source !== 'emoji-panel') {
     emojiPopoverShow.value = false;
@@ -534,6 +681,11 @@ const ensureBotOptionsLoaded = async (force = false) => {
 		return;
 	}
 	botOptionsLoading.value = true;
+	console.info('[dice-bot] bot-options-load-start', {
+		channelId: chat.curChannel?.id || '',
+		force,
+		ts: Date.now(),
+	});
 	try {
 		const resp = await chat.botList(force);
 		botOptions.value = resp?.items || [];
@@ -542,6 +694,11 @@ const ensureBotOptionsLoaded = async (force = false) => {
 		message.error(error?.response?.data?.message || '获取机器人列表失败');
 	} finally {
 		botOptionsLoading.value = false;
+		console.info('[dice-bot] bot-options-load-finish', {
+			channelId: chat.curChannel?.id || '',
+			count: botOptions.value.length,
+			ts: Date.now(),
+		});
 	}
 };
 
@@ -567,6 +724,10 @@ const refreshChannelBotSelection = async () => {
     return;
   }
   channelBotsLoading.value = true;
+  console.info('[dice-bot] channel-bot-refresh-start', {
+    channelId,
+    ts: Date.now(),
+  });
   try {
     const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
     const items = resp?.data?.items || [];
@@ -576,6 +737,11 @@ const refreshChannelBotSelection = async () => {
     message.error(error?.response?.data?.error || '加载频道机器人失败');
   } finally {
     channelBotsLoading.value = false;
+    console.info('[dice-bot] channel-bot-refresh-finish', {
+      channelId,
+      selectedBotId: channelBotSelection.value,
+      ts: Date.now(),
+    });
   }
 };
 
@@ -586,6 +752,11 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     return;
   }
   syncingChannelBot.value = true;
+  console.info('[dice-bot] channel-bot-sync-start', {
+    channelId,
+    nextBotId,
+    ts: Date.now(),
+  });
   try {
     const resp = await chat.channelMemberList(channelId, { page: 1, pageSize: 200 });
     const items = resp?.data?.items || [];
@@ -605,6 +776,11 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     throw error;
   } finally {
     syncingChannelBot.value = false;
+    console.info('[dice-bot] channel-bot-sync-finish', {
+      channelId,
+      selectedBotId: channelBotSelection.value,
+      ts: Date.now(),
+    });
   }
 };
 
@@ -801,6 +977,7 @@ const initCharacterCardBadge = (
   options?: { skipActiveCard?: boolean },
 ) => {
   if (!channelId) return;
+  if (characterCardStore.isBotCharacterDisabled(channelId)) return;
   if (!enabled) return;
   void characterCardStore.requestBadgeSnapshot(channelId);
   if (!options?.skipActiveCard) {
@@ -811,6 +988,9 @@ const initCharacterCardBadge = (
 let identitySelectionEpoch = 0;
 const simulateCurrentIdentitySelection = async (channelId?: string) => {
   if (!channelId || chat.isObserver) {
+    return false;
+  }
+  if (characterCardStore.isBotCharacterDisabled(channelId)) {
     return false;
   }
   const currentEpoch = ++identitySelectionEpoch;
@@ -843,9 +1023,9 @@ let presenceBadgeInitialized = false;
 const presenceBadgeUsers = new Set<string>();
 
 watch(
-  () => chat.curChannel?.id,
-  (channelId) => {
-    if (!channelId) return;
+  () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled] as const,
+  ([channelId, characterApiEnabled]) => {
+    if (!channelId || characterApiEnabled !== true) return;
     void (async () => {
       const didSync = await simulateCurrentIdentitySelection(channelId);
       initCharacterCardBadge(channelId, undefined, { skipActiveCard: didSync });
@@ -1148,6 +1328,24 @@ const hideSelectionBar = () => {
   selectionBar.visible = false
   selectionBar.text = ''
 }
+
+watch(
+  () => chat.currentWorldId,
+  (worldId) => {
+    if (!worldId) {
+      return
+    }
+    worldGlossary.ensureKeywords(worldId)
+    chat.worldDetail(worldId)
+    hideSelectionBar()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => chat.curChannel?.id,
+  () => hideSelectionBar(),
+)
 
 const updateSelectionPosition = (rect: DOMRect) => {
   const width = 220
@@ -2229,7 +2427,9 @@ const maybePromptIdentitySync = async () => {
     return;
   }
   try {
-    await chat.loadChannelIdentities(channelId, true);
+    const lastLoadedAt = chat.channelIdentityLoadedAt?.[channelId] || 0;
+    const shouldForce = !lastLoadedAt || Date.now() - lastLoadedAt > 15000;
+    await chat.loadChannelIdentities(channelId, shouldForce);
   } catch (error) {
     console.warn('加载频道角色失败', error);
     return;
@@ -2942,7 +3142,9 @@ const openIdentityCreate = async () => {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
   // Load character cards for the channel
-  await characterCardStore.loadCards(chat.curChannel.id);
+  if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+    await characterCardStore.loadCards(chat.curChannel.id);
+  }
   identityForm.characterCardId = '';
   identityOriginalCardId.value = '';
   identityDialogVisible.value = true;
@@ -2954,7 +3156,9 @@ const openIdentityEdit = async (identity: ChannelIdentity) => {
   resetIdentityForm(identity);
   // Load character cards for the channel
   if (chat.curChannel?.id) {
-    await characterCardStore.loadCards(chat.curChannel.id);
+    if (!characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+      await characterCardStore.loadCards(chat.curChannel.id);
+    }
     identityForm.characterCardId = identity?.id ? characterCardStore.getBoundCardId(identity.id) || '' : '';
     identityOriginalCardId.value = identityForm.characterCardId;
   }
@@ -3064,14 +3268,18 @@ const submitIdentityForm = async () => {
       const createdIdentity = await chat.channelIdentityCreate(payload);
       // Handle character card binding for new identity
       if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
-        try {
-          if (identityForm.characterCardId) {
-            await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
-          } else {
-            await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+        if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+          message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+        } else {
+          try {
+            if (identityForm.characterCardId) {
+              await characterCardStore.bindIdentity(chat.curChannel.id, createdIdentity.id, identityForm.characterCardId);
+            } else {
+              await characterCardStore.unbindIdentity(chat.curChannel.id, createdIdentity.id);
+            }
+          } catch (e) {
+            console.warn('Failed to bind character card', e);
           }
-        } catch (e) {
-          console.warn('Failed to bind character card', e);
         }
       }
       message.success('频道角色已创建');
@@ -3079,14 +3287,18 @@ const submitIdentityForm = async () => {
       await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
       // Handle character card binding changes for existing identity
       if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
-        try {
-          if (identityForm.characterCardId) {
-            await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
-          } else {
-            await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+        if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
+          message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
+        } else {
+          try {
+            if (identityForm.characterCardId) {
+              await characterCardStore.bindIdentity(chat.curChannel.id, editingIdentity.value.id, identityForm.characterCardId);
+            } else {
+              await characterCardStore.unbindIdentity(chat.curChannel.id, editingIdentity.value.id);
+            }
+          } catch (e) {
+            console.warn('Failed to update character card binding', e);
           }
-        } catch (e) {
-          console.warn('Failed to update character card binding', e);
         }
       }
       message.success('频道角色已更新');
@@ -4057,6 +4269,11 @@ interface SearchJumpWindow {
   fromTime?: number;
 }
 
+interface SearchJumpContextResult {
+  messages: Message[];
+  notFoundReason?: string;
+}
+
 const searchHighlightIds = ref(new Set<string>());
 const searchHighlightTimers = new Map<string, number>();
 
@@ -4339,6 +4556,41 @@ const locateMessageForJump = async (payload: { messageId: string; displayOrder?:
   return loadMessagesByCursor(payload);
 };
 
+const loadJumpContextByMessageId = async (
+  payload: { messageId: string },
+): Promise<SearchJumpContextResult | null> => {
+  if (!chat.curChannel?.id || !payload.messageId) {
+    return null;
+  }
+  try {
+    const resp = await chat.messageContext(chat.curChannel.id, payload.messageId, {
+      before: SEARCH_ANCHOR_WINDOW_LIMIT,
+      after: SEARCH_ANCHOR_WINDOW_LIMIT,
+      includeArchived: true,
+      includeOoc: true,
+    });
+    if (!resp) {
+      return null;
+    }
+    const normalized = normalizeMessageList(Array.isArray(resp.data) ? resp.data : []);
+    const containsTarget = normalized.some((msg) => msg.id === payload.messageId);
+    if (containsTarget) {
+      return { messages: normalized };
+    }
+    const notFoundReason = typeof resp.not_found_reason === 'string' ? resp.not_found_reason : '';
+    if (notFoundReason) {
+      return {
+        messages: [],
+        notFoundReason,
+      };
+    }
+    return null;
+  } catch (error) {
+    console.warn('按消息上下文定位失败', error);
+    return null;
+  }
+};
+
 const ensureSearchTargetVisible = async (payload: { messageId: string; displayOrder?: number; createdAt?: number }) => {
   if (messageExistsLocally(payload.messageId)) {
     return true;
@@ -4350,6 +4602,30 @@ const ensureSearchTargetVisible = async (payload: { messageId: string; displayOr
   searchJumping.value = true;
   const loadingMsg = message.loading('正在定位消息…', { duration: 0 });
   try {
+    const contextResult = await loadJumpContextByMessageId(payload);
+    if (contextResult?.messages?.length) {
+      const applied = applyHistoricalWindowFromMessages(contextResult.messages, payload);
+      if (applied) {
+        return true;
+      }
+    } else if (contextResult?.notFoundReason) {
+      switch (contextResult.notFoundReason) {
+        case 'deleted':
+          message.warning('消息已被删除，无法跳转');
+          break;
+        case 'no_permission':
+          message.warning('无法访问该消息，可能没有权限');
+          break;
+        case 'not_exists':
+          message.warning('未找到该消息');
+          break;
+        default:
+          message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
+          break;
+      }
+      return false;
+    }
+
     const mounted = await mountHistoricalWindow(payload);
     if (mounted) {
       return true;
@@ -4389,7 +4665,7 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
     }
   }
 
-  // 如果没有 createdAt，先通过 API 获取消息详情
+  // 如果没有 createdAt，尝试通过 API 获取消息详情，失败时继续走上下文定位
   let enrichedPayload = { ...payload };
   if (enrichedPayload.createdAt === undefined && chat.curChannel?.id) {
     try {
@@ -4397,9 +4673,6 @@ const handleSearchJump = async (payload: { messageId: string; displayOrder?: num
       if (msgInfo) {
         enrichedPayload.createdAt = msgInfo.created_at;
         enrichedPayload.displayOrder = msgInfo.display_order;
-      } else {
-        message.warning('未能定位到该消息，可能已被删除或当前账号无权访问');
-        return;
       }
     } catch (error) {
       console.warn('获取消息详情失败', error);
@@ -5651,6 +5924,7 @@ const setupTypingViewportObserver = () => {
     lastTypingViewportHeight = nextHeight;
   });
   typingViewportResizeObserver.observe(el);
+  scheduleRemotePreviewAutoScroll();
 };
 
 const disposeTypingViewportObserver = () => {
@@ -6042,6 +6316,9 @@ const HISTORY_PREVIEW_MAX = 120;
 const HISTORY_AUTO_RESTORE_WINDOW = 10 * 60 * 1000;
 const pendingHistoryRestoreChannelKey = ref<string | null>(null);
 const HISTORY_AUTORESTORE_STORAGE_KEY = 'sealchat_input_history_autorestore_v1';
+const HISTORY_SESSION_DRAFT_PREFIX = 'sealchat_input_session_draft_v1';
+const HISTORY_SESSION_DRAFT_WINDOW_PREFIX = 'sealchat_input_session_draft_window_v1:';
+const HISTORY_SESSION_DRAFT_TTL = 24 * 60 * 60 * 1000;
 
 interface HistoryAutoRestoreEntry {
   entryId: string;
@@ -6064,6 +6341,13 @@ interface HistoryImageInfo {
   attachmentId: string;
 }
 
+interface SessionDraftEntry {
+  mode: 'plain' | 'rich';
+  content: string;
+  updatedAt: number;
+  images?: HistoryImageInfo[];
+}
+
 interface InputHistoryEntry {
   id: string;
   channelKey: string;
@@ -6074,6 +6358,8 @@ interface InputHistoryEntry {
 }
 
 type HistoryStore = Record<string, InputHistoryEntry[]>;
+
+type SessionDraftStore = Record<string, SessionDraftEntry>;
 
 interface HistoryEntryView extends InputHistoryEntry {
   preview: string;
@@ -6088,6 +6374,115 @@ const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curCh
 const lastHistorySignature = ref<string | null>(null);
 
 const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
+
+const resolveSessionDraftStorageKey = () => {
+  if (typeof window === 'undefined') {
+    return HISTORY_SESSION_DRAFT_PREFIX;
+  }
+  try {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#/embed')) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    const queryIndex = hash.indexOf('?');
+    if (queryIndex === -1) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    const params = new URLSearchParams(hash.slice(queryIndex + 1));
+    const paneId = params.get('paneId')?.trim();
+    if (!paneId) {
+      return HISTORY_SESSION_DRAFT_PREFIX;
+    }
+    return `${HISTORY_SESSION_DRAFT_WINDOW_PREFIX}${paneId}`;
+  } catch {
+    return HISTORY_SESSION_DRAFT_PREFIX;
+  }
+};
+
+const readSessionDraftStore = (): SessionDraftStore => {
+  try {
+    const raw = sessionStorage.getItem(resolveSessionDraftStorageKey());
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as SessionDraftStore;
+    }
+  } catch (e) {
+    console.warn('读取会话草稿失败', e);
+  }
+  return {};
+};
+
+const writeSessionDraftStore = (store: SessionDraftStore) => {
+  try {
+    sessionStorage.setItem(resolveSessionDraftStorageKey(), JSON.stringify(store));
+  } catch (e) {
+    console.warn('写入会话草稿失败', e);
+  }
+};
+
+const sanitizeSessionDraftStore = (store: SessionDraftStore) => {
+  const now = Date.now();
+  let changed = false;
+  Object.keys(store).forEach((channelKey) => {
+    const entry = store[channelKey];
+    if (!entry || typeof entry !== 'object') {
+      delete store[channelKey];
+      changed = true;
+      return;
+    }
+    if (!entry.content || typeof entry.content !== 'string') {
+      delete store[channelKey];
+      changed = true;
+      return;
+    }
+    const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
+    if (!updatedAt || now - updatedAt > HISTORY_SESSION_DRAFT_TTL) {
+      delete store[channelKey];
+      changed = true;
+    }
+  });
+  return changed;
+};
+
+const writeSessionDraftForChannel = (channelKey: string, draft: SessionDraftEntry | null) => {
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return;
+  }
+  const store = readSessionDraftStore();
+  const changed = sanitizeSessionDraftStore(store);
+  if (draft) {
+    store[channelKey] = draft;
+    writeSessionDraftStore(store);
+    return;
+  }
+  if (store[channelKey]) {
+    delete store[channelKey];
+    writeSessionDraftStore(store);
+    return;
+  }
+  if (changed) {
+    writeSessionDraftStore(store);
+  }
+};
+
+const readSessionDraftForChannel = (channelKey: string): SessionDraftEntry | null => {
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return null;
+  }
+  const store = readSessionDraftStore();
+  const changed = sanitizeSessionDraftStore(store);
+  if (changed) {
+    writeSessionDraftStore(store);
+  }
+  const entry = store[channelKey];
+  if (!entry || typeof entry.content !== 'string') {
+    return null;
+  }
+  return entry;
+};
 
 const readHistoryStore = (): HistoryStore => {
   try {
@@ -6462,6 +6857,48 @@ const tryAutoRestoreHistory = () => {
   message.info('已自动恢复上次输入');
 };
 
+const syncSessionDraftSnapshot = () => {
+  const channelKey = currentChannelKey.value;
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK || isEditing.value) {
+    return;
+  }
+  if (!isContentMeaningful(inputMode.value, textToSend.value)) {
+    writeSessionDraftForChannel(channelKey, null);
+    return;
+  }
+  const images = inputMode.value === 'plain' ? collectCurrentImageInfo() : undefined;
+  writeSessionDraftForChannel(channelKey, {
+    mode: inputMode.value,
+    content: textToSend.value,
+    updatedAt: Date.now(),
+    images: images?.length ? images : undefined,
+  });
+};
+
+const tryAutoRestoreSessionDraft = () => {
+  const channelKey = currentChannelKey.value;
+  if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
+    return;
+  }
+  if (textToSend.value.trim().length > 0) {
+    return;
+  }
+  const draft = readSessionDraftForChannel(channelKey);
+  if (!draft || !isContentMeaningful(draft.mode, draft.content)) {
+    writeSessionDraftForChannel(channelKey, null);
+    return;
+  }
+  const entry: InputHistoryEntry = {
+    id: `session:${channelKey}`,
+    channelKey,
+    mode: draft.mode,
+    content: draft.content,
+    createdAt: draft.updatedAt,
+    images: draft.images,
+  };
+  applyHistoryEntry(entry, { silent: true });
+};
+
 const scheduleHistorySnapshot = throttle(
   () => {
     if (isEditing.value) {
@@ -6477,6 +6914,9 @@ watch(currentChannelKey, () => {
   historyPopoverVisible.value = false;
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
 });
 
 const handleHistoryPopoverShow = (show: boolean) => {
@@ -6495,6 +6935,9 @@ watch(hasHistoryEntries, (has) => {
 onMounted(() => {
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
+  nextTick(() => {
+    tryAutoRestoreSessionDraft();
+  });
 });
 
 const editingPreviewMap = computed<Record<string, EditingPreviewInfo>>(() => {
@@ -7011,6 +7454,7 @@ const cancelEditing = () => {
   stopEditingPreviewNow();
   chat.cancelEditing();
   textToSend.value = '';
+  syncSessionDraftSnapshot();
   stopTypingPreviewNow();
   resetInlineImages();
   ensureInputFocus();
@@ -7082,6 +7526,7 @@ const saveEdit = async () => {
     stopEditingPreviewNow();
     chat.cancelEditing();
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     resetInlineImages();
     ensureInputFocus();
   } catch (error: any) {
@@ -7158,6 +7603,7 @@ const confirmWhisperSelection = () => {
   closeWhisperPanel();
   if (source === 'slash') {
     textToSend.value = '';
+    syncSessionDraftSnapshot();
   }
   ensureInputFocus();
 };
@@ -7209,6 +7655,7 @@ const handleWhisperKeydown = (event: KeyboardEvent) => {
     closeWhisperPanel();
     if (source === 'slash') {
       textToSend.value = '';
+      syncSessionDraftSnapshot();
     }
     event.preventDefault();
     return true;
@@ -7521,10 +7968,12 @@ const startInlineImageUpload = async (markerId: string, draft: InlineImageDraft)
     draft.attachmentId = result.attachmentId;
     draft.status = 'uploaded';
     draft.error = '';
+    syncSessionDraftSnapshot();
   } catch (error: any) {
     draft.status = 'failed';
     draft.error = error?.message || '上传失败';
     message.error('图片上传失败，请删除占位符后重试');
+    syncSessionDraftSnapshot();
   }
 };
 
@@ -7809,6 +8258,7 @@ const send = throttle(async () => {
 	stopTypingPreviewNow();
   suspendInlineSync = true;
   textToSend.value = '';
+  syncSessionDraftSnapshot();
   clearInputModeCache();
   suspendInlineSync = false;
   chat.curReplyTo = null;
@@ -7896,6 +8346,7 @@ const send = throttle(async () => {
       clearAutoRestoreEntry(channelKey);
     }
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     clearInputModeCache();
     ensureInputFocus();
   } catch (e) {
@@ -7905,6 +8356,7 @@ const send = throttle(async () => {
     textToSend.value = draft;
     suspendInlineSync = false;
     syncInlineMarkersWithText(draft);
+    syncSessionDraftSnapshot();
     const index = rows.value.findIndex(msg => msg.id === tmpMsg.id);
     if (index !== -1) {
       (rows.value[index] as any).failed = true;
@@ -7935,6 +8387,7 @@ const handleDiceRollNow = (expr: string) => {
   // 发送后立即清空，为下次点击做准备
   nextTick(() => {
     textToSend.value = '';
+    syncSessionDraftSnapshot();
   });
 };
 
@@ -7950,6 +8403,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
+  syncSessionDraftSnapshot();
   checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
@@ -7994,6 +8448,10 @@ watch(
     }
   },
 );
+
+watch(inputMode, () => {
+  syncSessionDraftSnapshot();
+});
 
 watch([
   inputPreviewEnabled,
@@ -8187,20 +8645,8 @@ const emit = defineEmits(['drawer-show'])
 let firstLoad = false;
 onMounted(async () => {
   await chat.tryInit();
-  await utils.configGet();
-  if (!chat.isObserver) {
-    await utils.commandsRefresh();
-  }
-
-  chat.channelRefreshSetup()
-
   refreshHistoryEntries();
   scheduleHistoryAutoRestore();
-
-  // 检查并启动新用户引导
-  if (!chat.isObserver) {
-    onboarding.checkAndStartOnboarding();
-  }
 
   const sound = new Howl({
     src: [SoundMessageCreated],
@@ -8384,6 +8830,7 @@ chatEvent.on('message-updated', (e?: Event) => {
     chat.cancelEditing();
     clearInputModeCache();
     textToSend.value = '';
+    syncSessionDraftSnapshot();
     ensureInputFocus();
   }
 });
@@ -8640,16 +9087,20 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
 
   chatEvent.on('channel-switch-to', (e) => {
     if (!firstLoad) return;
-  stopTypingPreviewNow();
-  resetTypingPreview();
-  stopEditingPreviewNow();
-  chat.cancelEditing();
-  textToSend.value = '';
-  clearInputModeCache();
-  resetWindowState('live');
-  resetDragState();
-  localReorderOps.clear();
-  showButton.value = false;
+    const payload = (e as any)?.argv || {};
+    const isReenter = !!payload?.reenter;
+    stopTypingPreviewNow();
+    resetTypingPreview();
+    stopEditingPreviewNow();
+    chat.cancelEditing();
+    if (!isReenter) {
+      textToSend.value = '';
+    }
+    clearInputModeCache();
+    resetWindowState('live');
+    resetDragState();
+    localReorderOps.clear();
+    showButton.value = false;
     // 具体不知道原因，但是必须在这个位置reset才行
     // virtualListRef.value?.reset();
     refreshHistoryEntries();
@@ -8663,12 +9114,25 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   await fetchLatestMessages();
   firstLoad = true;
   await maybePromptIdentitySync();
+
+  await utils.configGet();
+  if (!chat.isObserver) {
+    await utils.commandsRefresh();
+  }
+
+  chat.channelRefreshSetup()
+
+  // 检查并启动新用户引导
+  if (!chat.isObserver) {
+    onboarding.checkAndStartOnboarding();
+  }
 })
 
 onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  syncSessionDraftSnapshot();
   disposeSelfPreviewObserver();
   disposeTypingViewportObserver();
   cancelDrag();
@@ -8808,6 +9272,11 @@ const fetchLatestMessages = async () => {
   if (!chat.curChannel?.id || messageWindow.loadingLatest) {
     return;
   }
+  console.info('[channel-load] messages-fetch-start', {
+    channelId: chat.curChannel?.id || '',
+    ts: Date.now(),
+  });
+  let fetchSucceeded = false;
   const previousRows = rows.value.slice();
   resetWindowState('live', { preserveRows: true });
   resetTypingPreview();
@@ -8818,6 +9287,12 @@ const fetchLatestMessages = async () => {
       limit: INITIAL_MESSAGE_LOAD_LIMIT,
       ...buildRoleFilterOptions(),
     });
+    fetchSucceeded = true;
+    console.info('[channel-load] messages-fetch-success', {
+      channelId: chat.curChannel?.id || '',
+      count: Array.isArray(resp.data) ? resp.data.length : 0,
+      ts: Date.now(),
+    });
     rows.value = normalizeMessageList(resp.data);
     sortRowsByDisplayOrder();
     applyCursorUpdate({ before: resp?.next ?? '' });
@@ -8827,12 +9302,22 @@ const fetchLatestMessages = async () => {
     showButton.value = false;
     await autoFillIfNeeded();
     tryAutoRestoreHistory();
+    console.info('[channel-load] messages-rendered', {
+      channelId: chat.curChannel?.id || '',
+      rows: rows.value.length,
+      ts: Date.now(),
+    });
   } catch (error) {
     rows.value = previousRows;
     resetWindowState('live', { preserveRows: true, preserveHistoryLock: false });
     throw error;
   } finally {
     messageWindow.loadingLatest = false;
+    console.info('[channel-load] messages-fetch-finish', {
+      channelId: chat.curChannel?.id || '',
+      ok: fetchSucceeded,
+      ts: Date.now(),
+    });
   }
 };
 
@@ -9883,14 +10368,12 @@ onBeforeUnmount(() => {
   revokeIdentityObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
   searchHighlightTimers.clear();
-  if (isMobileUa) {
-    markDiceTrayMobileWrapper(false);
-  }
+  markDiceTrayMobileWrapper(false);
 });
 </script>
 
 <template>
-  <div class="flex flex-col h-full justify-between chat-root-container">
+  <div ref="chatRootContainerRef" class="flex flex-col h-full justify-between chat-root-container">
     <!-- 频道背景层 -->
     <div v-if="channelBackgroundStyle" class="channel-background-layer" :style="channelBackgroundStyle"></div>
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
@@ -9917,7 +10400,7 @@ onBeforeUnmount(() => {
         :webhook-active="webhookDrawerVisible"
         :email-notification-enabled="true"
         :email-notification-active="emailNotificationDrawerVisible"
-        :character-card-enabled="true"
+        :character-card-enabled="!!chat.curChannel?.id"
         :character-card-active="characterCardPanelVisible"
         @update:filters="chat.setFilterState($event)"
         @open-archive="archiveDrawerVisible = true"
@@ -9932,7 +10415,7 @@ onBeforeUnmount(() => {
         @toggle-sticky-note="toggleStickyNotes"
         @open-webhook="webhookDrawerVisible = true"
         @open-email-notification="emailNotificationDrawerVisible = true"
-        @open-character-card="characterCardPanelVisible = true"
+        @open-character-card="openCharacterCardPanel"
         @clear-filters="chat.setFilterState({ icFilter: 'all', showArchived: false, roleIds: [] })"
       />
     </transition>
@@ -10700,8 +11183,14 @@ onBeforeUnmount(() => {
                     </div>
                   </n-popover>
                 </div>
-                <div class="chat-input-actions__cell">
-                  <n-popover trigger="manual" placement="top" :show="diceTrayVisible">
+                <div class="chat-input-actions__cell" v-if="isDiceTrayEdgeAnchored">
+                  <n-popover
+                    trigger="manual"
+                    placement="top-end"
+                    :show="diceTrayMobileVisible"
+                    :show-arrow="false"
+                    :overlay-class="DICE_TRAY_EDGE_OVERLAY_CLASS"
+                  >
                     <template #trigger>
                       <n-tooltip trigger="hover">
                         <template #trigger>
@@ -10725,7 +11214,7 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
-                      @close="diceTrayVisible = false"
+                      @close="diceTrayMobileVisible = false"
                     >
                       <template v-if="canManageChannelFeatures" #header-actions>
                         <template v-if="isMobileUa">
@@ -10751,6 +11240,168 @@ onBeforeUnmount(() => {
                             v-model:show="diceSettingsVisible"
                             preset="card"
                             class="dice-settings-modal-mobile"
+                            :bordered="false"
+                            title="掷骰设置"
+                          >
+                            <div class="dice-settings-panel dice-settings-panel--modal">
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">内置骰点</p>
+                                    <p class="dice-settings-panel__desc">自动解析输入并生成骰点结果。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.builtInDiceEnabled" :disabled="diceFeatureUpdating" @update:value="handleDiceFeatureToggle" />
+                                </div>
+                              </div>
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">机器人骰点</p>
+                                    <p class="dice-settings-panel__desc">交由机器人处理掷骰，避免与内置功能冲突。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.botFeatureEnabled" :disabled="diceFeatureUpdating" @update:value="handleBotFeatureToggle" />
+                                </div>
+                                <div class="dice-settings-panel__body" v-if="channelFeatures.botFeatureEnabled">
+                                  <n-select
+                                    :value="channelBotSelection"
+                                    class="dice-settings-panel__select"
+                                    :options="botSelectOptions"
+                                    :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
+                                    :disabled="syncingChannelBot || !hasBotOptions"
+                                    placeholder="选择要启用的机器人"
+                                    clearable
+                                    @update:value="handleBotSelectionChange"
+                                  />
+                                  <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
+                                    暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                </div>
+                                <div class="dice-settings-panel__footer">
+                                  <n-button text size="tiny" @click="openChannelMemberSettings">前往成员管理</n-button>
+                                </div>
+                              </div>
+                            </div>
+                          </n-modal>
+                        </template>
+                        <template v-else>
+                          <n-popover trigger="manual" placement="bottom-end" :show="diceSettingsVisible" @clickoutside="diceSettingsVisible = false">
+                            <template #trigger>
+                              <n-tooltip trigger="hover">
+                                <template #trigger>
+                                  <div class="dice-mode-status">
+                                    <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                    <n-button
+                                      quaternary
+                                      size="tiny"
+                                      circle
+                                      class="dice-tray-settings-trigger"
+                                      :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                      @click.stop="diceSettingsVisible = !diceSettingsVisible"
+                                    >
+                                      <n-icon :component="Settings" size="14" />
+                                    </n-button>
+                                  </div>
+                                </template>
+                                {{ diceModeTooltip }}
+                              </n-tooltip>
+                            </template>
+                            <div class="dice-settings-panel">
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">内置骰点</p>
+                                    <p class="dice-settings-panel__desc">自动解析输入并生成骰点结果。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.builtInDiceEnabled" :disabled="diceFeatureUpdating" @update:value="handleDiceFeatureToggle" />
+                                </div>
+                              </div>
+                              <div class="dice-settings-panel__section">
+                                <div class="dice-settings-panel__row">
+                                  <div>
+                                    <p class="dice-settings-panel__title">机器人骰点</p>
+                                    <p class="dice-settings-panel__desc">交由机器人处理掷骰，避免与内置功能冲突。</p>
+                                  </div>
+                                  <n-switch size="small" :value="channelFeatures.botFeatureEnabled" :disabled="diceFeatureUpdating" @update:value="handleBotFeatureToggle" />
+                                </div>
+                                <div class="dice-settings-panel__body" v-if="channelFeatures.botFeatureEnabled">
+                                  <n-select
+                                    :value="channelBotSelection"
+                                    class="dice-settings-panel__select"
+                                    :options="botSelectOptions"
+                                    :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
+                                    :disabled="syncingChannelBot || !hasBotOptions"
+                                    placeholder="选择要启用的机器人"
+                                    clearable
+                                    @update:value="handleBotSelectionChange"
+                                  />
+                                  <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
+                                    暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                </div>
+                                <div class="dice-settings-panel__footer">
+                                  <n-button text size="tiny" @click="openChannelMemberSettings">前往成员管理</n-button>
+                                </div>
+                              </div>
+                            </div>
+                          </n-popover>
+                        </template>
+                      </template>
+                    </DiceTray>
+                  </n-popover>
+                </div>
+                <div class="chat-input-actions__cell" v-else>
+                  <n-popover trigger="manual" placement="top" :show="diceTrayDesktopVisible">
+                    <template #trigger>
+                      <n-tooltip trigger="hover">
+                        <template #trigger>
+                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !channelFeatures.botFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
+                            <template #icon>
+                              <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
+                                <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
+                                <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
+                              </svg>
+                            </template>
+                          </n-button>
+                        </template>
+                        掷骰
+                      </n-tooltip>
+                    </template>
+                    <DiceTray
+                      :default-dice="defaultDiceExpr"
+                      :can-edit-default="canEditDefaultDice"
+                      :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
+                      :bot-feature-enabled="channelFeatures.botFeatureEnabled"
+                      @insert="handleDiceInsert"
+                      @roll="handleDiceRollNow"
+                      @update-default="handleDiceDefaultUpdate"
+                      @close="diceTrayDesktopVisible = false"
+                    >
+                      <template v-if="canManageChannelFeatures" #header-actions>
+                        <template v-if="isMobileUa">
+                          <n-tooltip trigger="hover">
+                            <template #trigger>
+                              <div class="dice-mode-status">
+                                <span class="dice-mode-status__label">{{ diceModeLabel }}</span>
+                                <n-button
+                                  quaternary
+                                  size="tiny"
+                                  circle
+                                  class="dice-tray-settings-trigger"
+                                  :class="{ 'dice-tray-settings-trigger--active': diceSettingsVisible }"
+                                  @click.stop="diceSettingsVisible = true"
+                                >
+                                  <n-icon :component="Settings" size="14" />
+                                </n-button>
+                              </div>
+                            </template>
+                            {{ diceModeTooltip }}
+                          </n-tooltip>
+                          <n-modal
+                            v-model:show="diceSettingsVisible"
+                            preset="card"
+                            class="dice-settings-modal-mobile"
+                            :mask-closable="true"
+                            :closable="false"
                             :bordered="false"
                             title="掷骰设置"
                           >
@@ -14021,8 +14672,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .emoji-grid {
-    grid-template-columns: repeat(3, minmax(60px, 1fr));
-    gap: 0.4rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.3rem;
   }
 }
 
@@ -14090,9 +14741,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
+  .emoji-item {
+    gap: 0.15rem;
+    padding: 0.1rem;
+  }
+
   .emoji-item img {
-    width: 4.8rem;
-    height: 4.8rem;
+    width: 2.8rem;
+    height: 2.8rem;
   }
 }
 
@@ -14477,29 +15133,34 @@ onBeforeUnmount(() => {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
-:global(.dice-tray-mobile-wrapper) {
-  width: min(92vw, 420px) !important;
-  max-width: 100vw;
-  left: 4vw !important;
-  right: 4vw !important;
+:global(.dice-tray-popover-edge) {
+  width: min(420px, calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px))) !important;
+  max-width: calc(100vw - var(--dice-tray-left-offset, 0px) - var(--dice-tray-right-offset, 0px));
+  left: auto !important;
+  right: var(--dice-tray-right-offset, 0px) !important;
   position: fixed !important;
+  transform: none !important;
+  box-sizing: border-box;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray) {
+:global(.dice-tray-popover-edge .dice-tray) {
   width: 100%;
   min-width: 0;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__body) {
+:global(.dice-tray-popover-edge .dice-tray__body) {
   flex-direction: column;
   gap: 0.75rem;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__column--quick) {
+:global(.dice-tray-popover-edge .dice-tray__column--quick) {
   flex: 1;
 }
 
-:global(.dice-tray-mobile-wrapper .dice-tray__history) {
+:global(.dice-tray-popover-edge .dice-tray__history) {
   max-height: 45vh;
   overflow-y: auto;
 }

@@ -36,18 +36,6 @@ const draggingId = ref<string | null>(null);
 const dragOverKey = ref<string | null>(null);
 const saving = ref(false);
 
-watch(
-  () => props.show,
-  (val) => {
-    if (val) {
-      initData();
-    } else {
-      resetDragState();
-    }
-  },
-  { immediate: true },
-);
-
 const initData = () => {
   const list = normalizeChannels(chat.channelTree as SChannel[] ?? [], '');
   treeData.value = list;
@@ -121,6 +109,18 @@ const resetDragState = () => {
   draggingId.value = null;
   dragOverKey.value = null;
 };
+
+watch(
+  () => props.show,
+  (val) => {
+    if (val) {
+      initData();
+    } else {
+      resetDragState();
+    }
+  },
+  { immediate: true },
+);
 
 const handleDragStart = (row: SortRow) => {
   if (row.type !== 'node') return;

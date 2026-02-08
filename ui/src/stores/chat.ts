@@ -19,6 +19,71 @@ import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 
+const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
+const inFlightChannelMemberRoleLoads = new Map<string, Promise<Record<string, string[]>>>();
+const inFlightRolePermLoads = new Map<string, Promise<void>>();
+
+const botApiPrefixes = ['character.', 'bot.'];
+let botApiPending = 0;
+let normalApiInFlight = 0;
+let botApiChain: Promise<void> = Promise.resolve();
+const botIdleWaiters: Array<() => void> = [];
+const normalDrainWaiters: Array<() => void> = [];
+
+const isBotRelatedApi = (api: string) => botApiPrefixes.some((prefix) => api.startsWith(prefix));
+const waitForBotIdle = () => new Promise<void>((resolve) => {
+  if (botApiPending === 0) {
+    resolve();
+    return;
+  }
+  botIdleWaiters.push(resolve);
+});
+const waitForNormalDrain = () => new Promise<void>((resolve) => {
+  if (normalApiInFlight === 0) {
+    resolve();
+    return;
+  }
+  normalDrainWaiters.push(resolve);
+});
+const notifyBotIdle = () => {
+  if (botApiPending !== 0) {
+    return;
+  }
+  const waiters = botIdleWaiters.splice(0);
+  waiters.forEach((resolve) => resolve());
+};
+const notifyNormalDrain = () => {
+  if (normalApiInFlight !== 0) {
+    return;
+  }
+  const waiters = normalDrainWaiters.splice(0);
+  waiters.forEach((resolve) => resolve());
+};
+const enqueueBotApi = async <T>(fn: () => Promise<T>): Promise<T> => {
+  botApiPending += 1;
+  const run = botApiChain.then(async () => {
+    await waitForNormalDrain();
+    return fn();
+  });
+  botApiChain = run.then(() => undefined, () => undefined);
+  try {
+    return await run;
+  } finally {
+    botApiPending -= 1;
+    notifyBotIdle();
+  }
+};
+const enqueueNormalApi = async <T>(fn: () => Promise<T>): Promise<T> => {
+  await waitForBotIdle();
+  normalApiInFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    normalApiInFlight -= 1;
+    notifyNormalDrain();
+  }
+};
+
 interface ChatState {
   subject: WebSocketSubject<any> | null;
   // user: User,
@@ -89,6 +154,7 @@ interface ChatState {
   channelIdentityFolders: Record<string, ChannelIdentityFolder[]>;
   channelIdentityFavorites: Record<string, string[]>;
   channelIdentityMembership: Record<string, Record<string, string[]>>;
+  channelIdentityLoadedAt: Record<string, number>;
 
   // 新增状态
   icMode: 'ic' | 'ooc';
@@ -332,6 +398,15 @@ const checkChannelSwitchGuard = (targetId: string, currentId?: string | null) =>
   return { action: 'block' as const, ids: uniqueIds };
 };
 
+const createChannelSwitchEvent = (channelId: string, previousChannelId?: string | null) => ({
+  type: 'channel-switch-to',
+  argv: {
+    channelId: channelId || '',
+    previousChannelId: previousChannelId || '',
+    reenter: !!channelId && !!previousChannelId && channelId === previousChannelId,
+  },
+});
+
 export const useChatStore = defineStore({
   id: 'chat',
   state: (): ChatState => ({
@@ -379,6 +454,7 @@ export const useChatStore = defineStore({
         customClass: "class-a",
         zIndex: 3,
         minWidth: 230,
+        closeWhenScroll: false,
         x: 500,
         y: 200,
       } as MenuOptions,
@@ -405,6 +481,7 @@ export const useChatStore = defineStore({
     channelIdentityFolders: {},
     channelIdentityFavorites: {},
     channelIdentityMembership: {},
+    channelIdentityLoadedAt: {},
 
     // 新增状态初始值
     icMode: 'ic',
@@ -785,8 +862,6 @@ export const useChatStore = defineStore({
       await this.ensureWorldReady();
       if (this.curChannel?.id) {
         await this.channelSwitchTo(this.curChannel?.id);
-        const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': this.curChannel?.id });
-        this.curChannelUsers = resp2.data.data;
       }
       await this.channelList(this.currentWorldId, true);
       await this.ChannelPrivateList();
@@ -832,11 +907,17 @@ export const useChatStore = defineStore({
     },
 
     async sendAPI<T = any>(api: string, data: APIMessage): Promise<T> {
-      const echo = nanoid();
-      return new Promise((resolve, reject) => {
-        apiMap.set(echo, { resolve, reject });
-        this.subject?.next({ api, data, echo });
-      }).then((resp: any) => {
+      const doSend = () => {
+        const echo = nanoid();
+        return new Promise((resolve, reject) => {
+          apiMap.set(echo, { resolve, reject });
+          this.subject?.next({ api, data, echo });
+        });
+      };
+      const run = isBotRelatedApi(api)
+        ? enqueueBotApi(doSend)
+        : enqueueNormalApi(doSend);
+      return run.then((resp: any) => {
         if (resp?.err) {
           const error = new Error(resp.err);
           (error as any).response = resp;
@@ -869,8 +950,12 @@ export const useChatStore = defineStore({
         return;
       }
       if (this.joinedWorldIds.length) {
+        const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
+        if (current && this.joinedWorldIds.includes(current)) {
+          return;
+        }
         const stored = readScopedLocalStorage('currentWorldId');
-        if (stored) {
+        if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;
         }
         return;
@@ -884,6 +969,11 @@ export const useChatStore = defineStore({
             this.worldMap[item.world.id] = item.world;
           }
         });
+        const current = this.currentWorldId ? String(this.currentWorldId).trim() : '';
+        if (current && this.joinedWorldIds.includes(current)) {
+          this.currentWorldId = current;
+          return;
+        }
         const stored = readScopedLocalStorage('currentWorldId');
         if (stored && this.joinedWorldIds.includes(stored)) {
           this.currentWorldId = stored;
@@ -1209,17 +1299,21 @@ export const useChatStore = defineStore({
       if (guard.action !== 'allow') {
         channelSwitchEpoch += 1;
         if (guard.action === 'reload') {
-          console.warn('[channel-switch-guard] rapid toggling detected, reloading', guard.ids || []);
-          if (typeof window !== 'undefined') {
-            window.location.reload();
-          }
+          console.warn('[channel-switch-guard] rapid toggling detected, reload skipped to preserve draft', guard.ids || []);
         } else {
           console.warn('[channel-switch-guard] rapid toggling detected, blocking', guard.ids || []);
         }
         return true;
       }
+      const previousChannelId = this.curChannel?.id || '';
       const switchEpoch = ++channelSwitchEpoch;
       const isStale = () => switchEpoch !== channelSwitchEpoch;
+      console.info('[channel-load] switch-start', {
+        channelId: id,
+        previousChannelId,
+        switchEpoch,
+        ts: Date.now(),
+      });
 
       let nextChannel = this.channelTree.find(c => c.id === id) ||
         this.channelTree.flatMap(c => c.children || []).find(c => c.id === id);
@@ -1271,6 +1365,16 @@ export const useChatStore = defineStore({
 
       let oldChannel = this.curChannel;
       this.curChannel = nextChannel;
+      const syncCharacterCapabilityFromEnter = (payload: any) => {
+        const enabled = payload?.character_api_enabled === true;
+        const reason = typeof payload?.character_api_reason === 'string'
+          ? payload.character_api_reason.trim()
+          : '';
+        this.patchChannelAttributes(id, {
+          characterApiEnabled: enabled,
+          characterApiReason: enabled ? '' : reason,
+        });
+      };
       if (this.observerMode) {
         try {
           const resp = await this.sendAPI('channel.enter', { 'channel_id': id });
@@ -1282,6 +1386,7 @@ export const useChatStore = defineStore({
             return false;
           }
           this.curMember = resp.data.member;
+          syncCharacterCapabilityFromEnter(resp.data);
           this.curChannelUsers = [];
           this.whisperTargets = [];
           writeScopedLocalStorage('lastChannel', id);
@@ -1289,7 +1394,7 @@ export const useChatStore = defineStore({
           if (isStale()) {
             return true;
           }
-          chatEvent.emit('channel-switch-to', undefined);
+          chatEvent.emit('channel-switch-to', createChannelSwitchEvent(id, previousChannelId) as any);
           return true;
         } catch (error) {
           console.warn('[observer] channel.enter failed', error);
@@ -1325,6 +1430,7 @@ export const useChatStore = defineStore({
       }
 
       this.curMember = resp.data.member;
+      syncCharacterCapabilityFromEnter(resp.data);
 
       // 保存第一条未读消息信息（在标记已读之前）
       const firstUnreadMsgId = resp.data.first_unread_message_id;
@@ -1339,37 +1445,73 @@ export const useChatStore = defineStore({
         this.firstUnreadInfo = null;
       }
 
-      await this.loadChannelIdentities(id);
-      if (isStale()) {
-        return true;
-      }
-      // 确保默认场外角色存在
-      await this.ensureDefaultOocRole(id);
-      if (isStale()) {
-        return true;
-      }
       writeScopedLocalStorage('lastChannel', id);
-
-      const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': id });
-      if (isStale()) {
-        return true;
-      }
-      this.curChannelUsers = resp2.data.data;
+      this.setChannelUnreadCount(id, 0);
+      this.curChannelUsers = [];
       this.whisperTargets = [];
 
       if (isStale()) {
         return true;
       }
-      try {
-        await this.ensureChannelPermissionCache(id);
-      } catch (error) {
-        console.warn('ensureChannelPermissionCache failed', error);
-      }
-      if (isStale()) {
-        return true;
-      }
+      console.info('[channel-load] channel-entered', {
+        channelId: id,
+        switchEpoch,
+        ts: Date.now(),
+      });
+      chatEvent.emit('channel-switch-to', createChannelSwitchEvent(id, previousChannelId) as any);
 
-      this.setChannelUnreadCount(id, 0);
+      const postEnterChannelId = id;
+      void (async () => {
+        console.info('[channel-load] post-enter-tasks-start', {
+          channelId: postEnterChannelId,
+          switchEpoch,
+          ts: Date.now(),
+        });
+        let identitiesLoaded = false;
+        try {
+          await this.loadChannelIdentities(postEnterChannelId);
+          identitiesLoaded = true;
+        } catch (error) {
+          console.warn('loadChannelIdentities failed', error);
+        }
+        if (isStale()) {
+          return;
+        }
+        if (identitiesLoaded) {
+          try {
+            // 确保默认场外角色存在
+            await this.ensureDefaultOocRole(postEnterChannelId);
+          } catch (error) {
+            console.warn('ensureDefaultOocRole failed', error);
+          }
+        }
+        if (isStale()) {
+          return;
+        }
+        try {
+          const resp2 = await this.sendAPI('channel.member.list.online', { 'channel_id': postEnterChannelId });
+          if (isStale()) {
+            return;
+          }
+          this.curChannelUsers = resp2.data.data;
+          this.whisperTargets = [];
+        } catch (error) {
+          console.warn('channel.member.list.online failed', error);
+        }
+        if (isStale()) {
+          return;
+        }
+        try {
+          await this.ensureChannelPermissionCache(postEnterChannelId);
+        } catch (error) {
+          console.warn('ensureChannelPermissionCache failed', error);
+        }
+        console.info('[channel-load] post-enter-tasks-finish', {
+          channelId: postEnterChannelId,
+          switchEpoch,
+          ts: Date.now(),
+        });
+      })();
 
       // 设置网页标题为频道名字，并检查是否需要清除未读通知
       import('./utils').then(({ setChannelTitle, clearUnreadTitleNotification }) => {
@@ -1384,10 +1526,6 @@ export const useChatStore = defineStore({
         }
       });
 
-      if (isStale()) {
-        return true;
-      }
-      chatEvent.emit('channel-switch-to', undefined);
       if (isStale()) {
         return true;
       }
@@ -1520,24 +1658,44 @@ export const useChatStore = defineStore({
         }
         return this.channelIdentities[channelId];
       }
-      const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
-      const membership = resp.data.membership || {};
-      const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
-      items.forEach(item => {
-        item.folderIds = membership[item.id] ? [...membership[item.id]] : [];
-      });
-      this.channelIdentities = {
-        ...this.channelIdentities,
-        [channelId]: items,
-      };
-      this.channelIdentityFolders = {
-        ...this.channelIdentityFolders,
-        [channelId]: resp.data.folders || [],
-      };
-      this.channelIdentityFavorites = {
-        ...this.channelIdentityFavorites,
-        [channelId]: resp.data.favorites || [],
-      };
+      const existing = inFlightChannelIdentityLoads.get(channelId);
+      if (existing) {
+        return await existing;
+      }
+      const task = (async () => {
+        const resp = await api.get<{ items: ChannelIdentity[]; folders: ChannelIdentityFolder[]; favorites: string[]; membership: Record<string, string[]> }>('api/v1/channel-identities', { params: { channelId } });
+        const membership = resp.data.membership || {};
+        const items = (resp.data.items || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
+        items.forEach(item => {
+          item.folderIds = membership[item.id] ? [...membership[item.id]] : [];
+        });
+        this.channelIdentities = {
+          ...this.channelIdentities,
+          [channelId]: items,
+        };
+        this.channelIdentityFolders = {
+          ...this.channelIdentityFolders,
+          [channelId]: resp.data.folders || [],
+        };
+        this.channelIdentityFavorites = {
+          ...this.channelIdentityFavorites,
+          [channelId]: resp.data.favorites || [],
+        };
+        this.channelIdentityLoadedAt = {
+          ...this.channelIdentityLoadedAt,
+          [channelId]: Date.now(),
+        };
+        return items;
+      })();
+      inFlightChannelIdentityLoads.set(channelId, task);
+      try {
+        return await task;
+      } finally {
+        const inflight = inFlightChannelIdentityLoads.get(channelId);
+        if (inflight === task) {
+          inFlightChannelIdentityLoads.delete(channelId);
+        }
+      }
       this.channelIdentityMembership = {
         ...this.channelIdentityMembership,
         [channelId]: membership,
@@ -1738,20 +1896,65 @@ export const useChatStore = defineStore({
         return [];
       }
       if (!this.channelRoleCache[roleId]) {
-        try {
-          const resp = await api.get<{ data: string[] }>('api/v1/channel-role-perms', { params: { roleId } });
-          this.channelRoleCache = {
-            ...this.channelRoleCache,
-            [roleId]: resp.data.data || [],
-          };
-        } catch (error) {
-          this.channelRoleCache = {
-            ...this.channelRoleCache,
-            [roleId]: [],
-          };
-        }
+        await this.ensureRolePermissionsBatch([roleId]);
       }
       return this.channelRoleCache[roleId] || [];
+    },
+
+    async ensureRolePermissionsBatch(roleIds: string[]) {
+      const ids = Array.from(new Set((roleIds || []).map(id => id?.trim()).filter(Boolean)));
+      if (ids.length === 0) {
+        return;
+      }
+      const missing = ids.filter(id => !this.channelRoleCache[id]);
+      if (missing.length === 0) {
+        return;
+      }
+      const waitingPromises: Promise<void>[] = [];
+      const toFetch: string[] = [];
+      for (const roleId of missing) {
+        const inFlight = inFlightRolePermLoads.get(roleId);
+        if (inFlight) {
+          waitingPromises.push(inFlight);
+          continue;
+        }
+        toFetch.push(roleId);
+      }
+      const waiters = Array.from(new Set(waitingPromises));
+      if (toFetch.length === 0) {
+        if (waiters.length > 0) {
+          await Promise.all(waiters);
+        }
+        return;
+      }
+      const task = (async () => {
+        try {
+          const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: toFetch });
+          const payload = resp?.data?.data || {};
+          const nextCache = { ...this.channelRoleCache };
+          for (const roleId of toFetch) {
+            const perms = payload[roleId];
+            nextCache[roleId] = Array.isArray(perms) ? perms : [];
+          }
+          this.channelRoleCache = nextCache;
+        } catch (error) {
+          const nextCache = { ...this.channelRoleCache };
+          for (const roleId of toFetch) {
+            nextCache[roleId] = [];
+          }
+          this.channelRoleCache = nextCache;
+        } finally {
+          for (const roleId of toFetch) {
+            if (inFlightRolePermLoads.get(roleId) === task) {
+              inFlightRolePermLoads.delete(roleId);
+            }
+          }
+        }
+      })();
+      for (const roleId of toFetch) {
+        inFlightRolePermLoads.set(roleId, task);
+      }
+      await Promise.all([...waiters, task]);
     },
 
     async loadChannelMemberRoles(channelId: string, force = false) {
@@ -1761,38 +1964,53 @@ export const useChatStore = defineStore({
       if (!force && this.channelMemberRoleMap[channelId]) {
         return this.channelMemberRoleMap[channelId];
       }
-      const pageSize = 200;
-      let page = 1;
-      const aggregated: Record<string, string[]> = {};
-      while (true) {
-        const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
-          params: { id: channelId, page, pageSize },
-        });
-        const items = resp.data?.items || [];
-        for (const item of items) {
-          if (item.roleType !== 'channel') {
-            continue;
-          }
-          if (!aggregated[item.userId]) {
-            aggregated[item.userId] = [];
-          }
-          aggregated[item.userId].push(item.roleId);
-        }
-        const total = resp.data?.total ?? items.length;
-        if (!total || page * pageSize >= total || items.length === 0) {
-          break;
-        }
-        page += 1;
+      const existing = inFlightChannelMemberRoleLoads.get(channelId);
+      if (existing) {
+        return await existing;
       }
-      this.channelMemberRoleMap = {
-        ...this.channelMemberRoleMap,
-        [channelId]: aggregated,
-      };
-      this.channelMemberPermMap = {
-        ...this.channelMemberPermMap,
-        [channelId]: {},
-      };
-      return aggregated;
+      const task = (async () => {
+        const pageSize = 200;
+        let page = 1;
+        const aggregated: Record<string, string[]> = {};
+        while (true) {
+          const resp = await api.get<PaginationListResponse<UserRoleModel>>('api/v1/channel-member-list', {
+            params: { id: channelId, page, pageSize },
+          });
+          const items = resp.data?.items || [];
+          for (const item of items) {
+            if (item.roleType !== 'channel') {
+              continue;
+            }
+            if (!aggregated[item.userId]) {
+              aggregated[item.userId] = [];
+            }
+            aggregated[item.userId].push(item.roleId);
+          }
+          const total = resp.data?.total ?? items.length;
+          if (!total || page * pageSize >= total || items.length === 0) {
+            break;
+          }
+          page += 1;
+        }
+        this.channelMemberRoleMap = {
+          ...this.channelMemberRoleMap,
+          [channelId]: aggregated,
+        };
+        this.channelMemberPermMap = {
+          ...this.channelMemberPermMap,
+          [channelId]: {},
+        };
+        return aggregated;
+      })();
+      inFlightChannelMemberRoleLoads.set(channelId, task);
+      try {
+        return await task;
+      } finally {
+        const inflight = inFlightChannelMemberRoleLoads.get(channelId);
+        if (inflight === task) {
+          inFlightChannelMemberRoleLoads.delete(channelId);
+        }
+      }
     },
 
     async updateChannelAdminMap(channelId: string, force = false) {
@@ -1811,10 +2029,12 @@ export const useChatStore = defineStore({
           }
         });
       });
+      const roleIds = Array.from(uniqueRoleIds);
+      await this.ensureRolePermissionsBatch(roleIds);
       const rolePermMap: Record<string, string[]> = {};
-      await Promise.all(Array.from(uniqueRoleIds).map(async (roleId) => {
-        rolePermMap[roleId] = await this.ensureRolePermissions(roleId);
-      }));
+      roleIds.forEach((roleId) => {
+        rolePermMap[roleId] = this.channelRoleCache[roleId] || [];
+      });
       const adminPerms = new Set([
         'func_channel_message_archive',
         'func_channel_message_delete',
@@ -2265,6 +2485,44 @@ export const useChatStore = defineStore({
 
     async messageGetById(channel_id: string, message_id: string): Promise<{ id: string; channel_id: string; created_at: number; display_order: number } | null> {
       const resp = await this.sendAPI<{ data: { id: string; channel_id: string; created_at: number; display_order: number } | null }>('message.get', { channel_id, message_id });
+      return (resp as any)?.data || null;
+    },
+
+    async messageContext(
+      channel_id: string,
+      message_id: string,
+      options?: {
+        before?: number;
+        after?: number;
+        includeArchived?: boolean;
+        includeOoc?: boolean;
+        icOnly?: boolean;
+      }
+    ): Promise<{
+      data: any[];
+      target_id?: string;
+      not_found_reason?: 'deleted' | 'no_permission' | 'not_exists' | string;
+    } | null> {
+      const payload: Record<string, any> = {
+        channel_id,
+        message_id,
+      };
+      if (typeof options?.before === 'number') {
+        payload.before = options.before;
+      }
+      if (typeof options?.after === 'number') {
+        payload.after = options.after;
+      }
+      if (typeof options?.includeArchived === 'boolean') {
+        payload.include_archived = options.includeArchived;
+      }
+      if (typeof options?.includeOoc === 'boolean') {
+        payload.include_ooc = options.includeOoc;
+      }
+      if (typeof options?.icOnly === 'boolean') {
+        payload.ic_only = options.icOnly;
+      }
+      const resp = await this.sendAPI<{ data: any }>('message.context', payload as APIMessage);
       return (resp as any)?.data || null;
     },
 
@@ -2930,6 +3188,16 @@ export const useChatStore = defineStore({
     // 获取频道角色权限
     async channelRolePermsGet(channelId: string, roleId: string) {
       const resp = await api.get<{ data: any }>('api/v1/channel-role-perms', { params: { channelId, roleId } });
+      return resp?.data;
+    },
+
+    // 批量获取频道角色权限
+    async channelRolePermsBatch(roleIds: string[]) {
+      const ids = Array.from(new Set((roleIds || []).map(id => id?.trim()).filter(Boolean)));
+      if (ids.length === 0) {
+        return { data: {} as Record<string, string[]> };
+      }
+      const resp = await api.post<{ data: Record<string, string[]> }>('api/v1/channel-role-perms-batch', { roleIds: ids });
       return resp?.data;
     },
 
@@ -3709,6 +3977,12 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (typeof event.channel?.botFeatureEnabled === 'boolean') {
     patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  if (typeof (event.channel as any)?.characterApiEnabled === 'boolean') {
+    patch.characterApiEnabled = (event.channel as any).characterApiEnabled;
+  }
+  if (typeof (event.channel as any)?.characterApiReason === 'string') {
+    patch.characterApiReason = (event.channel as any).characterApiReason;
   }
   if (typeof event.channel?.backgroundAttachmentId === 'string') {
     patch.backgroundAttachmentId = event.channel.backgroundAttachmentId;

@@ -189,6 +189,10 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     canImport: isOwnerOrAdmin.value,
     channelTree: normalizeChannelTree(buildChannelTree()),
     searchPanelVisible: !!channelSearch.panelVisible,
+    stickyNoteVisible: !!chatViewRef.value?.getStickyNoteVisible?.(),
+    characterCardVisible: !!chatViewRef.value?.getCharacterCardVisible?.(),
+    characterCardEnabled: !!channelId && chat.curChannel?.characterApiEnabled !== false,
+    characterCardReason: typeof chat.curChannel?.characterApiReason === 'string' ? chat.curChannel.characterApiReason : '',
     iFormButtonActive: !!iFormButtonActive.value,
     iFormHasAttention: !!iFormHasAttention.value,
   });
@@ -254,6 +258,22 @@ const handleMessage = async (event: MessageEvent) => {
     const panel = typeof data.panel === 'string' ? data.panel : '';
     if (panel && chatViewRef.value?.openPanelForShell) {
       chatViewRef.value.openPanelForShell(panel);
+    }
+    postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.setStickyNoteVisible') {
+    if (typeof data.visible === 'boolean' && chatViewRef.value?.setStickyNoteVisible) {
+      chatViewRef.value.setStickyNoteVisible(data.visible);
+    }
+    postStateThrottled('sealchat.embed.state');
+    return;
+  }
+
+  if (data.type === 'sealchat.embed.setCharacterCardVisible') {
+    if (typeof data.visible === 'boolean' && chatViewRef.value?.setCharacterCardVisible) {
+      chatViewRef.value.setCharacterCardVisible(data.visible);
     }
     postStateThrottled('sealchat.embed.state');
     return;
@@ -337,6 +357,11 @@ watch(
     fetchRoleOptions(channelId ? String(channelId) : '');
     postStateThrottled('sealchat.embed.state');
   },
+);
+
+watch(
+  () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled, chat.curChannel?.characterApiReason] as const,
+  () => postStateThrottled('sealchat.embed.state'),
 );
 
 watch(

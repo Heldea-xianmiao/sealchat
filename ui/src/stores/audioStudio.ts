@@ -118,6 +118,17 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
 let progressTimer: number | null = null;
 let transcodeTimer: number | null = null;
 const SYNC_DEBOUNCE_MS = 300;
+const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
+const logAudioSync = (...args: unknown[]) => {
+  if (isDebugEnabled()) {
+    console.log(...args);
+  }
+};
+const warnAudioSync = (...args: unknown[]) => {
+  if (isDebugEnabled()) {
+    console.warn(...args);
+  }
+};
 
 function createEmptyTrack(type: AudioTrackType): TrackRuntime {
   return {
@@ -491,7 +502,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         return;
       }
 
-      console.log('[AudioSync] Received remote state:', {
+      logAudioSync('[AudioSync] Received remote state:', {
         isPlaying: payload?.isPlaying,
         tracks: payload?.tracks?.map(t => ({
           type: t.type,
@@ -556,7 +567,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             const trackIsPlaying = typeof incoming.isPlaying === 'boolean' ? incoming.isPlaying : payload.isPlaying;
             const shouldPlay = trackIsPlaying && !incoming.muted;
 
-            console.log(`[AudioSync] Track ${type} - shouldPlay: ${shouldPlay} (isPlaying: ${trackIsPlaying}, muted: ${incoming.muted})`);
+            logAudioSync(`[AudioSync] Track ${type} - shouldPlay: ${shouldPlay} (isPlaying: ${trackIsPlaying}, muted: ${incoming.muted})`);
 
             // 资源相同 -> 仅更新状态
             if (current?.assetId === incoming.assetId && current.howl) {
@@ -589,9 +600,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
                 }
                 try {
                   current.howl.play();
-                  console.log(`[AudioSync] Track ${type} playing (same asset)`);
+                  logAudioSync(`[AudioSync] Track ${type} playing (same asset)`);
                 } catch (e) {
-                  console.warn(`[AudioSync] Autoplay blocked for track ${type}. Click anywhere to start.`, e);
+                  warnAudioSync(`[AudioSync] Autoplay blocked for track ${type}. Click anywhere to start.`, e);
                   current.status = 'paused';
                   this.pendingRemotePlay = true;
                 }
@@ -659,9 +670,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               }
               try {
                 track.howl.play();
-                console.log(`[AudioSync] Track ${type} playing (new asset)`);
+                logAudioSync(`[AudioSync] Track ${type} playing (new asset)`);
               } catch (e) {
-                console.warn(`[AudioSync] Autoplay blocked for new track ${type}. Click anywhere to start.`, e);
+                warnAudioSync(`[AudioSync] Autoplay blocked for new track ${type}. Click anywhere to start.`, e);
                 track.status = 'paused';
                 this.pendingRemotePlay = true;
               }
@@ -714,7 +725,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           try {
             track.howl.play();
           } catch (err) {
-            console.warn(`[AudioSync] Autoplay retry failed for track ${type}`, err);
+            warnAudioSync(`[AudioSync] Autoplay retry failed for track ${type}`, err);
           }
         }
       });
@@ -744,7 +755,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       const payload = this.serializePlaybackState();
       if (!payload) return;
 
-      console.log('[AudioSync] Sending state:', {
+      logAudioSync('[AudioSync] Sending state:', {
         isPlaying: payload.isPlaying,
         tracks: payload.tracks.map(t => ({
           type: t.type,
