@@ -11,6 +11,9 @@ export interface CharacterCard {
   name: string;
   sheetType: string;
   attrs?: Record<string, any>;
+  templateMode?: 'managed' | 'detached';
+  templateId?: string;
+  templateSnapshot?: string;
   channelId?: string;
   userId?: string;
   updatedAt?: number;

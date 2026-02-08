@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { useCharacterCardStore } from './characterCard';
+import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from './characterCardTemplate';
 import type { CharacterCard, CharacterCardData } from './characterCard';
 
 export interface CharacterSheetWindow {
@@ -21,6 +22,8 @@ export interface CharacterSheetWindow {
   bubbleX: number;
   bubbleY: number;
   avatarUrl?: string;
+  templateMode?: CharacterCardTemplateMode;
+  templateId?: string;
 }
 
 const TEMPLATE_STORAGE_KEY = 'sealchat_character_sheet_templates';
@@ -57,6 +60,8 @@ interface PersistedWindowState {
   bubbleX: number;
   bubbleY: number;
   avatarUrl?: string;
+  templateMode?: CharacterCardTemplateMode;
+  templateId?: string;
 }
 
 const loadWindowStates = (): PersistedWindowState[] => {
@@ -116,6 +121,22 @@ const clampBubbleCoords = (x: number, y: number): { x: number; y: number } => {
   return {
     x: Math.max(0, Math.min(x, viewportW - BUBBLE_SIZE)),
     y: Math.max(0, Math.min(y, viewportH - BUBBLE_SIZE)),
+  };
+};
+
+const clampWindowCoords = (
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { x: number; y: number } => {
+  const viewportW = typeof window !== 'undefined' ? window.innerWidth : 1200;
+  const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const maxX = Math.max(VIEWPORT_PADDING, viewportW - width - VIEWPORT_PADDING);
+  const maxY = Math.max(VIEWPORT_PADDING, viewportH - height - VIEWPORT_PADDING);
+  return {
+    x: Math.min(Math.max(x, VIEWPORT_PADDING), maxX),
+    y: Math.min(Math.max(y, VIEWPORT_PADDING), maxY),
   };
 };
 
@@ -846,6 +867,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const maxZIndex = ref(2000);
   const hasRestored = ref(false);
   const cardStore = useCharacterCardStore();
+  const templateStore = useCharacterCardTemplateStore();
 
   const resolveSheetTypeByCardId = (cardId?: string) => {
     if (!cardId) return '';
@@ -935,6 +957,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         bubbleX: win.bubbleX,
         bubbleY: win.bubbleY,
         avatarUrl: win.avatarUrl,
+        templateMode: win.templateMode,
+        templateId: win.templateId,
       });
     }
     saveWindowStates(states);
@@ -963,6 +987,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       const clampedPos = clampBubbleCoords(state.bubbleX || 0, state.bubbleY || 0);
       const width = Math.max(MIN_WIDTH, state.width || DEFAULT_WIDTH);
       const height = Math.max(MIN_HEIGHT, state.height || DEFAULT_HEIGHT);
+      const clampedWindowPos = clampWindowCoords(
+        state.positionX ?? VIEWPORT_PADDING,
+        state.positionY ?? VIEWPORT_PADDING,
+        width,
+        height,
+      );
       windows.value[state.id] = {
         id: state.id,
         cardId: state.cardId,
@@ -971,8 +1001,8 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         sheetType: resolvedSheetType || undefined,
         attrs: state.attrs || {},
         template,
-        positionX: state.positionX ?? VIEWPORT_PADDING,
-        positionY: state.positionY ?? VIEWPORT_PADDING,
+        positionX: clampedWindowPos.x,
+        positionY: clampedWindowPos.y,
         width,
         height,
         zIndex: state.zIndex || maxZIndex.value + 1,
@@ -981,11 +1011,119 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         bubbleX: clampedPos.x,
         bubbleY: clampedPos.y,
         avatarUrl: state.avatarUrl,
+        templateMode: state.templateMode,
+        templateId: state.templateId,
       };
       activeWindowIds.value.push(state.id);
       nextMaxZ = Math.max(nextMaxZ, windows.value[state.id].zIndex);
     }
     maxZIndex.value = nextMaxZ;
+    for (const id of activeWindowIds.value) {
+      void syncWindowTemplateFromCloud(id);
+    }
+  };
+
+  const syncWindowTemplateFromCloud = async (windowId: string) => {
+    const win = windows.value[windowId];
+    if (!win || !win.channelId || !win.cardId) return;
+    try {
+      await templateStore.ensureTemplatesLoaded();
+      await templateStore.ensureBindingsLoaded(win.channelId);
+      const fallback = normalizeTemplate(
+        win.cardId,
+        win.template || getTemplate(win.cardId, win.sheetType),
+        win.sheetType,
+      );
+      const binding = await templateStore.ensureCardBinding({
+        channelId: win.channelId,
+        externalCardId: win.cardId,
+        cardName: win.cardName,
+        sheetType: win.sheetType || '',
+        fallbackTemplate: fallback,
+      });
+      const resolved = templateStore.resolveCardTemplate(win.channelId, win.cardId, win.sheetType, fallback);
+      const normalized = normalizeTemplate(win.cardId, resolved, win.sheetType);
+      win.template = normalized;
+      win.templateMode = binding?.mode;
+      win.templateId = binding?.templateId || undefined;
+      saveTemplate(win.cardId, normalized);
+      schedulePersistWindows();
+    } catch (e) {
+      console.warn('Failed to sync character sheet template from cloud', e);
+    }
+  };
+
+  const applyManagedTemplate = async (windowId: string, templateId: string) => {
+    const win = windows.value[windowId];
+    if (!win || !win.channelId || !win.cardId || !templateId) return null;
+    await templateStore.ensureTemplatesLoaded();
+    const template = templateStore.getTemplateById(templateId);
+    if (!template) {
+      throw new Error('模板不存在');
+    }
+    const binding = await templateStore.bindCardToTemplate({
+      channelId: win.channelId,
+      externalCardId: win.cardId,
+      cardName: win.cardName,
+      sheetType: win.sheetType || template.sheetType,
+      templateId,
+    });
+    const normalized = normalizeTemplate(win.cardId, template.content, win.sheetType || template.sheetType);
+    win.template = normalized;
+    win.templateMode = 'managed';
+    win.templateId = templateId;
+    saveTemplate(win.cardId, normalized);
+    schedulePersistWindows();
+    return binding;
+  };
+
+  const applyDetachedTemplate = async (windowId: string, templateText?: string) => {
+    const win = windows.value[windowId];
+    if (!win || !win.channelId || !win.cardId) return null;
+    const normalized = normalizeTemplate(win.cardId, templateText ?? win.template, win.sheetType);
+    const binding = await templateStore.bindCardToDetachedTemplate({
+      channelId: win.channelId,
+      externalCardId: win.cardId,
+      cardName: win.cardName,
+      sheetType: win.sheetType || '',
+      templateSnapshot: normalized,
+    });
+    win.template = normalized;
+    win.templateMode = 'detached';
+    win.templateId = undefined;
+    saveTemplate(win.cardId, normalized);
+    schedulePersistWindows();
+    return binding;
+  };
+
+  const saveCurrentTemplateAsNew = async (windowId: string, name: string) => {
+    const win = windows.value[windowId];
+    if (!win) return null;
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      throw new Error('模板名称不能为空');
+    }
+    await templateStore.ensureTemplatesLoaded();
+    const created = await templateStore.createTemplate({
+      name: trimmedName,
+      sheetType: win.sheetType || '',
+      content: win.template,
+    });
+    if (!created?.id) {
+      throw new Error('创建模板失败');
+    }
+    await applyManagedTemplate(windowId, created.id);
+    return created;
+  };
+
+  const syncCurrentTemplateToTemplate = async (windowId: string, templateId: string) => {
+    const win = windows.value[windowId];
+    if (!win || !templateId) return null;
+    await templateStore.updateTemplate(templateId, {
+      content: win.template,
+    });
+    await applyManagedTemplate(windowId, templateId);
+    return templateStore.getTemplateById(templateId);
   };
 
   let attrsSyncTimer: Record<string, ReturnType<typeof setTimeout> | null> = {};
@@ -1029,7 +1167,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const openSheet = (
     card: CharacterCard,
     channelId: string,
-    cardData?: CharacterCardData
+    cardData?: CharacterCardData,
+    templateMeta?: {
+      templateMode?: CharacterCardTemplateMode;
+      templateId?: string;
+      templateText?: string;
+    }
   ): string => {
     restoreWindows();
     const existingId = activeWindowIds.value.find(
@@ -1046,25 +1189,51 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         if (normalized !== existing.template) {
           existing.template = normalized;
         }
+        if (templateMeta?.templateMode) {
+          existing.templateMode = templateMeta.templateMode;
+        }
+        if (templateMeta?.templateId !== undefined) {
+          existing.templateId = templateMeta.templateId || undefined;
+        }
+        if (templateMeta?.templateText) {
+          existing.template = normalizeTemplate(existing.cardId, templateMeta.templateText, existing.sheetType);
+        }
+
+        existing.mode = 'view';
+
+        if (existing.isMinimized) {
+          existing.isMinimized = false;
+        }
+
+        const clampedPos = clampWindowCoords(
+          existing.positionX,
+          existing.positionY,
+          Math.max(MIN_WIDTH, existing.width || DEFAULT_WIDTH),
+          Math.max(MIN_HEIGHT, existing.height || DEFAULT_HEIGHT),
+        );
+        if (clampedPos.x !== existing.positionX || clampedPos.y !== existing.positionY) {
+          existing.positionX = clampedPos.x;
+          existing.positionY = clampedPos.y;
+        }
       }
+      void syncWindowTemplateFromCloud(existingId);
       void refreshWindowAttrs(existingId);
       bringToFront(existingId);
+      schedulePersistWindows();
       return existingId;
     }
 
     const windowId = generateWindowId();
     const offset = activeWindowIds.value.length * 30;
-    const viewportW = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800;
 
-    const posX = Math.min(
+    const clampedInitialPos = clampWindowCoords(
       VIEWPORT_PADDING + offset,
-      viewportW - DEFAULT_WIDTH - VIEWPORT_PADDING
-    );
-    const posY = Math.min(
       VIEWPORT_PADDING + offset,
-      viewportH - DEFAULT_HEIGHT - VIEWPORT_PADDING
+      DEFAULT_WIDTH,
+      DEFAULT_HEIGHT,
     );
+    const posX = clampedInitialPos.x;
+    const posY = clampedInitialPos.y;
 
     maxZIndex.value += 1;
 
@@ -1074,6 +1243,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       : getDefaultBubblePosition(activeWindowIds.value.length);
 
     const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
+    const initialTemplate = normalizeTemplate(
+      card.id,
+      templateMeta?.templateText || getTemplate(card.id, resolvedSheetType),
+      resolvedSheetType,
+    );
     windows.value[windowId] = {
       id: windowId,
       cardId: card.id,
@@ -1081,7 +1255,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       channelId,
       sheetType: resolvedSheetType || undefined,
       attrs: cardData?.attrs || card.attrs || {},
-      template: getTemplate(card.id, resolvedSheetType),
+      template: initialTemplate,
       positionX: posX,
       positionY: posY,
       width: DEFAULT_WIDTH,
@@ -1092,9 +1266,12 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       bubbleX: bubblePos.x,
       bubbleY: bubblePos.y,
       avatarUrl: cardData?.avatarUrl,
+      templateMode: templateMeta?.templateMode,
+      templateId: templateMeta?.templateId,
     };
     activeWindowIds.value.push(windowId);
     schedulePersistWindows();
+    void syncWindowTemplateFromCloud(windowId);
 
     return windowId;
   };
@@ -1165,7 +1342,10 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     if (win) {
       const normalized = normalizeTemplate(win.cardId, template, win.sheetType);
       win.template = normalized;
+      win.templateMode = 'detached';
+      win.templateId = undefined;
       saveTemplate(win.cardId, normalized);
+      void applyDetachedTemplate(windowId, normalized);
       schedulePersistWindows();
     }
   };
@@ -1246,6 +1426,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     updateSize,
     updateAttrs,
     updateTemplate,
+    applyManagedTemplate,
+    applyDetachedTemplate,
+    saveCurrentTemplateAsNew,
+    syncCurrentTemplateToTemplate,
+    syncWindowTemplateFromCloud,
     normalizeTemplate,
     setMode,
     toggleMode,

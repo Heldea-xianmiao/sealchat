@@ -13,7 +13,17 @@
       @pointerdown="startDrag"
     >
       <div class="sheet-window__title">
-        <n-icon :component="User" :size="16" />
+        <button
+          v-if="isMobile"
+          class="sheet-window__mobile-back"
+          title="关闭"
+          @click="handleMobileBack"
+          @pointerdown.stop
+        >
+          <n-icon :component="ChevronBack" :size="15" />
+          <span>关闭</span>
+        </button>
+        <n-icon v-else :component="User" :size="16" />
         <span class="sheet-window__title-text">{{ windowData.cardName || '人物卡' }}</span>
       </div>
       <div class="sheet-window__controls">
@@ -27,13 +37,16 @@
         </button>
         <button
           class="sheet-window__control-btn"
+          :class="{ 'sheet-window__control-btn--mobile-text': isMobile }"
           title="最小化"
           @click="sheetStore.minimizeSheet(windowId)"
           @pointerdown.stop
         >
           <n-icon :component="Minus" :size="14" />
+          <span v-if="isMobile" class="sheet-window__control-text">最小化</span>
         </button>
         <button
+          v-if="!isMobile"
           class="sheet-window__control-btn sheet-window__control-btn--close"
           title="关闭"
           @click="sheetStore.closeSheet(windowId)"
@@ -73,6 +86,23 @@
             </n-tab-pane>
             <n-tab-pane name="template" tab="模板">
               <div class="sheet-window__editor">
+                <div class="sheet-window__template-source">
+                  <n-select
+                    v-model:value="selectedTemplateMode"
+                    :options="templateModeOptions"
+                    size="small"
+                  />
+                  <n-select
+                    v-if="selectedTemplateMode === 'managed'"
+                    v-model:value="selectedTemplateId"
+                    :options="managedTemplateOptions"
+                    placeholder="选择模板库模板"
+                    size="small"
+                    filterable
+                    clearable
+                    @update:value="handleManagedTemplateChange"
+                  />
+                </div>
                 <n-input
                   v-model:value="templateText"
                   type="textarea"
@@ -87,6 +117,22 @@
                   </n-button>
                   <n-button size="tiny" @click="resetTemplateToCoc">
                     重置为COC默认模板
+                  </n-button>
+                  <n-input
+                    v-model:value="templateSaveName"
+                    size="tiny"
+                    placeholder="新模板名称"
+                    class="sheet-window__template-name"
+                  />
+                  <n-button size="tiny" @click="handleSaveAsTemplate">
+                    另存为新模板
+                  </n-button>
+                  <n-button
+                    size="tiny"
+                    :disabled="selectedTemplateMode !== 'managed' || !selectedTemplateId"
+                    @click="handleSyncToTemplate"
+                  >
+                    覆盖同步到模板库
                   </n-button>
                 </div>
               </div>
@@ -106,10 +152,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { NIcon, NTabs, NTabPane, NInput, NButton } from 'naive-ui';
-import { Close, Remove as Minus, Create as Edit, Eye } from '@vicons/ionicons5';
+import { NIcon, NTabs, NTabPane, NInput, NButton, NSelect, useMessage } from 'naive-ui';
+import { Close, Remove as Minus, Create as Edit, Eye, ChevronBack } from '@vicons/ionicons5';
 import { User } from '@vicons/tabler';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
+import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from '@/stores/characterCardTemplate';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import IframeSandbox, { type SealChatEvent } from './IframeSandbox.vue';
 
@@ -118,6 +165,8 @@ const props = defineProps<{
 }>();
 
 const sheetStore = useCharacterSheetStore();
+const templateStore = useCharacterCardTemplateStore();
+const message = useMessage();
 
 const windowEl = ref<HTMLElement | null>(null);
 const headerEl = ref<HTMLElement | null>(null);
@@ -125,6 +174,22 @@ const headerEl = ref<HTMLElement | null>(null);
 const jsonText = ref('');
 const jsonError = ref('');
 const templateText = ref('');
+const templateSaveName = ref('');
+const selectedTemplateMode = ref<CharacterCardTemplateMode>('detached');
+const selectedTemplateId = ref<string>('');
+
+const templateModeOptions = [
+  { label: '自定义（脱离模板库）', value: 'detached' },
+  { label: '模板库模板', value: 'managed' },
+];
+
+const managedTemplateOptions = computed(() => {
+  const sheetType = windowData.value?.sheetType || '';
+  return templateStore.getTemplatesBySheetType(sheetType).map(item => ({
+    label: `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
+    value: item.id,
+  }));
+});
 
 const isMobile = ref(false);
 const isDragging = ref(false);
@@ -178,6 +243,10 @@ const checkMobile = () => {
 
 const handlePointerDown = () => {
   sheetStore.bringToFront(props.windowId);
+};
+
+const handleMobileBack = () => {
+  sheetStore.closeSheet(props.windowId);
 };
 
 const startDrag = (e: PointerEvent) => {
@@ -260,6 +329,11 @@ const syncTemplateText = () => {
   const win = windowData.value;
   if (win) {
     templateText.value = win.template;
+    selectedTemplateMode.value = win.templateMode || 'detached';
+    selectedTemplateId.value = win.templateId || '';
+    if (!templateSaveName.value) {
+      templateSaveName.value = `${win.cardName || '人物卡'}模板`;
+    }
   }
 };
 
@@ -277,17 +351,88 @@ const handleTemplateSave = () => {
   sheetStore.updateTemplate(props.windowId, templateText.value);
 };
 
+const handleManagedTemplateChange = async (templateId: string) => {
+  if (!templateId) return;
+  try {
+    await sheetStore.applyManagedTemplate(props.windowId, templateId);
+    const win = windowData.value;
+    if (win) {
+      templateText.value = win.template;
+      selectedTemplateMode.value = 'managed';
+      selectedTemplateId.value = templateId;
+    }
+    message.success('模板已切换');
+  } catch (e: any) {
+    message.error(e?.message || '模板切换失败');
+  }
+};
+
+const handleSaveAsTemplate = async () => {
+  const name = templateSaveName.value.trim();
+  if (!name) {
+    message.warning('请输入新模板名称');
+    return;
+  }
+  try {
+    const created = await sheetStore.saveCurrentTemplateAsNew(props.windowId, name);
+    if (created?.id) {
+      selectedTemplateMode.value = 'managed';
+      selectedTemplateId.value = created.id;
+    }
+    message.success('已保存为新模板');
+  } catch (e: any) {
+    message.error(e?.message || '保存失败');
+  }
+};
+
+const handleSyncToTemplate = async () => {
+  if (!selectedTemplateId.value) {
+    message.warning('请先选择模板');
+    return;
+  }
+  try {
+    await sheetStore.syncCurrentTemplateToTemplate(props.windowId, selectedTemplateId.value);
+    message.success('已同步到模板库');
+  } catch (e: any) {
+    message.error(e?.message || '同步失败');
+  }
+};
+
 const resetTemplate = () => {
   const defaultTpl = sheetStore.getDefaultTemplate(windowData.value?.sheetType);
   templateText.value = defaultTpl;
   sheetStore.updateTemplate(props.windowId, defaultTpl);
+  selectedTemplateMode.value = 'detached';
+  selectedTemplateId.value = '';
 };
 
 const resetTemplateToCoc = () => {
   const cocTpl = sheetStore.getDefaultTemplate('coc7');
   templateText.value = cocTpl;
   sheetStore.updateTemplate(props.windowId, cocTpl);
+  selectedTemplateMode.value = 'detached';
+  selectedTemplateId.value = '';
 };
+
+watch(selectedTemplateMode, async (mode) => {
+  const win = windowData.value;
+  if (!win) return;
+  if (win.templateMode === mode && (mode !== 'managed' || (win.templateId || '') === selectedTemplateId.value)) {
+    return;
+  }
+  if (mode === 'detached') {
+    selectedTemplateId.value = '';
+    try {
+      await sheetStore.applyDetachedTemplate(props.windowId, templateText.value);
+    } catch (e) {
+      console.warn('Failed to switch template mode to detached', e);
+    }
+    return;
+  }
+  if (mode === 'managed' && selectedTemplateId.value) {
+    await handleManagedTemplateChange(selectedTemplateId.value);
+  }
+});
 
 watch(
   () => windowData.value?.attrs,
@@ -312,6 +457,7 @@ watch(
 onMounted(() => {
   checkMobile();
   window.addEventListener('resize', checkMobile);
+  void templateStore.ensureTemplatesLoaded();
   syncJsonText();
   syncTemplateText();
   const win = windowData.value;
@@ -379,6 +525,20 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--sc-text-primary, #1f2937);
+  min-width: 0;
+}
+
+.sheet-window__mobile-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--sc-text-secondary, #6b7280);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .sheet-window__title-text {
@@ -397,6 +557,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   width: 22px;
   height: 22px;
   border: none;
@@ -405,6 +566,11 @@ onBeforeUnmount(() => {
   cursor: pointer;
   color: var(--sc-text-secondary, #6b7280);
   transition: all 0.15s ease;
+}
+
+.sheet-window__control-text {
+  font-size: 11px;
+  line-height: 1;
 }
 
 .sheet-window__control-btn:hover {
@@ -544,7 +710,65 @@ onBeforeUnmount(() => {
 .sheet-window__template-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.sheet-window__template-source {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.sheet-window__template-name {
+  width: 180px;
+}
+
+.is-mobile .sheet-window__header {
+  padding: 8px 10px;
+  min-height: 40px;
+  gap: 0.5rem;
+}
+
+.is-mobile .sheet-window__title {
+  flex: 1;
+  gap: 4px;
+}
+
+.is-mobile .sheet-window__title-text {
+  max-width: 48vw;
+}
+
+.is-mobile .sheet-window__controls {
+  gap: 6px;
+}
+
+.is-mobile .sheet-window__control-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.is-mobile .sheet-window__control-btn--mobile-text {
+  width: auto;
+  padding: 0 8px;
+}
+
+.is-mobile .sheet-window__template-source {
+  grid-template-columns: 1fr;
+}
+
+.is-mobile .sheet-window__template-actions {
+  justify-content: flex-start;
+}
+
+.is-mobile .sheet-window__template-name {
+  width: 100%;
+}
+
+.is-mobile .sheet-window__tabs :deep(.n-tab-pane) {
+  padding: 10px;
 }
 
 .sheet-window__resize-handle {
@@ -572,6 +796,11 @@ onBeforeUnmount(() => {
 :root[data-display-palette='night'] .sheet-window__header {
   background: var(--sc-bg-panel, rgba(30, 41, 59, 0.95));
   border-color: rgba(148, 163, 184, 0.15);
+}
+
+:root[data-display-palette='night'] .sheet-window__mobile-back {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sc-text-secondary, #94a3b8);
 }
 
 :root[data-display-palette='night'] .sheet-window__control-btn {

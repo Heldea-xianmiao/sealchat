@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NInputNumber, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Unlink, Eye } from '@vicons/tabler';
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
+import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, useMessage } from 'naive-ui';
+import { Plus, Trash, Edit, Link, Eye } from '@vicons/tabler';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
+import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
@@ -22,8 +23,17 @@ const emit = defineEmits<{
 const message = useMessage();
 const cardStore = useCharacterCardStore();
 const sheetStore = useCharacterSheetStore();
+const templateStore = useCharacterCardTemplateStore();
 const chatStore = useChatStore();
 const displayStore = useDisplayStore();
+
+const viewportWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
+const updateViewportWidth = () => {
+  if (typeof window === 'undefined') return;
+  viewportWidth.value = window.innerWidth;
+};
+const isMobile = computed(() => viewportWidth.value < 768);
+const drawerWidth = computed(() => (isMobile.value ? `${Math.max(320, viewportWidth.value)}px` : 420));
 
 const resolvedChannelId = computed(() => props.channelId || chatStore.curChannel?.id || '');
 
@@ -98,14 +108,42 @@ const syncBadgeTemplateToWorld = async () => {
 watch(() => props.visible, async (val) => {
   if (val && resolvedChannelId.value) {
     await cardStore.loadCards(resolvedChannelId.value);
+    await templateStore.ensureTemplatesLoaded();
+    await templateStore.loadBindings(resolvedChannelId.value);
+    await templateStore.migrateLocalTemplatesIfNeeded(
+      resolvedChannelId.value,
+      channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
+    );
+    await templateStore.loadBindings(resolvedChannelId.value);
   }
 }, { immediate: true });
 
 watch(resolvedChannelId, async (newId) => {
   if (props.visible && newId) {
     await cardStore.loadCards(newId);
+    await templateStore.ensureTemplatesLoaded();
+    await templateStore.loadBindings(newId);
+    await templateStore.migrateLocalTemplatesIfNeeded(
+      newId,
+      channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
+    );
+    await templateStore.loadBindings(newId);
   }
 });
+
+watch(
+  [() => props.visible, channelCards],
+  async ([visible, cards]) => {
+    const channelId = resolvedChannelId.value;
+    if (!visible || !channelId || !cards.length) return;
+    await templateStore.migrateLocalTemplatesIfNeeded(
+      channelId,
+      cards.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
+    );
+    await templateStore.loadBindings(channelId);
+  },
+  { deep: true },
+);
 
 watch(
   [() => props.visible, currentWorldId],
@@ -116,6 +154,19 @@ watch(
   },
   { immediate: true },
 );
+
+watch(channelCards, (cards) => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId || !cards.length) return;
+  const bindingMap = templateStore.bindingsByChannel[channelId] || {};
+  cards.forEach(card => {
+    const binding = bindingMap[card.id];
+    if (!binding) return;
+    card.templateMode = binding.mode;
+    card.templateId = binding.templateId || undefined;
+    card.templateSnapshot = binding.templateSnapshot || undefined;
+  });
+}, { immediate: true, deep: true });
 
 watch(badgeEnabled, (enabled) => {
   const channelId = resolvedChannelId.value;
@@ -128,8 +179,214 @@ watch(badgeEnabled, (enabled) => {
   void cardStore.broadcastActiveBadge(channelId, undefined, 'clear');
 });
 
+onMounted(() => {
+  updateViewportWidth();
+  window.addEventListener('resize', updateViewportWidth);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') return;
+  window.removeEventListener('resize', updateViewportWidth);
+});
+
 const handleClose = () => {
+  templateManagerVisible.value = false;
   emit('update:visible', false);
+};
+
+const templateFilterSheetType = ref('');
+const templateSearchKeyword = ref('');
+const cardSearchKeyword = ref('');
+const templateManagerVisible = ref(false);
+const templateModalVisible = ref(false);
+const templateEditingId = ref('');
+const templateName = ref('');
+const templateSheetTypePreset = ref('coc7');
+const templateSheetTypeCustom = ref('');
+const templateContent = ref('');
+const templateGlobalDefault = ref(false);
+const templateSheetDefault = ref(false);
+const templateSaving = ref(false);
+
+const managedTemplates = computed(() => {
+  const filter = templateFilterSheetType.value.trim().toLowerCase();
+  return templateStore.templates.filter(item => {
+    if (!filter) return true;
+    return (item.sheetType || '').trim().toLowerCase() === filter;
+  });
+});
+
+const filteredManagedTemplates = computed(() => {
+  const keyword = templateSearchKeyword.value.trim().toLowerCase();
+  if (!keyword) return managedTemplates.value;
+  return managedTemplates.value.filter(item => {
+    const name = (item.name || '').toLowerCase();
+    const sheetType = (item.sheetType || '').toLowerCase();
+    const content = (item.content || '').toLowerCase();
+    return name.includes(keyword) || sheetType.includes(keyword) || content.includes(keyword);
+  });
+});
+
+const allChannelCards = computed(() => (Array.isArray(channelCards.value) ? channelCards.value : []));
+
+const buildCardAttrsSearchText = (attrs: Record<string, any> | undefined) => {
+  if (!attrs || typeof attrs !== 'object') return '';
+  return Object.entries(attrs)
+    .map(([key, value]) => `${key}:${String(value ?? '')}`)
+    .join(' ')
+    .toLowerCase();
+};
+
+const filteredChannelCards = computed(() => {
+  const source = allChannelCards.value;
+  const keyword = cardSearchKeyword.value.trim().toLowerCase();
+  if (!keyword) return source;
+  return source.filter(card => {
+    const name = (card.name || '').toLowerCase();
+    const sheetType = (card.sheetType || '').toLowerCase();
+    const attrs = buildCardAttrsSearchText(card.attrs);
+    return name.includes(keyword) || sheetType.includes(keyword) || attrs.includes(keyword);
+  });
+});
+
+const setTemplateSheetType = (value: string) => {
+  const normalized = (value || '').trim();
+  const lower = normalized.toLowerCase();
+  if (lower === 'coc7' || lower === 'coc') {
+    templateSheetTypePreset.value = 'coc7';
+    templateSheetTypeCustom.value = '';
+    return;
+  }
+  if (lower === 'dnd5e' || lower === 'dnd5' || lower === 'dnd') {
+    templateSheetTypePreset.value = 'dnd5e';
+    templateSheetTypeCustom.value = '';
+    return;
+  }
+  if (normalized) {
+    templateSheetTypePreset.value = 'custom';
+    templateSheetTypeCustom.value = normalized;
+    return;
+  }
+  templateSheetTypePreset.value = 'custom';
+  templateSheetTypeCustom.value = '';
+};
+
+const resolveTemplateSheetType = () => resolveSheetType(templateSheetTypePreset.value, templateSheetTypeCustom.value);
+
+const openTemplateManager = async () => {
+  await templateStore.ensureTemplatesLoaded();
+  templateManagerVisible.value = true;
+};
+
+const openTemplateCreateModal = () => {
+  templateEditingId.value = '';
+  templateName.value = '';
+  setTemplateSheetType('coc7');
+  templateContent.value = sheetStore.getDefaultTemplate('coc7');
+  templateGlobalDefault.value = false;
+  templateSheetDefault.value = false;
+  templateModalVisible.value = true;
+};
+
+const openTemplateEditModal = (item: CharacterCardTemplate) => {
+  templateEditingId.value = item.id;
+  templateName.value = item.name;
+  setTemplateSheetType(item.sheetType || '');
+  templateContent.value = item.content;
+  templateGlobalDefault.value = !!item.isGlobalDefault;
+  templateSheetDefault.value = !!item.isSheetDefault;
+  templateModalVisible.value = true;
+};
+
+const handleSaveTemplate = async () => {
+  const name = templateName.value.trim();
+  const sheetType = resolveTemplateSheetType();
+  const content = templateContent.value.trim();
+  if (!name) {
+    message.warning('请输入模板名称');
+    return;
+  }
+  if (!content) {
+    message.warning('模板内容不能为空');
+    return;
+  }
+  templateSaving.value = true;
+  try {
+    if (templateEditingId.value) {
+      await templateStore.updateTemplate(templateEditingId.value, {
+        name,
+        sheetType,
+        content,
+        isGlobalDefault: templateGlobalDefault.value,
+        isSheetDefault: templateSheetDefault.value,
+      });
+      message.success('模板已更新');
+    } else {
+      await templateStore.createTemplate({
+        name,
+        sheetType,
+        content,
+        isGlobalDefault: templateGlobalDefault.value,
+        isSheetDefault: templateSheetDefault.value,
+      });
+      message.success('模板已创建');
+    }
+    templateModalVisible.value = false;
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '模板保存失败');
+  } finally {
+    templateSaving.value = false;
+  }
+};
+
+const handleDeleteTemplate = async (item: CharacterCardTemplate) => {
+  try {
+    await templateStore.deleteTemplate(item.id);
+    message.success('模板已删除');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '模板删除失败');
+  }
+};
+
+const handleCopyTemplate = async (item: CharacterCardTemplate) => {
+  try {
+    await templateStore.createTemplate({
+      name: `${item.name}-副本`,
+      sheetType: item.sheetType,
+      content: item.content,
+    });
+    message.success('模板已复制');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '模板复制失败');
+  }
+};
+
+const setAsGlobalDefault = async (item: CharacterCardTemplate) => {
+  try {
+    await templateStore.setTemplateDefault(item.id, 'global');
+    message.success('已设为全局默认模板');
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '设置失败');
+  }
+};
+
+const setAsSheetDefault = async (item: CharacterCardTemplate) => {
+  if (!(item.sheetType || '').trim()) {
+    message.warning('该模板缺少规制类型，无法设为规制默认');
+    return;
+  }
+  try {
+    await templateStore.setTemplateDefault(item.id, 'sheet');
+    message.success(`已设为 ${item.sheetType} 默认模板`);
+  } catch (e: any) {
+    message.error(e?.response?.data?.error || e?.message || '设置失败');
+  }
+};
+
+const formatTemplatePreview = (content: string) => {
+  const plain = String(content || '').replace(/\s+/g, ' ').trim();
+  if (plain.length <= 120) return plain;
+  return `${plain.slice(0, 120)}...`;
 };
 
 // Create card modal
@@ -412,13 +669,37 @@ const openPreview = async (card: CharacterCard) => {
       await cardStore.getActiveCard(channelId);
       cardData = cardStore.activeCards[channelId];
     }
+    await templateStore.ensureTemplatesLoaded();
+    await templateStore.ensureBindingsLoaded(channelId);
+    const resolvedSheetType = (cardData?.type || card.sheetType || '').trim();
+    const fallbackTemplate = sheetStore.getTemplate(card.id, resolvedSheetType);
+    const ensured = await templateStore.ensureCardBinding({
+      channelId,
+      externalCardId: card.id,
+      cardName: card.name,
+      sheetType: resolvedSheetType,
+      fallbackTemplate,
+    });
+    const binding = templateStore.getBinding(channelId, card.id) || ensured;
+    if (binding?.mode) {
+      card.templateMode = binding.mode;
+      card.templateId = binding.templateId || undefined;
+      card.templateSnapshot = binding.templateSnapshot || undefined;
+    }
     const avatarUrl = resolveCardAvatarUrl(card.id);
     sheetStore.openSheet(card, channelId, {
       name: cardData?.name || card.name,
       type: cardData?.type || card.sheetType,
       attrs: cardData?.attrs || card.attrs || {},
       avatarUrl: avatarUrl || undefined,
+    }, {
+      templateMode: binding?.mode,
+      templateId: binding?.templateId || undefined,
+      templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
     });
+    if (isMobile.value) {
+      handleClose();
+    }
   } catch (e: any) {
     console.warn('Failed to open character preview', e);
     const avatarUrl = resolveCardAvatarUrl(card.id);
@@ -428,6 +709,9 @@ const openPreview = async (card: CharacterCard) => {
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
     });
+    if (isMobile.value) {
+      handleClose();
+    }
   }
 };
 </script>
@@ -436,17 +720,23 @@ const openPreview = async (card: CharacterCard) => {
   <n-drawer
     :show="visible"
     placement="right"
-    :width="420"
+    :width="drawerWidth"
     @update:show="handleClose"
   >
     <n-drawer-content closable>
       <template #header>
         <div class="character-card-header">
-          <span>人物卡管理</span>
-          <n-button size="small" type="primary" @click="openCreateModal">
-            <template #icon><n-icon :component="Plus" /></template>
-            新建
-          </n-button>
+          <div class="character-card-header__left">
+            <n-button v-if="isMobile" size="tiny" quaternary @click="handleClose">返回</n-button>
+            <span>人物卡管理</span>
+          </div>
+          <div class="character-card-header__actions">
+            <n-button size="small" type="primary" @click="openTemplateManager">模板管理器</n-button>
+            <n-button size="small" type="primary" @click="openCreateModal">
+              <template #icon><n-icon :component="Plus" /></template>
+              新建
+            </n-button>
+          </div>
         </div>
       </template>
 
@@ -484,10 +774,22 @@ const openPreview = async (card: CharacterCard) => {
         </div>
       </div>
 
+      <n-divider style="margin: 8px 0 12px;" />
+
+      <div class="card-search-row">
+        <n-input
+          v-model:value="cardSearchKeyword"
+          size="small"
+          clearable
+          placeholder="搜索人物卡（名称/规制/属性）"
+        />
+      </div>
+
       <div class="character-card-list">
-        <n-empty v-if="channelCards.length === 0" description="暂无人物卡" />
+        <n-empty v-if="allChannelCards.length === 0" description="暂无人物卡" />
+        <n-empty v-else-if="filteredChannelCards.length === 0" description="未找到匹配人物卡" />
         <n-card
-          v-for="card in channelCards"
+          v-for="card in filteredChannelCards"
           :key="card.id"
           size="small"
           class="character-card-item"
@@ -560,6 +862,102 @@ const openPreview = async (card: CharacterCard) => {
     </n-form>
   </n-modal>
 
+  <!-- Template Manager Modal -->
+  <n-modal
+    v-model:show="templateManagerVisible"
+    preset="card"
+    title="模板管理器"
+    style="width: min(900px, 92vw);"
+    :bordered="false"
+  >
+    <div class="template-manager template-manager--modal">
+      <div class="template-manager__toolbar">
+        <n-select
+          v-model:value="templateFilterSheetType"
+          :options="[{ label: '全部规制', value: '' }, ...sheetTypeOptions.filter(opt => opt.value !== 'custom')]"
+          placeholder="筛选规制"
+          size="small"
+          clearable
+        />
+        <n-input
+          v-model:value="templateSearchKeyword"
+          size="small"
+          clearable
+          placeholder="搜索模板（名称/内容）"
+        />
+        <n-button size="small" type="primary" @click="openTemplateCreateModal">新增模板</n-button>
+      </div>
+
+      <n-empty v-if="filteredManagedTemplates.length === 0" description="暂无模板" />
+      <n-card v-for="tpl in filteredManagedTemplates" :key="tpl.id" size="small" class="template-manager__item">
+        <template #header>
+          <div class="template-manager__header">
+            <span>{{ tpl.name }}</span>
+            <div class="template-manager__tags">
+              <n-tag size="small" :bordered="false">{{ tpl.sheetType || '通用' }}</n-tag>
+              <n-tag v-if="tpl.isGlobalDefault" size="small" type="info" :bordered="false">全局默认</n-tag>
+              <n-tag v-if="tpl.isSheetDefault" size="small" type="success" :bordered="false">规制默认</n-tag>
+            </div>
+          </div>
+        </template>
+        <div class="template-manager__preview">{{ formatTemplatePreview(tpl.content) || '空模板' }}</div>
+        <div class="template-manager__actions">
+          <n-button text size="small" @click="openTemplateEditModal(tpl)">编辑</n-button>
+          <n-button text size="small" @click="handleCopyTemplate(tpl)">复制</n-button>
+          <n-button text size="small" @click="setAsGlobalDefault(tpl)">设为全局默认</n-button>
+          <n-button text size="small" @click="setAsSheetDefault(tpl)">设为规制默认</n-button>
+          <n-popconfirm @positive-click="handleDeleteTemplate(tpl)">
+            <template #trigger>
+              <n-button text size="small" type="error">删除</n-button>
+            </template>
+            删除模板后，已引用卡片会转为脱离模板快照，确认删除？
+          </n-popconfirm>
+        </div>
+      </n-card>
+    </div>
+  </n-modal>
+
+  <!-- Template Create/Edit Modal -->
+  <n-modal
+    v-model:show="templateModalVisible"
+    preset="dialog"
+    :show-icon="false"
+    :title="templateEditingId ? '编辑模板' : '新建模板'"
+    :positive-text="templateSaving ? '保存中…' : '保存'"
+    :positive-button-props="{ loading: templateSaving }"
+    negative-text="取消"
+    @positive-click="handleSaveTemplate"
+  >
+    <n-form label-width="90">
+      <n-form-item label="模板名称">
+        <n-input v-model:value="templateName" maxlength="100" placeholder="输入模板名称" />
+      </n-form-item>
+      <n-form-item label="规制类型">
+        <n-select v-model:value="templateSheetTypePreset" :options="sheetTypeOptions" />
+        <n-input
+          v-if="templateSheetTypePreset === 'custom'"
+          v-model:value="templateSheetTypeCustom"
+          placeholder="输入自定义规制类型"
+          class="sheet-type-custom-input"
+        />
+      </n-form-item>
+      <n-form-item label="模板内容">
+        <n-input
+          v-model:value="templateContent"
+          type="textarea"
+          :autosize="{ minRows: 8, maxRows: 16 }"
+          placeholder="输入 HTML 模板"
+        />
+      </n-form-item>
+      <n-form-item label="默认设置">
+        <div class="template-manager__defaults">
+          <n-checkbox v-model:checked="templateGlobalDefault">设为全局默认</n-checkbox>
+          <n-checkbox v-model:checked="templateSheetDefault">设为规制默认</n-checkbox>
+        </div>
+      </n-form-item>
+    </n-form>
+  </n-modal>
+
   <!-- Edit Modal -->
   <n-modal
     v-model:show="editModalVisible"
@@ -624,7 +1022,20 @@ const openPreview = async (card: CharacterCard) => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  gap: 0.75rem;
   padding-right: 1rem;
+}
+
+.character-card-header__left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.character-card-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .character-card-list {
@@ -670,6 +1081,70 @@ const openPreview = async (card: CharacterCard) => {
   min-width: 210px;
 }
 
+.template-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.template-manager--modal {
+  max-height: 72vh;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.card-search-row {
+  margin-bottom: 0.75rem;
+}
+
+.template-manager__toolbar {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.template-manager__item {
+  :deep(.n-card__content) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}
+
+.template-manager__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.template-manager__tags {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.template-manager__preview {
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+  line-height: 1.35;
+}
+
+.template-manager__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.template-manager__defaults {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
 .character-card-item {
   .card-name {
     font-weight: 500;
@@ -694,5 +1169,45 @@ const openPreview = async (card: CharacterCard) => {
 
 .sheet-type-custom-input {
   margin-top: 8px;
+}
+
+@media (max-width: 767px) {
+  .character-card-header {
+    padding-right: 0;
+  }
+
+  .character-card-header__actions {
+    gap: 0.35rem;
+  }
+
+  .settings-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-template-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .template-manager__toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .character-card-item :deep(.n-card-header) {
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .character-card-item :deep(.n-card-header__extra) {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
+
+  .character-card-item :deep(.n-card-header__extra .n-button) {
+    min-width: 30px;
+    min-height: 30px;
+  }
 }
 </style>
