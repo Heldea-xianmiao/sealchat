@@ -209,7 +209,7 @@ const coerceTimestampFormat = (value?: string): TimestampFormat => {
 }
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
-const coercePalette = (value?: string): DisplayPalette => (value === 'night' ? 'night' : 'day')
+const coercePalette = (value?: string): DisplayPalette => (value === 'day' ? 'day' : 'night')
 const coerceBoolean = (value: any): boolean => value !== false
 const coerceNumberInRange = (value: any, fallback: number, min: number, max: number): number => {
   const num = Number(value)
@@ -368,7 +368,7 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
 
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
-  palette: 'day',
+  palette: 'night',
   showAvatar: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
@@ -393,7 +393,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   favoriteChannelIdsByWorld: {},
   favoriteChannelHotkeysByWorld: {},
   worldKeywordHighlightEnabled: true,
-  worldKeywordUnderlineOnly: false,
+  worldKeywordUnderlineOnly: true,
   worldKeywordTooltipEnabled: true,
   worldKeywordDeduplicateEnabled: true,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
@@ -586,7 +586,7 @@ const loadSettings = (): DisplaySettings => {
       favoriteChannelIdsByWorld,
       favoriteChannelHotkeysByWorld,
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
-      worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
+      worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? true),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? true),
       worldKeywordTooltipTextIndent: coerceFloatInRange(
