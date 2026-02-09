@@ -9811,6 +9811,7 @@ const keyDown = function (e: KeyboardEvent) {
 
 const atOptions = ref<MentionOption[]>([])
 const atLoading = ref(true)
+let atSearchRequestSeq = 0
 const atRenderLabel = (option: MentionOption) => {
   switch (option.type) {
     case 'cmd':
@@ -9842,6 +9843,7 @@ const atRenderLabel = (option: MentionOption) => {
 const atPrefix = computed(() => chat.atOptionsOn ? ['@', '/', '.'] : ['@']);
 
 const atHandleSearch = async (pattern: string, prefix: string) => {
+  const requestSeq = ++atSearchRequestSeq;
   pauseKeydown.value = true;
   atLoading.value = true;
 
@@ -9868,82 +9870,92 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
     }
   }
 
-  switch (prefix) {
-    case '@': {
-      await ensurePinyinLoaded();
-      const channelId = chat.curChannel?.id;
-      if (!channelId) {
-        atOptions.value = [];
-        break;
-      }
-      const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
-      const result = await chat.fetchMentionableMembers(channelId, icMode);
-      let lst: MentionOption[] = [];
-      // @all option
-      if (result.canAtAll) {
-        const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
-        if (allMatches) {
+  try {
+    switch (prefix) {
+      case '@': {
+        await ensurePinyinLoaded();
+        if (requestSeq !== atSearchRequestSeq) {
+          return;
+        }
+        const channelId = chat.curChannel?.id;
+        if (!channelId) {
+          atOptions.value = [];
+          break;
+        }
+        const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
+        const result = await chat.fetchMentionableMembers(channelId, icMode);
+        if (requestSeq !== atSearchRequestSeq) {
+          return;
+        }
+        let lst: MentionOption[] = [];
+        // @all option
+        if (result.canAtAll) {
+          const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
+          if (allMatches) {
+            lst.push({
+              type: 'at',
+              value: '<at id="all" name="全体成员"/>',
+              label: '全体成员',
+              data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+            });
+          }
+        }
+        // Filter and map members
+        for (const item of result.items) {
+          if (pattern && !matchText(pattern, item.displayName)) {
+            continue;
+          }
+          const escapedName = item.displayName.replace(/"/g, '&quot;');
           lst.push({
             type: 'at',
-            value: '<at id="all" name="全体成员"/>',
-            label: '全体成员',
-            data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+            value: `<at id="${item.userId}" name="${escapedName}"/>`,
+            label: item.displayName,
+            data: item,
           });
         }
+        atOptions.value = lst.slice(0, 10);
+        break;
       }
-      // Filter and map members
-      for (const item of result.items) {
-        if (pattern && !matchText(pattern, item.displayName)) {
-          continue;
-        }
-        const escapedName = item.displayName.replace(/"/g, '&quot;');
-        lst.push({
-          type: 'at',
-          value: `<at id="${item.userId}" name="${escapedName}"/>`,
-          label: item.displayName,
-          data: item,
-        });
-      }
-      atOptions.value = lst.slice(0, 10);
-      break;
-    }
-    case '.': case '/':
-      // 好像暂时没法组织他弹出
-      // if (!cmdCheck()) {
-      //   atLoading.value = false;
-      //   pauseKeydown.value = false;
-      //   return;
-      // }
+      case '.': case '/':
+        // 好像暂时没法组织他弹出
+        // if (!cmdCheck()) {
+        //   atLoading.value = false;
+        //   pauseKeydown.value = false;
+        //   return;
+        // }
 
-      if (chat.atOptionsOn) {
-        atOptions.value = [[`x`, 'x d100'],].map((i) => {
-          return {
-            type: 'cmd',
-            value: i[0],
-            label: i[0],
-            data: {
-              "info": '/x 简易骰点指令，如：/x d100 (100面骰)'
+        if (chat.atOptionsOn) {
+          atOptions.value = [[`x`, 'x d100'],].map((i) => {
+            return {
+              type: 'cmd',
+              value: i[0],
+              label: i[0],
+              data: {
+                "info": '/x 简易骰点指令，如：/x d100 (100面骰)'
+              }
+            }
+          });
+
+          for (let [id, data] of Object.entries(utils.botCommands)) {
+            for (let [k, v] of Object.entries(data)) {
+              atOptions.value.push({
+                type: 'cmd',
+                value: k,
+                label: k,
+                data: {
+                  "info": `/${k} ` + (v as any).split('\n', 1)[0].replace(/^\.\S+/, '')
+                }
+              })
             }
           }
-        });
-
-        for (let [id, data] of Object.entries(utils.botCommands)) {
-          for (let [k, v] of Object.entries(data)) {
-            atOptions.value.push({
-              type: 'cmd',
-              value: k,
-              label: k,
-              data: {
-                "info": `/${k} ` + (v as any).split('\n', 1)[0].replace(/^\.\S+/, '')
-              }
-            })
-          }
         }
-      }
-      break;
+        break;
+    }
+  } finally {
+    if (requestSeq === atSearchRequestSeq) {
+      atLoading.value = false;
+    }
   }
-
-  atLoading.value = false;
 }
 
 const { stop: stopTopObserver } = useIntersectionObserver(
