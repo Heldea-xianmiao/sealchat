@@ -1794,8 +1794,11 @@ const buildRichContentFromPlain = (text: string) => {
       content: [{ type: 'paragraph' }],
     };
   }
-  const lines = text.split('\n');
-  const content = lines.map((line) => {
+  const normalizedText = text.replace(/\r\n/g, '\n');
+  const lines = normalizedText.split('\n');
+  const paragraphNodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
+
+  lines.forEach((line, index) => {
     inlineImageMarkerRegexp.lastIndex = 0;
     let lastIndex = 0;
     const nodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
@@ -1817,9 +1820,22 @@ const buildRichContentFromPlain = (text: string) => {
     if (lastIndex < line.length) {
       nodes.push({ type: 'text', text: line.slice(lastIndex) });
     }
-    return nodes.length ? { type: 'paragraph', content: nodes } : { type: 'paragraph' };
+    if (nodes.length) {
+      paragraphNodes.push(...nodes);
+    }
+    if (index < lines.length - 1) {
+      paragraphNodes.push({ type: 'hardBreak' });
+    }
   });
-  return { type: 'doc', content };
+
+  return {
+    type: 'doc',
+    content: [
+      paragraphNodes.length
+        ? { type: 'paragraph', content: paragraphNodes }
+        : { type: 'paragraph' },
+    ],
+  };
 };
 
 const hasUploadingInlineImages = computed(() => {

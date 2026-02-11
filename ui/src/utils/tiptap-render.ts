@@ -359,15 +359,25 @@ export function plainTextToTiptapJson(text: string): TipTapNode {
     };
   }
 
-  const lines = text.split('\n');
-  const content = lines.map((line) => ({
-    type: 'paragraph' as const,
-    content: line ? [{ type: 'text' as const, text: line }] : [],
-  }));
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const paragraphContent: TipTapNode[] = [];
+
+  lines.forEach((line, index) => {
+    if (line) {
+      paragraphContent.push({ type: 'text', text: line });
+    }
+    if (index < lines.length - 1) {
+      paragraphContent.push({ type: 'hardBreak' });
+    }
+  });
 
   return {
     type: 'doc',
-    content,
+    content: [
+      paragraphContent.length
+        ? { type: 'paragraph', content: paragraphContent }
+        : { type: 'paragraph' },
+    ],
   };
 }
 
