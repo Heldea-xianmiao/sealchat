@@ -1411,11 +1411,11 @@ defineExpose({
   .rich-inline-image,
   img {
     max-width: 100%;
-    max-height: 12rem;
+    max-height: 6rem;
     height: auto;
-    border-radius: 0.5rem;
-    vertical-align: middle;
-    margin: 0.5rem 0.25rem;
+    border-radius: 0.375rem;
+    vertical-align: text-bottom;
+    margin: 0 0.25rem;
     display: inline-block;
     object-fit: contain;
   }
