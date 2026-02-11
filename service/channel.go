@@ -308,6 +308,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelManageGallery,
 			pm.PermFuncChannelIFormManage,
 			pm.PermFuncChannelIFormBroadcast,
+			pm.PermFuncChannelMessagePin,
 		}
 	})
 
@@ -330,6 +331,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelManageGallery,
 			pm.PermFuncChannelIFormManage,
 			pm.PermFuncChannelIFormBroadcast,
+			pm.PermFuncChannelMessagePin,
 		}
 	})
 
@@ -359,6 +361,7 @@ func ChannelNew(channelID, channelType, channelName, worldID, creatorId, parentI
 			pm.PermFuncChannelFileSend,
 			pm.PermFuncChannelAudioSend,
 			pm.PermFuncChannelInvite,
+			pm.PermFuncChannelMessagePin,
 		}
 	})
 

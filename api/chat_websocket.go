@@ -644,6 +644,15 @@ func websocketWorks(app *fiber.App) {
 					case "message.unarchive":
 						apiWrap(ctx, msg, apiMessageUnarchive)
 						solved = true
+					case "message.pin":
+						apiWrap(ctx, msg, apiMessagePin)
+						solved = true
+					case "message.unpin":
+						apiWrap(ctx, msg, apiMessageUnpin)
+						solved = true
+					case "message.pin.list":
+						apiWrap(ctx, msg, apiMessagePinList)
+						solved = true
 					case "message.edit.history":
 						apiWrap(ctx, msg, apiMessageEditHistory)
 						solved = true

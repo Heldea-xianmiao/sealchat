@@ -7,7 +7,7 @@ import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X } from '@vicons/tabler'
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
 import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
@@ -3862,6 +3862,10 @@ const HISTORY_WINDOW_EXPANSION_LIMIT = 5;
 type ViewMode = 'live' | 'history';
 
 const rows = ref<Message[]>([]);
+const pinnedRows = ref<Message[]>([]);
+const pinnedCollapseStorageKey = 'sealchat.pinnedCollapsed';
+const resolvePinnedCollapsed = () => localStorage.getItem(pinnedCollapseStorageKey) === 'true';
+const pinnedCollapsed = ref(resolvePinnedCollapsed());
 const listRevision = ref(0);
 const messageWindow = reactive({
   viewMode: 'live' as ViewMode,
@@ -3883,6 +3887,10 @@ const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
 const anchorMessageId = computed(() => messageWindow.anchorMessageId);
+
+watch(pinnedCollapsed, (collapsed) => {
+  localStorage.setItem(pinnedCollapseStorageKey, String(collapsed));
+});
 
 interface ResetWindowOptions {
   preserveRows?: boolean;
@@ -3979,6 +3987,47 @@ const updateWindowAnchorsFromRows = () => {
   } else {
     messageWindow.afterCursor = '';
   }
+};
+
+const sortPinnedRows = () => {
+  pinnedRows.value = pinnedRows.value
+    .slice()
+    .sort((a, b) => {
+      const pinA = normalizeTimestamp((a as any).pinnedAt ?? (a as any).pinned_at) ?? 0;
+      const pinB = normalizeTimestamp((b as any).pinnedAt ?? (b as any).pinned_at) ?? 0;
+      if (pinA === pinB) {
+        return compareByDisplayOrder(a, b);
+      }
+      return pinB - pinA;
+    });
+};
+
+const removePinnedMessage = (messageId?: string) => {
+  if (!messageId) {
+    return;
+  }
+  pinnedRows.value = pinnedRows.value.filter((msg) => msg.id !== messageId);
+};
+
+const upsertPinnedMessage = (incoming?: Message) => {
+  if (!incoming || !incoming.id) {
+    return;
+  }
+  const isPinned = Boolean((incoming as any).isPinned ?? (incoming as any).is_pinned ?? false);
+  if (!isPinned || (incoming as any).isDeleted || (incoming as any).is_deleted) {
+    removePinnedMessage(incoming.id);
+    return;
+  }
+  const index = pinnedRows.value.findIndex((msg) => msg.id === incoming.id);
+  if (index >= 0) {
+    pinnedRows.value.splice(index, 1, {
+      ...pinnedRows.value[index],
+      ...incoming,
+    });
+  } else {
+    pinnedRows.value.push(incoming);
+  }
+  sortPinnedRows();
 };
 interface VisibleRowEntry {
   message: Message;
@@ -4279,11 +4328,20 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.isArchived === undefined && msg.is_archived !== undefined) {
     msg.isArchived = msg.is_archived;
   }
+  if (msg.isPinned === undefined && msg.is_pinned !== undefined) {
+    msg.isPinned = msg.is_pinned;
+  }
   if (msg.archivedAt === undefined && msg.archived_at !== undefined) {
     msg.archivedAt = msg.archived_at;
   }
+  if (msg.pinnedAt === undefined && msg.pinned_at !== undefined) {
+    msg.pinnedAt = msg.pinned_at;
+  }
   if (msg.archivedBy === undefined && msg.archived_by !== undefined) {
     msg.archivedBy = msg.archived_by;
+  }
+  if (msg.pinnedBy === undefined && msg.pinned_by !== undefined) {
+    msg.pinnedBy = msg.pinned_by;
   }
   if ((msg as any).displayOrder === undefined && (msg as any).display_order !== undefined) {
     (msg as any).displayOrder = Number((msg as any).display_order);
@@ -4297,6 +4355,8 @@ const normalizeMessageShape = (msg: any): Message => {
   msg.updatedAt = normalizedUpdatedAt ?? undefined;
   const normalizedArchivedAt = normalizeTimestamp(msg.archivedAt);
   msg.archivedAt = normalizedArchivedAt ?? undefined;
+  const normalizedPinnedAt = normalizeTimestamp(msg.pinnedAt);
+  msg.pinnedAt = normalizedPinnedAt ?? undefined;
 
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
@@ -4425,6 +4485,9 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
   }
   const sorted = nextRows.sort(compareByDisplayOrder);
   rows.value = sorted;
+  items.forEach((incoming) => {
+    upsertPinnedMessage(incoming);
+  });
   computeAfterCursorFromRows();
   if (cursor) {
     if (cursor.before !== undefined) {
@@ -4437,6 +4500,23 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
     if (cursor.after !== undefined) {
       messageWindow.afterCursor = cursor.after || '';
     }
+  }
+};
+
+const fetchPinnedMessages = async () => {
+  if (!chat.curChannel?.id) {
+    pinnedRows.value = [];
+    return;
+  }
+  try {
+    const list = await chat.pinnedMessageList(chat.curChannel.id, 20);
+    pinnedRows.value = normalizeMessageList(list || []).filter((item) => {
+      return Boolean((item as any).isPinned ?? (item as any).is_pinned ?? false);
+    });
+    sortPinnedRows();
+  } catch (error) {
+    pinnedRows.value = [];
+    console.warn('加载置顶消息失败', error);
   }
 };
 
@@ -5403,6 +5483,7 @@ const upsertMessage = (incoming?: Message) => {
   }
   if ((incoming as any).is_deleted || (incoming as any).isDeleted) {
     rows.value = rows.value.filter((msg) => msg.id !== incoming.id);
+    removePinnedMessage(incoming.id);
     return;
   }
   const index = rows.value.findIndex((msg) => msg.id === incoming.id);
@@ -5416,6 +5497,7 @@ const upsertMessage = (incoming?: Message) => {
     rows.value.push(incoming);
   }
   sortRowsByDisplayOrder();
+  upsertPinnedMessage(incoming);
 };
 
 async function replaceUsernames(text: string) {
@@ -8750,24 +8832,38 @@ onMounted(async () => {
 
   chatEvent.off('message-deleted', '*');
   chatEvent.on('message-deleted', (e?: Event) => {
-    console.log('delete', e?.message?.id)
+    const targetId = e?.message?.id;
+    if (!targetId) {
+      return;
+    }
+    console.log('delete', targetId)
     for (let i of rows.value) {
-      if (i.id === e?.message?.id) {
+      if (i.id === targetId) {
         i.content = '';
         (i as any).is_revoked = true;
       }
       if (i.quote) {
-        if (i.quote?.id === e?.message?.id) {
+        if (i.quote?.id === targetId) {
           i.quote.content = '';
           (i as any).quote.is_revoked = true;
         }
       }
     }
+    for (let i of pinnedRows.value) {
+      if (i.id === targetId) {
+        i.content = '';
+        (i as any).is_revoked = true;
+      }
+      if (i.quote?.id === targetId) {
+        i.quote.content = '';
+        (i.quote as any).is_revoked = true;
+      }
+    }
   });
 
-  chatEvent.off('message-removed', '*');
-  chatEvent.on('message-removed', (e?: Event) => {
-    const targetId = e?.message?.id;
+chatEvent.off('message-removed', '*');
+chatEvent.on('message-removed', (e?: Event) => {
+  const targetId = e?.message?.id;
     if (!targetId) {
       return;
     }
@@ -8780,9 +8876,10 @@ onMounted(async () => {
         i.quote.content = '';
         (i.quote as any).is_deleted = true;
       }
-    }
-    rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
-    if (archiveDrawerVisible.value) {
+  }
+  rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
+  removePinnedMessage(targetId);
+  if (archiveDrawerVisible.value) {
       const index = archivedMessagesRaw.value.findIndex((item) => item.id === targetId);
       if (index >= 0) {
         archivedMessagesRaw.value.splice(index, 1);
@@ -8910,9 +9007,21 @@ chatEvent.on('message-updated', (e?: Event) => {
     return;
   }
   if ((e as any).is_interactive_update) {
-    const idx = rows.value.findIndex((m: any) => m.id === e.message!.id);
-    if (idx >= 0) {
-      rows.value[idx] = { ...rows.value[idx], widgetData: (e.message as any).widgetData };
+    const incoming = normalizeMessageShape(e.message);
+    const rowIndex = rows.value.findIndex((m: any) => m.id === incoming.id);
+    if (rowIndex >= 0) {
+      rows.value[rowIndex] = {
+        ...rows.value[rowIndex],
+        ...incoming,
+      };
+    }
+    const pinIndex = pinnedRows.value.findIndex((m: any) => m.id === incoming.id);
+    if (pinIndex >= 0) {
+      pinnedRows.value[pinIndex] = {
+        ...pinnedRows.value[pinIndex],
+        ...incoming,
+      };
+      sortPinnedRows();
     }
     return;
   }
@@ -8968,6 +9077,7 @@ chatEvent.on('message-archived', (e?: Event) => {
       rows.value.splice(index, 1);
     }
   }
+  removePinnedMessage(incoming.id);
   if (archiveDrawerVisible.value) {
     const entry = toArchivedPanelEntry(incoming as Message);
     const index = archivedMessagesRaw.value.findIndex(item => item.id === entry.id);
@@ -8977,6 +9087,28 @@ chatEvent.on('message-archived', (e?: Event) => {
       archivedMessagesRaw.value.unshift(entry);
     }
   }
+});
+
+chatEvent.off('message-pinned', '*');
+chatEvent.on('message-pinned', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const incoming = normalizeMessageShape(e.message);
+  (incoming as any).isPinned = true;
+  upsertPinnedMessage(incoming);
+  upsertMessage(incoming as Message);
+});
+
+chatEvent.off('message-unpinned', '*');
+chatEvent.on('message-unpinned', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const incoming = normalizeMessageShape(e.message);
+  (incoming as any).isPinned = false;
+  removePinnedMessage(incoming.id);
+  upsertMessage(incoming as Message);
 });
 
 chatEvent.off('message-unarchived', '*');
@@ -9175,6 +9307,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     } else {
       await fetchLatestMessages();
     }
+    await fetchPinnedMessages();
   })
 
   chatEvent.on('search-jump', async (e: any) => {
@@ -9200,6 +9333,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     }
     clearInputModeCache();
     resetWindowState('live');
+    pinnedRows.value = [];
     resetDragState();
     localReorderOps.clear();
     showButton.value = false;
@@ -9209,11 +9343,13 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     scheduleHistoryAutoRestore();
     const fetchTask = fetchLatestMessages();
     fetchTask.finally(() => {
+      void fetchPinnedMessages();
       void maybePromptIdentitySync();
     });
   })
 
   await fetchLatestMessages();
+  await fetchPinnedMessages();
   firstLoad = true;
   await maybePromptIdentitySync();
 
@@ -10138,7 +10274,20 @@ const avatarLongpress = (data: any) => {
 }
 
 // Multi-select handlers
-const allMessageIds = computed(() => rows.value.map(row => row.id));
+const allMessageIds = computed(() => {
+  const ids = new Set<string>();
+  for (const row of rows.value) {
+    if (row.id) {
+      ids.add(row.id);
+    }
+  }
+  for (const row of pinnedRows.value) {
+    if (row.id) {
+      ids.add(row.id);
+    }
+  }
+  return Array.from(ids);
+});
 
 const getMultiSelectedMessages = () => {
   if (!chat.multiSelect?.selectedIds.size) return [];
@@ -10581,6 +10730,48 @@ onBeforeUnmount(() => {
     <IFormPanelHost />
 
     <div
+      v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
+      class="chat-pinned-zone px-4"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+    >
+      <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
+        <span class="chat-pinned-zone__title">置顶消息</span>
+        <n-icon class="chat-pinned-zone__toggle" size="14">
+          <component :is="pinnedCollapsed ? ChevronRight : ChevronDown" />
+        </n-icon>
+      </div>
+      <div v-show="!pinnedCollapsed" class="chat-pinned-zone__list">
+        <template v-for="pinItem in pinnedRows" :key="`pinned-${pinItem.id}`">
+          <div :class="['chat-pinned-zone__row', rowClass(pinItem)]" :data-message-id="pinItem.id">
+            <div :class="rowSurfaceClass(pinItem)">
+              <chat-item
+                :avatar="getMessageAvatar(pinItem)"
+                :username="getMessageDisplayName(pinItem)"
+                :identity-color="getMessageIdentityColor(pinItem)"
+                :content="pinItem.content"
+                :item="pinItem"
+                :all-message-ids="allMessageIds"
+                :editing-preview="editingPreviewMap[pinItem.id]"
+                :tone="getMessageTone(pinItem)"
+                :show-avatar="display.showAvatar"
+                :hide-avatar="false"
+                :show-header="true"
+                :layout="display.layout"
+                :is-self="isSelfMessage(pinItem)"
+                :is-merged="false"
+                :world-keyword-editable="canManageWorldKeywords"
+                @avatar-longpress="avatarLongpress(pinItem)"
+                @edit="beginEdit(pinItem)"
+                @edit-save="saveEdit"
+                @edit-cancel="cancelEditing"
+              />
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div
       class="chat overflow-y-auto h-full px-4 pt-6"
       :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
@@ -10822,7 +11013,7 @@ onBeforeUnmount(() => {
             </VirtualList> -->
     </div>
     <div
-      v-if="rows.length === 0 && !messageWindow.loadingLatest"
+      v-if="rows.length === 0 && (!display.settings.showPinnedMessages || pinnedRows.length === 0) && !messageWindow.loadingLatest"
       class="flex h-full items-center text-2xl justify-center text-gray-400"
     >说点什么吧</div>
 
@@ -12155,6 +12346,87 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 1;
   pointer-events: none;
+}
+
+.chat-pinned-zone {
+  position: relative;
+  z-index: 2;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.chat-pinned-zone__header {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0;
+  color: rgba(100, 116, 139, 0.95);
+}
+
+.chat-pinned-zone__title {
+  line-height: 1.25;
+}
+
+.chat-pinned-zone__toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-pinned-zone__list {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0;
+  padding: 0;
+  background: rgba(248, 250, 252, 0.66);
+  backdrop-filter: blur(6px);
+}
+
+.chat-pinned-zone__row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.chat-pinned-zone :deep(.message-row) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.chat-pinned-zone :deep(.chat-item) {
+  padding-bottom: 0 !important;
+}
+
+.chat-pinned-zone :deep(.message-row__surface) {
+  border-radius: 0 !important;
+}
+
+.chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__header {
+  color: rgba(203, 213, 225, 0.92);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__list {
+  border-color: rgba(148, 163, 184, 0.3);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top-color: rgba(148, 163, 184, 0.22);
+}
+
+:root[data-custom-theme='true'] .chat-pinned-zone__header {
+  color: var(--sc-text-tertiary);
+}
+
+:root[data-custom-theme='true'] .chat-pinned-zone__list {
+  border-color: var(--sc-border-default);
+  background: color-mix(in srgb, var(--sc-bg-surface) 74%, transparent);
 }
 
 .message-row {

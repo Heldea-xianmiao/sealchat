@@ -55,6 +55,7 @@ watch(
     draft.showInputPreview = value.showInputPreview
     draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
+    draft.showPinnedMessages = value.showPinnedMessages
     draft.alwaysShowTimestamp = value.alwaysShowTimestamp
     draft.timestampFormat = value.timestampFormat
     draft.maxExportMessages = value.maxExportMessages
@@ -315,6 +316,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showInputPreview">
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">置顶消息显示</p>
+            <p class="section-desc">控制聊天顶部置顶消息区域是否显示</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.showPinnedMessages">
+          <template #checked>显示置顶消息</template>
+          <template #unchecked>隐藏置顶消息</template>
         </n-switch>
       </section>
 

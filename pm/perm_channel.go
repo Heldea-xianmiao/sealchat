@@ -28,6 +28,7 @@ var (
 	PermFuncChannelManageRole     = gorbac.NewStdPermission("func_channel_manage_role")      // 频道 - 频道设置 - 权限管理
 	PermFuncChannelManageRoleRoot = gorbac.NewStdPermission("func_channel_manage_role_root") // 频道 - 频道设置 - 权限管理（Root管理员）
 	PermFuncChannelManageGallery  = gorbac.NewStdPermission("func_channel_manage_gallery")   // 频道 - 频道设置 - 快捷表情资源管理
+	PermFuncChannelMessagePin     = gorbac.NewStdPermission("func_channel_message_pin")      // 频道 - 消息 - 置顶
 	PermFuncChannelMessageArchive = gorbac.NewStdPermission("func_channel_message_archive")  // 频道 - 消息 - 归档
 	PermFuncChannelMessageDelete  = gorbac.NewStdPermission("func_channel_message_delete")   // 频道 - 消息 - 删除
 

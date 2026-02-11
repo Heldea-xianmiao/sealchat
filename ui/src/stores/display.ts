@@ -78,6 +78,7 @@ export interface DisplaySettings {
   showInputPreview: boolean
   autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
+  showPinnedMessages: boolean
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
   maxExportMessages: number
@@ -378,6 +379,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   showInputPreview: true,
   autoScrollTypingPreview: false,
   mergeNeighbors: true,
+  showPinnedMessages: true,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
@@ -536,6 +538,7 @@ const loadSettings = (): DisplaySettings => {
       showInputPreview: coerceBoolean(parsed.showInputPreview),
       autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
+      showPinnedMessages: coerceBoolean((parsed as any)?.showPinnedMessages ?? true),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
       maxExportMessages: coerceNumberInRange(
@@ -646,6 +649,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
       : base.mergeNeighbors,
+  showPinnedMessages:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showPinnedMessages')
+      ? coerceBoolean((patch as any)?.showPinnedMessages)
+      : base.showPinnedMessages,
   alwaysShowTimestamp:
     patch && Object.prototype.hasOwnProperty.call(patch, 'alwaysShowTimestamp')
       ? coerceBoolean((patch as any)?.alwaysShowTimestamp)

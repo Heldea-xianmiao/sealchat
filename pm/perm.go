@@ -109,6 +109,7 @@ func Init() {
 	chRoles, _, _ := model.ChannelRoleAllList(0, -1)
 
 	ensureChannelIFormPerms(chRoles)
+	ensureChannelMessagePinPerms(chRoles)
 
 	if num == 0 {
 		// 目前system roles表还未实用，每次创建是设计的一部分而不是bug
@@ -146,6 +147,19 @@ func ensureChannelIFormPerms(chRoles []*model.ChannelRoleModel) {
 			continue
 		}
 		if !(strings.HasSuffix(role.ID, "-owner") || strings.HasSuffix(role.ID, "-admin")) {
+			continue
+		}
+		ensureRoleHasPermissions(role.ID, targetPerms)
+	}
+}
+
+func ensureChannelMessagePinPerms(chRoles []*model.ChannelRoleModel) {
+	targetPerms := []gorbac.Permission{PermFuncChannelMessagePin}
+	for _, role := range chRoles {
+		if role == nil {
+			continue
+		}
+		if !(strings.HasSuffix(role.ID, "-owner") || strings.HasSuffix(role.ID, "-admin") || strings.HasSuffix(role.ID, "-member")) {
 			continue
 		}
 		ensureRoleHasPermissions(role.ID, targetPerms)

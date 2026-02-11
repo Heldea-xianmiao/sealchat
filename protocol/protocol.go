@@ -128,6 +128,9 @@ type Message struct {
 	ArchivedAt    int64            `json:"archivedAt"`
 	ArchivedBy    string           `json:"archivedBy"`
 	ArchiveReason string           `json:"archiveReason"`
+	IsPinned      bool             `json:"isPinned"`
+	PinnedAt      int64            `json:"pinnedAt"`
+	PinnedBy      string           `json:"pinnedBy"`
 	IsDeleted     bool             `json:"isDeleted"`
 	DeletedAt     int64            `json:"deletedAt"`
 	DeletedBy     string           `json:"deletedBy"`

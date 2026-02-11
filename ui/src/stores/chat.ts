@@ -292,6 +292,8 @@ type myEventName =
   | 'bot-list-updated'
   | 'global-overlay-toggle'
   | 'open-display-settings'
+  | 'message-pinned'
+  | 'message-unpinned'
   | 'message.reaction';
 export const chatEvent = new Emitter<{
   [key in myEventName]: (msg?: Event) => void;
@@ -3542,6 +3544,46 @@ export const useChatStore = defineStore({
         throw new Error('取消归档失败：未找到目标消息或无权限操作');
       }
       return payload;
+    },
+
+    async pinMessages(messageIds: string[]) {
+      if (!this.curChannel?.id || messageIds.length === 0) return;
+      const resp = await this.sendAPI('message.pin', {
+        channel_id: this.curChannel.id,
+        message_ids: messageIds,
+      });
+      const payload = resp?.data as { message_ids?: string[] } | undefined;
+      if (!payload || !Array.isArray(payload.message_ids) || payload.message_ids.length === 0) {
+        throw new Error('置顶失败：未找到可置顶的消息或无权限操作');
+      }
+      return payload;
+    },
+
+    async unpinMessages(messageIds: string[]) {
+      if (!this.curChannel?.id || messageIds.length === 0) return;
+      const resp = await this.sendAPI('message.unpin', {
+        channel_id: this.curChannel.id,
+        message_ids: messageIds,
+      });
+      const payload = resp?.data as { message_ids?: string[] } | undefined;
+      if (!payload || !Array.isArray(payload.message_ids) || payload.message_ids.length === 0) {
+        throw new Error('取消置顶失败：未找到目标消息或无权限操作');
+      }
+      return payload;
+    },
+
+    async pinnedMessageList(channelId: string, limit = 20) {
+      if (!channelId) {
+        return [];
+      }
+      const payload: Record<string, any> = {
+        channel_id: channelId,
+      };
+      if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+        payload.limit = Math.min(100, Math.max(1, Math.floor(limit)));
+      }
+      const resp = await this.sendAPI<{ data?: any[] }>('message.pin.list', payload as APIMessage);
+      return (resp?.data as any)?.data || [];
     },
 
     async getChannelPresence(channelId?: string) {

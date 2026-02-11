@@ -968,6 +968,307 @@ func isChannelAdminUser(channel *model.ChannelModel, channelID, userID string) b
 	)
 }
 
+const channelMemberRoleRankNone = 0
+const channelMemberRoleRankSpectator = 1
+const channelMemberRoleRankMember = 2
+const channelMemberRoleRankAdmin = 3
+const channelMemberRoleRankOwner = 4
+
+func getChannelMemberRoleRank(channel *model.ChannelModel, channelID, userID string) int {
+	if strings.TrimSpace(userID) == "" {
+		return channelMemberRoleRankNone
+	}
+	if channel != nil && channel.UserID == userID {
+		return channelMemberRoleRankOwner
+	}
+	roleIDs, err := model.UserRoleMappingListByUserID(userID, channelID, "channel")
+	if err != nil || len(roleIDs) == 0 {
+		return channelMemberRoleRankNone
+	}
+	rank := channelMemberRoleRankNone
+	for _, roleID := range roleIDs {
+		switch {
+		case strings.HasSuffix(roleID, "-owner"):
+			return channelMemberRoleRankOwner
+		case strings.HasSuffix(roleID, "-admin"):
+			if rank < channelMemberRoleRankAdmin {
+				rank = channelMemberRoleRankAdmin
+			}
+		case strings.HasSuffix(roleID, "-member"):
+			if rank < channelMemberRoleRankMember {
+				rank = channelMemberRoleRankMember
+			}
+		case strings.HasSuffix(roleID, "-spectator"):
+			if rank < channelMemberRoleRankSpectator {
+				rank = channelMemberRoleRankSpectator
+			}
+		}
+	}
+	return rank
+}
+
+func isChannelMemberOrAbove(channel *model.ChannelModel, channelID, userID string) bool {
+	return getChannelMemberRoleRank(channel, channelID, userID) >= channelMemberRoleRankMember
+}
+
+func canCancelPinnedMessage(channel *model.ChannelModel, channelID, operatorID, pinnedBy string) bool {
+	if strings.TrimSpace(operatorID) == "" {
+		return false
+	}
+	if pinnedBy == "" || pinnedBy == operatorID {
+		return true
+	}
+	operatorRank := getChannelMemberRoleRank(channel, channelID, operatorID)
+	pinnerRank := getChannelMemberRoleRank(channel, channelID, pinnedBy)
+	return operatorRank > pinnerRank
+}
+
+func pinMessageMutate(ctx *ChatContext, channel *model.ChannelModel, ids []string, pinned bool) ([]*model.MessageModel, error) {
+	if channel == nil || channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	if len(ids) == 0 {
+		return []*model.MessageModel{}, nil
+	}
+
+	db := model.GetDB()
+	updates := map[string]any{
+		"is_pinned": pinned,
+	}
+	var pinnedAt time.Time
+	if pinned {
+		pinnedAt = time.Now()
+		updates["pinned_at"] = pinnedAt
+		updates["pinned_by"] = ctx.User.ID
+	} else {
+		updates["pinned_at"] = gorm.Expr("NULL")
+		updates["pinned_by"] = ""
+	}
+
+	result := db.Model(&model.MessageModel{}).
+		Where("channel_id = ? AND id IN ? AND is_deleted = ?", channel.ID, ids, false).
+		Updates(updates)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		if pinned {
+			return nil, fmt.Errorf("未找到可置顶的消息")
+		}
+		return nil, fmt.Errorf("未找到可取消置顶的消息")
+	}
+
+	var messages []*model.MessageModel
+	if err := db.Preload("User", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, username, nickname, avatar, is_bot")
+	}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+		return db.Select("id, nickname, channel_id, user_id")
+	}).Where("channel_id = ? AND id IN ?", channel.ID, ids).Find(&messages).Error; err != nil {
+		return nil, err
+	}
+
+	for _, msg := range messages {
+		msg.IsPinned = pinned
+		if pinned {
+			msg.PinnedBy = ctx.User.ID
+			if pinnedAt.IsZero() {
+				msg.PinnedAt = nil
+			} else {
+				copyTime := pinnedAt
+				msg.PinnedAt = &copyTime
+			}
+		} else {
+			msg.PinnedBy = ""
+			msg.PinnedAt = nil
+		}
+	}
+
+	hydrateMessagesForBroadcast(messages)
+	return messages, nil
+}
+
+func apiMessagePin(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+}) (any, error) {
+	if strings.TrimSpace(data.ChannelID) == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	ids := collectMessageIDs(data.MessageIDs)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+	channel, messages, err := loadArchiveContext(data.ChannelID, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("未找到可置顶的消息或无权限执行该操作")
+	}
+	if !isChannelMemberOrAbove(channel, data.ChannelID, ctx.User.ID) {
+		return nil, fmt.Errorf("仅频道成员可置顶消息")
+	}
+
+	updatedMessages, err := pinMessageMutate(ctx, channel, ids, true)
+	if err != nil {
+		return nil, err
+	}
+
+	channelData := channel.ToProtocolType()
+	operator := ctx.User.ToProtocolType()
+	for _, msg := range updatedMessages {
+		messageData := buildProtocolMessage(msg, channelData)
+		ev := &protocol.Event{
+			Type:    protocol.EventMessagePinned,
+			Message: messageData,
+			Channel: channelData,
+			User:    operator,
+		}
+		if msg.IsWhisper {
+			recipients := []string{ctx.User.ID}
+			if msg.WhisperTo != "" {
+				recipients = append(recipients, msg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+		Pinned     bool     `json:"pinned"`
+	}{MessageIDs: lo.Uniq(ids), Pinned: true}, nil
+}
+
+func apiMessageUnpin(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+}) (any, error) {
+	if strings.TrimSpace(data.ChannelID) == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	ids := collectMessageIDs(data.MessageIDs)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+	channel, messages, err := loadArchiveContext(data.ChannelID, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("未找到可取消置顶的消息或无权限执行该操作")
+	}
+	if !isChannelMemberOrAbove(channel, data.ChannelID, ctx.User.ID) {
+		return nil, fmt.Errorf("仅频道成员可取消置顶")
+	}
+	for _, msg := range messages {
+		if !canCancelPinnedMessage(channel, data.ChannelID, ctx.User.ID, msg.PinnedBy) {
+			return nil, fmt.Errorf("无权限取消该置顶消息")
+		}
+	}
+
+	updatedMessages, err := pinMessageMutate(ctx, channel, ids, false)
+	if err != nil {
+		return nil, err
+	}
+
+	channelData := channel.ToProtocolType()
+	operator := ctx.User.ToProtocolType()
+	for _, msg := range updatedMessages {
+		messageData := buildProtocolMessage(msg, channelData)
+		ev := &protocol.Event{
+			Type:    protocol.EventMessageUnpinned,
+			Message: messageData,
+			Channel: channelData,
+			User:    operator,
+		}
+		if msg.IsWhisper {
+			recipients := []string{ctx.User.ID}
+			if msg.WhisperTo != "" {
+				recipients = append(recipients, msg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(data.ChannelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(data.ChannelID, ev)
+			ctx.BroadcastEventInChannelForBot(data.ChannelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+		Pinned     bool     `json:"pinned"`
+	}{MessageIDs: lo.Uniq(ids), Pinned: false}, nil
+}
+
+func apiMessagePinList(ctx *ChatContext, data *struct {
+	ChannelID string `json:"channel_id"`
+	Limit     int    `json:"limit"`
+}) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	if len(channelID) < 30 {
+		if !pm.CanWithChannelRole(ctx.User.ID, channelID, pm.PermFuncChannelRead, pm.PermFuncChannelReadAll) {
+			return nil, fmt.Errorf("无权限查看频道消息")
+		}
+	} else {
+		fr, _ := model.FriendRelationGetByID(channelID)
+		if fr.ID == "" {
+			return nil, fmt.Errorf("频道不存在")
+		}
+	}
+
+	limit := data.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	db := model.GetDB()
+	var items []*model.MessageModel
+	err := db.Where("channel_id = ? AND is_deleted = ? AND is_pinned = ?", channelID, false, true).
+		Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (
+			SELECT 1 FROM message_whisper_recipients r WHERE r.message_id = messages.id AND r.user_id = ?
+		))`, false, ctx.User.ID, ctx.User.ID, ctx.User.ID).
+		Order("pinned_at desc").
+		Order("display_order asc").
+		Order("created_at asc").
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, username, nickname, avatar, is_bot")
+		}).
+		Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id")
+		}).
+		Limit(limit).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+
+	hydrateMessagesForBroadcast(items)
+
+	return &struct {
+		Data []*model.MessageModel `json:"data"`
+	}{
+		Data: items,
+	}, nil
+}
+
 func apiMessageArchive(ctx *ChatContext, data *struct {
 	ChannelID  string   `json:"channel_id"`
 	MessageIDs []string `json:"message_ids"`
