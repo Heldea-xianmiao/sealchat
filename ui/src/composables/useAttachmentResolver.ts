@@ -18,9 +18,32 @@ const attachmentMetaStore = reactive<Record<string, AttachmentMeta>>({});
 const attachmentUrlStore = reactive<Record<string, string>>({});
 const pendingMetaFetch = new Set<string>();
 
+const ATTACHMENT_PATH_PATTERN = /(.*?api\/v1\/attachment\/)([^/?#]+)(.*)/i;
+
+const stripAttachmentPathIdPrefix = (value: string) => {
+  const match = value.match(ATTACHMENT_PATH_PATTERN);
+  if (!match) {
+    return value;
+  }
+  const [, prefix, rawId, suffix] = match;
+  if (!rawId.startsWith('id:')) {
+    return value;
+  }
+  return `${prefix}${rawId.slice(3)}${suffix}`;
+};
+
 export const normalizeAttachmentId = (value: string) => {
-  if (!value) return '';
-  return value.startsWith('id:') ? value.slice(3) : value;
+  const raw = (value || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('id:')) {
+    return raw.slice(3);
+  }
+  const sanitizedPath = stripAttachmentPathIdPrefix(raw);
+  const match = sanitizedPath.match(ATTACHMENT_PATH_PATTERN);
+  if (match) {
+    return match[2];
+  }
+  return raw;
 };
 
 const ensureAttachmentMeta = async (normalized: string) => {
@@ -58,7 +81,7 @@ export const fetchAttachmentMetaById = async (attachmentId: string): Promise<Att
 };
 
 export const resolveAttachmentUrl = (value?: string) => {
-  const raw = (value || '').trim();
+  const raw = stripAttachmentPathIdPrefix((value || '').trim());
   if (!raw) {
     return '';
   }

@@ -1708,8 +1708,9 @@ const buildInlineImageDraftFromRich = (markerId: string, src?: string) => {
     record.objectUrl = raw;
     return record;
   }
-  if (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw)) {
-    record.attachmentId = normalizeAttachmentId(raw);
+  const normalized = normalizeAttachmentId(raw);
+  if (normalized && (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw) || /api\/v1\/attachment\//i.test(raw))) {
+    record.attachmentId = normalized;
   }
   return record;
 };
@@ -1722,7 +1723,8 @@ const resolveInlineImageSource = (draft?: InlineImageDraft) => {
     return draft.objectUrl;
   }
   if (draft.attachmentId) {
-    return draft.attachmentId.startsWith('id:') ? draft.attachmentId : `id:${draft.attachmentId}`;
+    const normalized = normalizeAttachmentId(draft.attachmentId);
+    return normalized ? `/api/v1/attachment/${normalized}` : '';
   }
   if (draft.objectUrl) {
     return draft.objectUrl;
@@ -8106,8 +8108,9 @@ const handleRichImageInsert = async (files: File[]) => {
       draftRecord.status = 'uploaded';
       draftRecord.error = '';
 
-      // 更新编辑器中的图片 URL（使用 id: 协议）
-      const finalUrl = `id:${result.attachmentId}`;
+      // 更新编辑器中的图片 URL（使用可直接访问的相对路径）
+      const normalizedId = normalizeAttachmentId(result.attachmentId);
+      const finalUrl = normalizedId ? `/api/v1/attachment/${normalizedId}` : objectUrl;
       const { state } = editor;
       const { doc } = state;
 
@@ -10314,7 +10317,7 @@ const insertGalleryInline = (attachmentId: string) => {
   const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
   if (inputMode.value === 'rich') {
     const editor = textInputRef.value?.getEditor?.();
-    editor?.chain().focus().setImage({ src: `id:${normalized}` }).run();
+    editor?.chain().focus().setImage({ src: `/api/v1/attachment/${normalized}` }).run();
     return;
   }
 
