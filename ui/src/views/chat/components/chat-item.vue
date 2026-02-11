@@ -2155,7 +2155,9 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 }
 
 .content code {
-  background-color: #f3f4f6;
+  background-color: var(--chat-inline-code-bg, #f3f4f6);
+  color: var(--chat-inline-code-fg, inherit);
+  border: 1px solid var(--chat-inline-code-border, transparent);
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
   font-family: 'Courier New', monospace;

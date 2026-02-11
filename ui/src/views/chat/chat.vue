@@ -67,6 +67,7 @@ import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
+import { renderQuickFormatHtmlFromEscaped } from '@/utils/plainQuickFormat';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -7842,19 +7843,19 @@ const renderDicePreviewSegment = (text: string) => {
   if (!text) return '';
   const matches = matchDiceExpressions(text, defaultDiceExpr.value);
   if (!matches.length) {
-    return escapeHtml(text);
+    return renderQuickFormatHtmlFromEscaped(escapeHtml(text));
   }
   let html = '';
   let cursor = 0;
   matches.forEach((match, index) => {
     if (match.start > cursor) {
-      html += escapeHtml(text.slice(cursor, match.start));
+      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)));
     }
     html += buildPreviewDiceChip(match, index);
     cursor = match.end;
   });
   if (cursor < text.length) {
-    html += escapeHtml(text.slice(cursor));
+    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)));
   }
   return html;
 };
@@ -7964,9 +7965,8 @@ const buildMessageHtml = async (draft: string) => {
   });
 
   let escaped = contentEscape(sanitizedDraft);
-  escaped = escaped.replace(/\r\n/g, '\n').replace(/\n/g, '<br />');
   escaped = await replaceUsernames(escaped);
-  let html = escaped;
+  let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
     html = html.split(key).join(value);
   });
@@ -13137,7 +13137,9 @@ onBeforeUnmount(() => {
 
   /* 代码样式 */
   code {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--chat-inline-code-bg, rgba(0, 0, 0, 0.05));
+    color: var(--chat-inline-code-fg, inherit);
+    border: 1px solid var(--chat-inline-code-border, transparent);
     border-radius: 0.25rem;
     padding: 0.125rem 0.375rem;
     font-family: 'Courier New', monospace;
@@ -13361,7 +13363,9 @@ onBeforeUnmount(() => {
   }
 
   code {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--chat-inline-code-bg, rgba(0, 0, 0, 0.05));
+    color: var(--chat-inline-code-fg, inherit);
+    border: 1px solid var(--chat-inline-code-border, transparent);
     border-radius: 0.25rem;
     padding: 0.125rem 0.375rem;
     font-family: 'Courier New', monospace;

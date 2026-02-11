@@ -90,11 +90,77 @@ const BLOCK_TAGS = new Set([
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6'
 ]);
 const IMAGE_TOKEN_REGEX = /\[\[图片:([^\]]+)\]\]/g;
+const QUICK_INLINE_CODE_PATTERN = /`([^`\n]+)`/g;
+const QUICK_LINK_PATTERN = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+const QUICK_BOLD_PATTERN = /\*\*([^\n*][^*\n]*?)\*\*/g;
+const QUICK_ITALIC_PATTERN = /(^|[^*])\*([^*\n]+)\*/g;
 
 const buildMarkerToken = (markerId: string) => `${PLACEHOLDER_PREFIX}${markerId}${PLACEHOLDER_SUFFIX}`;
 const getMarkerLength = (markerId: string) => buildMarkerToken(markerId).length;
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const renderQuickFormatLine = (line: string): string => {
+  if (!line) {
+    return '<span class="empty-line">\u200B</span>';
+  }
+  let text = escapeHtml(line);
+  const codeTokens: Array<{ token: string; html: string }> = [];
+  const linkTokens: Array<{ token: string; html: string }> = [];
+
+  text = text.replace(QUICK_INLINE_CODE_PATTERN, (_match, body: string) => {
+    const token = `__HY_QF_CODE_${codeTokens.length}__`;
+    codeTokens.push({
+      token,
+      html: `<span class="hybrid-format-marker">\`</span><code class="hybrid-format-code">${body}</code><span class="hybrid-format-marker">\`</span>`,
+    });
+    return token;
+  });
+
+  text = text.replace(QUICK_LINK_PATTERN, (_full, label: string, url: string) => {
+    const token = `__HY_QF_LINK_${linkTokens.length}__`;
+    linkTokens.push({
+      token,
+      html: `<span class="hybrid-format-marker">[</span><a class="hybrid-format-link" href="${url}" target="_blank" rel="noopener noreferrer">${label}</a><span class="hybrid-format-marker">](${url})</span>`,
+    });
+    return token;
+  });
+
+  text = text.replace(
+    QUICK_BOLD_PATTERN,
+    '<span class="hybrid-format-marker">**</span><strong class="hybrid-format-strong">$1</strong><span class="hybrid-format-marker">**</span>',
+  );
+  text = text.replace(
+    QUICK_ITALIC_PATTERN,
+    (_match, prefix: string, body: string) => `${prefix}<span class="hybrid-format-marker">*</span><em class="hybrid-format-em">${body}</em><span class="hybrid-format-marker">*</span>`,
+  );
+
+  linkTokens.forEach((entry) => {
+    text = text.split(entry.token).join(entry.html);
+  });
+  codeTokens.forEach((entry) => {
+    text = text.split(entry.token).join(entry.html);
+  });
+
+  return text;
+};
+
+const renderQuickFormatFragment = (value: string, hasNextFragment: boolean): string => {
+  const lines = value.split('\n');
+  let html = '';
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      html += '<br>';
+    }
+    const isLastLine = index === lines.length - 1;
+    const skipTrailingEmptyLine = line === '' && isLastLine && hasNextFragment;
+    if (skipTrailingEmptyLine) {
+      return;
+    }
+    html += renderQuickFormatLine(line);
+  });
+  return html;
+};
 
 const isImageElement = (node: Node): node is HTMLElement =>
   node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__image');
@@ -389,18 +455,8 @@ const renderContent = (preserveCursor = false) => {
   let html = '';
   fragments.forEach((fragment, fragmentIndex) => {
     if (fragment.type === 'text') {
-      // 文本节点 - 保留换行
-      const lines = fragment.content.split('\n');
       const nextFragment = fragments[fragmentIndex + 1];
-      lines.forEach((line, index) => {
-        if (index > 0) html += '<br>';
-        const isLastLine = index === lines.length - 1;
-        const skipTrailingEmptyLine = line === '' && isLastLine && nextFragment;
-        if (skipTrailingEmptyLine) {
-          return;
-        }
-        html += escapeHtml(line) || '<span class="empty-line">\u200B</span>';
-      });
+      html += renderQuickFormatFragment(fragment.content, Boolean(nextFragment));
     } else if (fragment.type === 'image' && fragment.markerId) {
       // 图片节点
       const imageInfo = props.inlineImages[fragment.markerId];
@@ -556,6 +612,11 @@ interface MarkerInfo {
   end: number;
 }
 
+interface QuickFormatBoundaryDeleteResult {
+  nextValue: string;
+  cursor: number;
+}
+
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -587,6 +648,56 @@ const removeImageMarker = (marker: MarkerInfo) => {
     isInternalUpdate.value = false;
     renderContent(false);
     setCursorPosition(marker.start);
+  });
+};
+
+const tryDeleteQuickFormatBoundaryMarker = (value: string, cursor: number): QuickFormatBoundaryDeleteResult | null => {
+  if (cursor < 0 || cursor > value.length) {
+    return null;
+  }
+
+  if (value.slice(cursor, cursor + 2) === '**') {
+    const candidate = value.slice(0, cursor + 2);
+    if (/\*\*[^\n]+\*\*$/.test(candidate)) {
+      return {
+        nextValue: `${value.slice(0, cursor)}${value.slice(cursor + 2)}`,
+        cursor,
+      };
+    }
+  }
+
+  if (value[cursor] === '*') {
+    const candidate = value.slice(0, cursor + 1);
+    if (/(^|[^*])\*[^*\n]+\*$/.test(candidate)) {
+      return {
+        nextValue: `${value.slice(0, cursor)}${value.slice(cursor + 1)}`,
+        cursor,
+      };
+    }
+  }
+
+  if (value[cursor] === '`') {
+    const candidate = value.slice(0, cursor + 1);
+    if (/`[^`\n]+`$/.test(candidate)) {
+      return {
+        nextValue: `${value.slice(0, cursor)}${value.slice(cursor + 1)}`,
+        cursor,
+      };
+    }
+  }
+
+  return null;
+};
+
+const applyQuickFormatBoundaryDelete = (result: QuickFormatBoundaryDeleteResult) => {
+  isInternalUpdate.value = true;
+  emit('update:modelValue', result.nextValue);
+  addToHistory(result.nextValue, result.cursor);
+  checkMentionTrigger(result.nextValue, result.cursor);
+  nextTick(() => {
+    isInternalUpdate.value = false;
+    renderContent(false);
+    setCursorPosition(result.cursor);
   });
 };
 
@@ -654,6 +765,9 @@ const handleInput = () => {
   // 在下一个 tick 后重置标志
   nextTick(() => {
     isInternalUpdate.value = false;
+    if (!isComposing.value) {
+      renderContent(true);
+    }
   });
 };
 
@@ -964,6 +1078,18 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   const composing = event.isComposing || isComposing.value;
+  if (!composing && event.key === 'Backspace') {
+    const selection = getSelectionRange();
+    if (selection.start === selection.end) {
+      const boundaryDelete = tryDeleteQuickFormatBoundaryMarker(props.modelValue, selection.start);
+      if (boundaryDelete) {
+        event.preventDefault();
+        applyQuickFormatBoundaryDelete(boundaryDelete);
+        return;
+      }
+    }
+  }
+
   if (!composing && (event.key === 'Backspace' || event.key === 'Delete')) {
     const selection = getSelectionRange();
     if (selection.start === selection.end) {
@@ -1314,6 +1440,34 @@ defineExpose({
   color: #3b82f6;
   user-select: none;
   cursor: default;
+}
+
+:deep(.hybrid-format-marker) {
+  color: var(--chat-text-secondary, #64748b);
+  opacity: 0.72;
+}
+
+:deep(.hybrid-format-strong) {
+  font-weight: 600;
+}
+
+:deep(.hybrid-format-em) {
+  font-style: italic;
+}
+
+:deep(.hybrid-format-code) {
+  background-color: var(--chat-inline-code-bg, rgba(15, 23, 42, 0.08));
+  color: var(--chat-inline-code-fg, var(--chat-text-primary, #0f172a));
+  border: 1px solid var(--chat-inline-code-border, rgba(15, 23, 42, 0.12));
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+:deep(.hybrid-format-link) {
+  color: #3b82f6;
+  text-decoration: underline;
 }
 
 /* 夜间模式滚动条样式 */

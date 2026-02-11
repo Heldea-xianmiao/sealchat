@@ -56,6 +56,9 @@ export interface CustomThemeColors {
   // 术语高亮
   keywordBg?: string        // 术语高亮背景
   keywordBorder?: string    // 术语高亮下划线
+  inlineCodeBg?: string     // 行内代码背景
+  inlineCodeFg?: string     // 行内代码文字
+  inlineCodeBorder?: string // 行内代码边框
 }
 
 export interface CustomTheme {
@@ -1030,7 +1033,8 @@ export const useDisplayStore = defineStore('display', {
         '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
         '--sc-border-mute', '--sc-border-strong',
         '--primary-color', '--primary-color-hover',
-        '--custom-keyword-bg', '--custom-keyword-border'
+        '--custom-keyword-bg', '--custom-keyword-border',
+        '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border'
       ]
       // Clear previous custom colors first
       customColorVars.forEach(v => removeVar(v))
@@ -1073,6 +1077,9 @@ export const useDisplayStore = defineStore('display', {
         // Keyword highlight colors
         if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
         if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
+        if (c.inlineCodeBg) setVar('--chat-inline-code-bg', c.inlineCodeBg)
+        if (c.inlineCodeFg) setVar('--chat-inline-code-fg', c.inlineCodeFg)
+        if (c.inlineCodeBorder) setVar('--chat-inline-code-border', c.inlineCodeBorder)
         // Mark custom theme active for CSS selectors
         root.dataset.customTheme = 'true'
       } else {
