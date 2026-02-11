@@ -10,6 +10,9 @@
       ]"
       :style="noteStyle"
       @pointerdown="handlePointerDown"
+      @focusout="handleNoteFocusOut"
+      @keydown.capture="markEditingActivity"
+      @pointerdown.capture="markEditingActivity"
     >
       <!-- 头部 -->
       <div
@@ -18,6 +21,7 @@
         @pointerdown="startDrag"
       >
         <div class="sticky-note__title">
+          <div v-if="editingByOtherName" class="sticky-note__lock-indicator">{{ editingByOtherName }} 正在编辑</div>
           <input
             v-if="isEditing"
             v-model="localTitle"
@@ -33,7 +37,9 @@
         <div class="sticky-note__actions">
           <button
             class="sticky-note__action-btn"
+            :class="{ 'sticky-note__action-btn--disabled': isLockedByOther }"
             title="编辑"
+            :disabled="isLockedByOther"
             @click="toggleEdit"
             @pointerdown.stop
           >
@@ -146,6 +152,8 @@
               v-model="localContent"
               :channel-id="note?.channelId"
               @update:model-value="debouncedSaveContent"
+              @focus="markEditingActivity"
+              @blur="handleEditorBlur"
             />
             <!-- 简单模式 -->
             <div v-else class="sticky-note__simple-editor">
@@ -166,6 +174,7 @@
                 class="sticky-note__textarea"
                 placeholder="在此输入内容..."
                 @input="debouncedSaveContent"
+                @blur="handleEditorBlur"
               ></textarea>
             </div>
           </div>
@@ -216,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore } from '@/stores/chat'
@@ -267,6 +276,9 @@ const MIN_NOTE_WIDTH = 200
 const MIN_NOTE_HEIGHT = 150
 const VIEWPORT_PADDING = 8
 const richMode = ref(false) // 富文本模式，默认关闭
+const currentEditSessionId = ref<string | null>(null)
+const autoSaveTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const AUTO_SAVE_IDLE_MS = 10_000
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -301,6 +313,17 @@ watch(isEditing, (editing) => {
   }
 })
 
+watch(() => note.value?.editingLock, (lock) => {
+  const currentUserId = userStore.info?.id
+  if (!currentUserId) return
+  if (!isEditing.value) return
+  if (!lock || lock.userId !== currentUserId) {
+    clearAutoSaveTimer()
+    stickyNoteStore.stopEditing(props.noteId)
+    currentEditSessionId.value = null
+  }
+})
+
 const isOwner = computed(() => {
   const userId = userStore.info?.id
   if (!userId) return false
@@ -323,6 +346,166 @@ const creatorName = computed(() => {
   const creator = note.value?.creator
   return creator?.nickname || creator?.nick || creator?.name || '未知用户'
 })
+
+const lockOwnerName = computed(() => {
+  const lockUser = note.value?.editingLock?.user
+  return lockUser?.nickname || lockUser?.nick || lockUser?.name || lockUser?.id || ''
+})
+
+const isLockedByOther = computed(() => {
+  const lock = note.value?.editingLock
+  const userId = userStore.info?.id
+  if (!lock || !userId) return false
+  return lock.userId !== userId
+})
+
+const editingByOtherName = computed(() => {
+  if (!isLockedByOther.value) return ''
+  return lockOwnerName.value || '其他用户'
+})
+
+function generateEditingSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function clearAutoSaveTimer() {
+  if (autoSaveTimer.value) {
+    clearTimeout(autoSaveTimer.value)
+    autoSaveTimer.value = null
+  }
+}
+
+function scheduleAutoSaveAndRelease() {
+  clearAutoSaveTimer()
+  if (!isEditing.value) return
+  autoSaveTimer.value = setTimeout(() => {
+    void saveAndReleaseEditing({ autoReason: 'idle' })
+  }, AUTO_SAVE_IDLE_MS)
+}
+
+function markEditingActivity() {
+  if (!isEditing.value) return
+  scheduleAutoSaveAndRelease()
+}
+
+function getActiveSessionId() {
+  return currentEditSessionId.value || stickyNoteStore.getEditingSessionId(props.noteId) || undefined
+}
+
+async function saveTitleWithSession() {
+  if (!note.value || localTitle.value === note.value.title) return
+  const sessionId = getActiveSessionId()
+  const result = await stickyNoteStore.updateNoteWithOptions(props.noteId, { title: localTitle.value }, {
+    lockSessionId: sessionId
+  })
+  if (result.ok === false && result.conflict) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+  }
+}
+
+async function saveContentNowWithSession() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+    saveTimeout = null
+  }
+  if (!note.value || localContent.value === note.value.content) return
+  const sessionId = getActiveSessionId()
+  const result = await stickyNoteStore.updateNoteWithOptions(props.noteId, {
+    content: localContent.value,
+    contentText: localContent.value.replace(/<[^>]*>/g, '')
+  }, {
+    lockSessionId: sessionId
+  })
+  if (result.ok === false && result.conflict) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+  }
+}
+
+async function saveAndReleaseEditing(options?: { autoReason?: 'idle' | 'blur' | 'close' }) {
+  if (!isEditing.value) return
+  clearAutoSaveTimer()
+  await saveTitleWithSession()
+  await saveContentNowWithSession()
+  const sessionId = getActiveSessionId()
+  if (sessionId) {
+    await stickyNoteStore.releaseEditLock(props.noteId, sessionId)
+  }
+  stickyNoteStore.stopEditing(props.noteId)
+  currentEditSessionId.value = null
+  if (options?.autoReason === 'idle') {
+    message.info('便签已自动保存并释放编辑锁')
+  }
+}
+
+async function beginEditing() {
+  if (!note.value) return
+  if (isLockedByOther.value) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+    return
+  }
+  localTitle.value = note.value.title || ''
+  localContent.value = note.value.content || ''
+  const sessionId = generateEditingSessionId()
+  const lockResult = await stickyNoteStore.acquireEditLock(props.noteId, sessionId)
+  if (!lockResult.ok) {
+    if (lockResult.conflict) {
+      message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+    } else {
+      message.error('获取编辑锁失败，请稍后重试')
+    }
+    return
+  }
+  currentEditSessionId.value = sessionId
+  stickyNoteStore.startEditing(props.noteId, sessionId)
+  scheduleAutoSaveAndRelease()
+  nextTick(() => {
+    markEditingActivity()
+  })
+}
+
+function handleEditorBlur() {
+  if (!isEditing.value) return
+  window.setTimeout(() => {
+    const root = noteEl.value
+    if (!root) return
+    const activeEl = document.activeElement as Node | null
+    if (activeEl && root.contains(activeEl)) {
+      return
+    }
+    void saveAndReleaseEditing({ autoReason: 'blur' })
+  }, 0)
+}
+
+function handleNoteFocusOut(event: FocusEvent) {
+  if (!isEditing.value) return
+  const root = noteEl.value
+  if (!root) return
+  const nextFocus = event.relatedTarget as Node | null
+  if (nextFocus && root.contains(nextFocus)) {
+    return
+  }
+  window.setTimeout(() => {
+    const activeEl = document.activeElement as Node | null
+    if (activeEl && root.contains(activeEl)) {
+      return
+    }
+    void saveAndReleaseEditing({ autoReason: 'blur' })
+  }, 0)
+}
+
+function handleWindowBlur() {
+  if (!isEditing.value) return
+  void saveAndReleaseEditing({ autoReason: 'blur' })
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState !== 'hidden') return
+  if (!isEditing.value) return
+  void saveAndReleaseEditing({ autoReason: 'blur' })
+}
 
 function buildPushTargetsKey() {
   const userId = userStore.info?.id
@@ -491,41 +674,31 @@ function handlePointerDown(e: PointerEvent) {
 
 function toggleEdit() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   } else {
-    localTitle.value = note.value?.title || ''
-    localContent.value = note.value?.content || ''
-    stickyNoteStore.startEditing(props.noteId)
+    void beginEditing()
   }
 }
 
 function saveTitle() {
-  if (note.value && localTitle.value !== note.value.title) {
-    stickyNoteStore.updateNote(props.noteId, { title: localTitle.value })
-  }
+  void saveTitleWithSession()
 }
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 function debouncedSaveContent() {
   if (saveTimeout) clearTimeout(saveTimeout)
+  markEditingActivity()
   saveTimeout = setTimeout(() => {
-    saveContentNow()
+    void saveContentNow()
   }, 500)
 }
 
-function saveContentNow() {
+async function saveContentNow() {
   if (saveTimeout) {
     clearTimeout(saveTimeout)
     saveTimeout = null
   }
-  if (note.value && localContent.value !== note.value.content) {
-    stickyNoteStore.updateNote(props.noteId, {
-      content: localContent.value,
-      contentText: localContent.value.replace(/<[^>]*>/g, '')
-    })
-  }
+  await saveContentNowWithSession()
 }
 
 function copyContent() {
@@ -569,23 +742,21 @@ async function pushToTargets() {
 }
 
 function changeColor(color: string) {
-  stickyNoteStore.updateNote(props.noteId, { color })
+  void stickyNoteStore.updateNoteWithOptions(props.noteId, { color }, {
+    lockSessionId: getActiveSessionId()
+  })
 }
 
 function minimize() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   }
   stickyNoteStore.minimizeNote(props.noteId)
 }
 
 function close() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   }
   stickyNoteStore.closeNote(props.noteId)
 }
@@ -733,13 +904,24 @@ onUnmounted(() => {
     clearTimeout(saveTimeout)
     saveTimeout = null
   }
+  clearAutoSaveTimer()
+  if (isEditing.value) {
+    void saveAndReleaseEditing({ autoReason: 'close' })
+  }
   document.removeEventListener('pointermove', onDrag)
   document.removeEventListener('pointerup', stopDrag)
   document.removeEventListener('pointercancel', stopDrag)
   document.removeEventListener('pointermove', onResize)
   document.removeEventListener('pointerup', stopResize)
   document.removeEventListener('pointercancel', stopResize)
+  window.removeEventListener('blur', handleWindowBlur)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('blur', handleWindowBlur)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+}
 </script>
 
 <style scoped>
@@ -789,6 +971,13 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.sticky-note__lock-indicator {
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: #c62828;
+  font-weight: 600;
+}
+
 .sticky-note__title-text {
   font-size: 13px;
   font-weight: 600;
@@ -832,6 +1021,14 @@ onUnmounted(() => {
 .sticky-note__action-btn:hover {
   background: rgba(0, 0, 0, 0.15);
   color: rgba(0, 0, 0, 0.8);
+}
+
+.sticky-note__action-btn--disabled,
+.sticky-note__action-btn--disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .sticky-note__action-btn--close:hover {

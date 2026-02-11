@@ -165,6 +165,9 @@
                   <div class="sticky-note-rail__item-title">
                     {{ note.title || '无标题便签' }}
                   </div>
+                  <div v-if="getNoteLockLabel(note)" class="sticky-note-rail__item-lock">
+                    {{ getNoteLockLabel(note) }}
+                  </div>
                   <div class="sticky-note-rail__item-meta">
                     {{ formatCreator(note) }} · {{ formatDate(note.updatedAt) }}
                   </div>
@@ -319,6 +322,9 @@
                     <div class="sticky-note-rail__item-title">
                       {{ note.title || '无标题便签' }}
                     </div>
+                    <div v-if="getNoteLockLabel(note)" class="sticky-note-rail__item-lock">
+                      {{ getNoteLockLabel(note) }}
+                    </div>
                     <div class="sticky-note-rail__item-meta">
                       {{ formatCreator(note) }} · {{ formatDate(note.updatedAt) }}
                     </div>
@@ -400,7 +406,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useStickyNoteStore, type StickyNoteType } from '@/stores/stickyNote'
+import { useStickyNoteStore, type StickyNoteType, type StickyNote as StickyNoteModel } from '@/stores/stickyNote'
 import { chatEvent, useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { matchText } from '@/utils/pinyinMatch'
@@ -460,6 +466,8 @@ const MINIMIZED_BAR_DEFAULT_RIGHT = 24
 const MINIMIZED_BAR_DEFAULT_BOTTOM = 140
 const MINIMIZED_BAR_FALLBACK_WIDTH = 240
 const MINIMIZED_BAR_FALLBACK_HEIGHT = 200
+const lockNow = ref(Date.now())
+let lockNowTimer: ReturnType<typeof setInterval> | null = null
 
 const noteTypePreloaders: Partial<Record<StickyNoteType, () => Promise<unknown>>> = {
   counter: () => import('./sticky-notes/StickyNoteCounter.vue'),
@@ -829,6 +837,33 @@ function formatCreator(note: { creator?: { nickname?: string; nick?: string; nam
   return creator?.nickname || creator?.nick || creator?.name || '未知用户'
 }
 
+function isNoteLockedByOther(note: StickyNoteModel): boolean {
+  const lock = note?.editingLock
+  const currentUserId = userStore.info?.id
+  if (!lock || !currentUserId) {
+    return false
+  }
+  if (lock.userId === currentUserId) {
+    return false
+  }
+  if (typeof lock.expireAt === 'number' && lock.expireAt > 0 && lock.expireAt <= lockNow.value) {
+    return false
+  }
+  return true
+}
+
+function getNoteLockOwnerName(note: StickyNoteModel): string {
+  const lockUser = note?.editingLock?.user
+  return lockUser?.nickname || lockUser?.nick || lockUser?.name || lockUser?.id || '其他用户'
+}
+
+function getNoteLockLabel(note: StickyNoteModel): string {
+  if (!isNoteLockedByOther(note)) {
+    return ''
+  }
+  return `${getNoteLockOwnerName(note)}正在编辑`
+}
+
 function togglePrivateCreate() {
   stickyNoteStore.setPrivateCreateEnabled(!stickyNoteStore.privateCreateEnabled)
 }
@@ -1129,6 +1164,9 @@ onMounted(() => {
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', handleMinimizedBarResize)
   }
+  lockNowTimer = setInterval(() => {
+    lockNow.value = Date.now()
+  }, 1000)
 })
 
 onUnmounted(() => {
@@ -1142,6 +1180,10 @@ onUnmounted(() => {
   document.removeEventListener('pointercancel', stopMinimizedBarDrag)
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', handleMinimizedBarResize)
+  }
+  if (lockNowTimer) {
+    clearInterval(lockNowTimer)
+    lockNowTimer = null
   }
 })
 </script>
@@ -1371,6 +1413,12 @@ onUnmounted(() => {
 .sticky-note-rail__item-meta {
   font-size: 11px;
   color: var(--sc-text-secondary, #64748b);
+}
+
+.sticky-note-rail__item-lock {
+  font-size: 11px;
+  color: #c62828;
+  margin-bottom: 4px;
 }
 
 .sticky-note-rail__empty {

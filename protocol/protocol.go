@@ -1,17 +1,17 @@
 package protocol
 
 type Channel struct {
-	ID                 string      `json:"id"`
-	WorldID            string      `json:"worldId,omitempty"`
-	Type               ChannelType `json:"type"`
-	Name               string      `json:"name"`
-	ParentID           string      `json:"parent_id" gorm:"null"`
-	PermType           string      `json:"permType"`
-	DefaultDiceExpr    string      `json:"defaultDiceExpr,omitempty"`
-	BuiltInDiceEnabled bool        `json:"builtInDiceEnabled"`
-	BotFeatureEnabled  bool        `json:"botFeatureEnabled"`
-	BackgroundAttachmentId string `json:"backgroundAttachmentId"`
-	BackgroundSettings     string `json:"backgroundSettings"`
+	ID                     string      `json:"id"`
+	WorldID                string      `json:"worldId,omitempty"`
+	Type                   ChannelType `json:"type"`
+	Name                   string      `json:"name"`
+	ParentID               string      `json:"parent_id" gorm:"null"`
+	PermType               string      `json:"permType"`
+	DefaultDiceExpr        string      `json:"defaultDiceExpr,omitempty"`
+	BuiltInDiceEnabled     bool        `json:"builtInDiceEnabled"`
+	BotFeatureEnabled      bool        `json:"botFeatureEnabled"`
+	BackgroundAttachmentId string      `json:"backgroundAttachmentId"`
+	BackgroundSettings     string      `json:"backgroundSettings"`
 }
 
 type ChannelType int
@@ -100,42 +100,42 @@ const (
 )
 
 type Message struct {
-	ID            string           `json:"id"`
-	MessageID     string           // Deprecated
-	Channel       *Channel         `json:"channel"`
-	Guild         *Guild           `json:"guild"`
-	User          *User            `json:"user"`
-	Identity      *MessageIdentity `json:"identity,omitempty"`
-	SenderRoleID  string           `json:"senderRoleId,omitempty"`
-	Member        *GuildMember     `json:"member"`
-	Content       string           `json:"content"`
-	WidgetData    string           `json:"widgetData,omitempty"`
-	Elements      []*Element       `json:"elements"`
-	Timestamp     int64            `json:"timestamp"`
-	Quote         *Message         `json:"quote"`
-	CreatedAt     int64            `json:"createdAt"`
-	UpdatedAt     int64            `json:"updatedAt"`
-	DisplayOrder  float64          `json:"displayOrder"`
-	IcMode        string           `json:"icMode"`
-	IsWhisper     bool             `json:"isWhisper"`
-	WhisperTo     *User            `json:"whisperTo"`
-	WhisperToIds  []*User          `json:"whisperToIds,omitempty"`
+	ID               string           `json:"id"`
+	MessageID        string           // Deprecated
+	Channel          *Channel         `json:"channel"`
+	Guild            *Guild           `json:"guild"`
+	User             *User            `json:"user"`
+	Identity         *MessageIdentity `json:"identity,omitempty"`
+	SenderRoleID     string           `json:"senderRoleId,omitempty"`
+	Member           *GuildMember     `json:"member"`
+	Content          string           `json:"content"`
+	WidgetData       string           `json:"widgetData,omitempty"`
+	Elements         []*Element       `json:"elements"`
+	Timestamp        int64            `json:"timestamp"`
+	Quote            *Message         `json:"quote"`
+	CreatedAt        int64            `json:"createdAt"`
+	UpdatedAt        int64            `json:"updatedAt"`
+	DisplayOrder     float64          `json:"displayOrder"`
+	IcMode           string           `json:"icMode"`
+	IsWhisper        bool             `json:"isWhisper"`
+	WhisperTo        *User            `json:"whisperTo"`
+	WhisperToIds     []*User          `json:"whisperToIds,omitempty"`
 	IsEdited         bool             `json:"isEdited"`
 	EditCount        int              `json:"editCount"`
 	EditedByUserId   string           `json:"editedByUserId,omitempty"`
 	EditedByUserName string           `json:"editedByUserName,omitempty"`
-	IsArchived    bool             `json:"isArchived"`
-	ArchivedAt    int64            `json:"archivedAt"`
-	ArchivedBy    string           `json:"archivedBy"`
-	ArchiveReason string           `json:"archiveReason"`
-	IsPinned      bool             `json:"isPinned"`
-	PinnedAt      int64            `json:"pinnedAt"`
-	PinnedBy      string           `json:"pinnedBy"`
-	IsDeleted     bool             `json:"isDeleted"`
-	DeletedAt     int64            `json:"deletedAt"`
-	DeletedBy     string           `json:"deletedBy"`
-	ClientID      string           `json:"clientId,omitempty"`
-	WhisperMeta   *WhisperMeta     `json:"whisperMeta,omitempty"`
+	IsArchived       bool             `json:"isArchived"`
+	ArchivedAt       int64            `json:"archivedAt"`
+	ArchivedBy       string           `json:"archivedBy"`
+	ArchiveReason    string           `json:"archiveReason"`
+	IsPinned         bool             `json:"isPinned"`
+	PinnedAt         int64            `json:"pinnedAt"`
+	PinnedBy         string           `json:"pinnedBy"`
+	IsDeleted        bool             `json:"isDeleted"`
+	DeletedAt        int64            `json:"deletedAt"`
+	DeletedBy        string           `json:"deletedBy"`
+	ClientID         string           `json:"clientId,omitempty"`
+	WhisperMeta      *WhisperMeta     `json:"whisperMeta,omitempty"`
 }
 
 type MessageIdentity struct {
@@ -167,16 +167,16 @@ type AudioTrackState struct {
 }
 
 type AudioPlaybackStatePayload struct {
-	ChannelID    string            `json:"channelId"`
-	SceneID      *string           `json:"sceneId"`
-	Tracks       []AudioTrackState `json:"tracks"`
-	IsPlaying    bool              `json:"isPlaying"`
-	Position     float64           `json:"position"`
-	LoopEnabled  bool              `json:"loopEnabled"`
-	PlaybackRate float64           `json:"playbackRate"`
-	WorldPlaybackEnabled bool      `json:"worldPlaybackEnabled"`
-	UpdatedBy    string            `json:"updatedBy"`
-	UpdatedAt    int64             `json:"updatedAt"`
+	ChannelID            string            `json:"channelId"`
+	SceneID              *string           `json:"sceneId"`
+	Tracks               []AudioTrackState `json:"tracks"`
+	IsPlaying            bool              `json:"isPlaying"`
+	Position             float64           `json:"position"`
+	LoopEnabled          bool              `json:"loopEnabled"`
+	PlaybackRate         float64           `json:"playbackRate"`
+	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
+	UpdatedBy            string            `json:"updatedBy"`
+	UpdatedAt            int64             `json:"updatedAt"`
 }
 
 type ChannelIForm struct {
@@ -230,16 +230,16 @@ type ChannelIFormEventPayload struct {
 }
 
 type WhisperMeta struct {
-	SenderMemberID   string `json:"senderMemberId,omitempty"`
-	SenderMemberName string `json:"senderMemberName,omitempty"`
-	SenderUserID     string `json:"senderUserId,omitempty"`
-	SenderUserNick   string `json:"senderUserNick,omitempty"`
-	SenderUserName   string `json:"senderUserName,omitempty"`
-	TargetMemberID   string `json:"targetMemberId,omitempty"`
-	TargetMemberName string `json:"targetMemberName,omitempty"`
-	TargetUserID     string `json:"targetUserId,omitempty"`
-	TargetUserNick   string `json:"targetUserNick,omitempty"`
-	TargetUserName   string `json:"targetUserName,omitempty"`
+	SenderMemberID   string   `json:"senderMemberId,omitempty"`
+	SenderMemberName string   `json:"senderMemberName,omitempty"`
+	SenderUserID     string   `json:"senderUserId,omitempty"`
+	SenderUserNick   string   `json:"senderUserNick,omitempty"`
+	SenderUserName   string   `json:"senderUserName,omitempty"`
+	TargetMemberID   string   `json:"targetMemberId,omitempty"`
+	TargetMemberName string   `json:"targetMemberName,omitempty"`
+	TargetUserID     string   `json:"targetUserId,omitempty"`
+	TargetUserNick   string   `json:"targetUserNick,omitempty"`
+	TargetUserName   string   `json:"targetUserName,omitempty"`
 	TargetUserIds    []string `json:"targetUserIds,omitempty"`
 }
 
@@ -344,33 +344,33 @@ type MessageReactionEvent struct {
 }
 
 type Event struct {
-	ID             int64                      `json:"id"`
-	Type           EventName                  `json:"type"`
-	SelfID         string                     `json:"selfID"`
-	Platform       string                     `json:"platform"`
-	Timestamp      int64                      `json:"timestamp"`
-	Argv           *Argv                      `json:"argv"`
-	Channel        *Channel                   `json:"channel"`
-	Guild          *Guild                     `json:"guild"`
-	Login          *Login                     `json:"login"`
-	Member         *GuildMember               `json:"member"`
-	Message        *Message                   `json:"message"`
-	Operator       *User                      `json:"operator"`
-	Role           *GuildRole                 `json:"role"`
-	User           *User                      `json:"user"`
-	Button         *Button                    `json:"button"`
-	Typing         *TypingPreview             `json:"typing"`
-	Reorder        *MessageReorder            `json:"reorder"`
-	Presence       []*ChannelPresence         `json:"presence"`
-	AudioState     *AudioPlaybackStatePayload `json:"audioState,omitempty"`
-	IForm          *ChannelIFormEventPayload  `json:"iform,omitempty"`
-	StickyNote     *StickyNoteEventPayload    `json:"stickyNote,omitempty"`
-	CharacterCard  *CharacterCardEventPayload `json:"characterCard,omitempty"`
-	CharacterCardBadge         *CharacterCardBadgeEventPayload         `json:"characterCardBadge,omitempty"`
-	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload       `json:"characterCardBadgeSnapshot,omitempty"`
-	MessageContext *MessageContext            `json:"messageContext,omitempty"`
-	MessageReaction *MessageReactionEvent     `json:"messageReaction,omitempty"`
-	IsInteractiveUpdate bool                  `json:"is_interactive_update,omitempty"`
+	ID                         int64                              `json:"id"`
+	Type                       EventName                          `json:"type"`
+	SelfID                     string                             `json:"selfID"`
+	Platform                   string                             `json:"platform"`
+	Timestamp                  int64                              `json:"timestamp"`
+	Argv                       *Argv                              `json:"argv"`
+	Channel                    *Channel                           `json:"channel"`
+	Guild                      *Guild                             `json:"guild"`
+	Login                      *Login                             `json:"login"`
+	Member                     *GuildMember                       `json:"member"`
+	Message                    *Message                           `json:"message"`
+	Operator                   *User                              `json:"operator"`
+	Role                       *GuildRole                         `json:"role"`
+	User                       *User                              `json:"user"`
+	Button                     *Button                            `json:"button"`
+	Typing                     *TypingPreview                     `json:"typing"`
+	Reorder                    *MessageReorder                    `json:"reorder"`
+	Presence                   []*ChannelPresence                 `json:"presence"`
+	AudioState                 *AudioPlaybackStatePayload         `json:"audioState,omitempty"`
+	IForm                      *ChannelIFormEventPayload          `json:"iform,omitempty"`
+	StickyNote                 *StickyNoteEventPayload            `json:"stickyNote,omitempty"`
+	CharacterCard              *CharacterCardEventPayload         `json:"characterCard,omitempty"`
+	CharacterCardBadge         *CharacterCardBadgeEventPayload    `json:"characterCardBadge,omitempty"`
+	CharacterCardBadgeSnapshot *CharacterCardBadgeSnapshotPayload `json:"characterCardBadgeSnapshot,omitempty"`
+	MessageContext             *MessageContext                    `json:"messageContext,omitempty"`
+	MessageReaction            *MessageReactionEvent              `json:"messageReaction,omitempty"`
+	IsInteractiveUpdate        bool                               `json:"is_interactive_update,omitempty"`
 }
 
 type TypingState string
@@ -453,30 +453,39 @@ const (
 
 // StickyNote 便签数据结构
 type StickyNote struct {
-	ID          string `json:"id"`
-	ChannelID   string `json:"channelId"`
-	WorldID     string `json:"worldId"`
-	FolderID    string `json:"folderId,omitempty"` // 所属文件夹
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	ContentText string `json:"contentText"`
-	Color       string `json:"color"`
-	CreatorID   string `json:"creatorId"`
-	IsPublic    bool   `json:"isPublic"`
-	IsPinned    bool   `json:"isPinned"`
-	OrderIndex  int    `json:"orderIndex"`
-	NoteType    string `json:"noteType"`              // text/counter/list/slider/chat/timer/clock/roundCounter
-	TypeData    string `json:"typeData,omitempty"`    // JSON 格式的类型特定数据
-	Visibility  string `json:"visibility,omitempty"`  // owner/editors/viewers/all
-	ViewerIDs   string `json:"viewerIds,omitempty"`   // JSON 数组
-	EditorIDs   string `json:"editorIds,omitempty"`   // JSON 数组
-	DefaultX    int    `json:"defaultX"`
-	DefaultY    int    `json:"defaultY"`
-	DefaultW    int    `json:"defaultW"`
-	DefaultH    int    `json:"defaultH"`
-	CreatedAt   int64  `json:"createdAt"`
-	UpdatedAt   int64  `json:"updatedAt"`
-	Creator     *User  `json:"creator,omitempty"`
+	ID          string                 `json:"id"`
+	ChannelID   string                 `json:"channelId"`
+	WorldID     string                 `json:"worldId"`
+	FolderID    string                 `json:"folderId,omitempty"` // 所属文件夹
+	Title       string                 `json:"title"`
+	Content     string                 `json:"content"`
+	ContentText string                 `json:"contentText"`
+	Color       string                 `json:"color"`
+	CreatorID   string                 `json:"creatorId"`
+	IsPublic    bool                   `json:"isPublic"`
+	IsPinned    bool                   `json:"isPinned"`
+	OrderIndex  int                    `json:"orderIndex"`
+	NoteType    string                 `json:"noteType"`             // text/counter/list/slider/chat/timer/clock/roundCounter
+	TypeData    string                 `json:"typeData,omitempty"`   // JSON 格式的类型特定数据
+	Visibility  string                 `json:"visibility,omitempty"` // owner/editors/viewers/all
+	ViewerIDs   string                 `json:"viewerIds,omitempty"`  // JSON 数组
+	EditorIDs   string                 `json:"editorIds,omitempty"`  // JSON 数组
+	DefaultX    int                    `json:"defaultX"`
+	DefaultY    int                    `json:"defaultY"`
+	DefaultW    int                    `json:"defaultW"`
+	DefaultH    int                    `json:"defaultH"`
+	CreatedAt   int64                  `json:"createdAt"`
+	UpdatedAt   int64                  `json:"updatedAt"`
+	Creator     *User                  `json:"creator,omitempty"`
+	EditingLock *StickyNoteEditingLock `json:"editingLock,omitempty"`
+}
+
+// StickyNoteEditingLock 便签编辑锁
+type StickyNoteEditingLock struct {
+	UserID    string `json:"userId"`
+	SessionID string `json:"sessionId,omitempty"`
+	ExpireAt  int64  `json:"expireAt"`
+	User      *User  `json:"user,omitempty"`
 }
 
 // StickyNoteUserState 用户便签状态
@@ -516,10 +525,10 @@ type StickyNoteFolder struct {
 
 // StickyNoteEventPayload 便签事件载荷
 type StickyNoteEventPayload struct {
-	Note          *StickyNote   `json:"note,omitempty"`
-	Notes         []*StickyNote `json:"notes,omitempty"`
-	Action        string        `json:"action,omitempty"` // create/update/delete/push
-	TargetUserIDs []string      `json:"targetUserIds,omitempty"`
+	Note          *StickyNote       `json:"note,omitempty"`
+	Notes         []*StickyNote     `json:"notes,omitempty"`
+	Action        string            `json:"action,omitempty"` // create/update/delete/push
+	TargetUserIDs []string          `json:"targetUserIds,omitempty"`
 	Layout        *StickyNoteLayout `json:"layout,omitempty"`
 }
 

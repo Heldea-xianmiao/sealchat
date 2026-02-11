@@ -15,6 +15,8 @@ import (
 	"sealchat/utils"
 )
 
+const stickyNoteEditingLockTTL = 10 * time.Second
+
 // ========== REST API ==========
 
 // BindStickyNoteRoutes 绑定便签相关的 REST 路由
@@ -28,6 +30,9 @@ func BindStickyNoteRoutes(group fiber.Router) {
 	group.Post("/channels/:channelId/sticky-notes/migrate", apiChannelStickyNoteMigrate)
 	// 获取单个便签
 	group.Get("/sticky-notes/:noteId", apiStickyNoteGet)
+	// 获取编辑锁
+	group.Post("/sticky-notes/:noteId/edit-lock/acquire", apiStickyNoteEditLockAcquire)
+	group.Post("/sticky-notes/:noteId/edit-lock/release", apiStickyNoteEditLockRelease)
 	// 更新便签
 	group.Patch("/sticky-notes/:noteId", apiStickyNoteUpdateRest)
 	// 删除便签
@@ -154,6 +159,16 @@ func canViewStickyNote(note *model.StickyNoteModel, userID string) bool {
 	}
 }
 
+func loadStickyNoteForResponse(noteID string) (*model.StickyNoteModel, error) {
+	note, err := model.StickyNoteGet(noteID)
+	if err != nil {
+		return nil, err
+	}
+	note.LoadCreator()
+	note.LoadEditingLockUser()
+	return note, nil
+}
+
 // apiChannelStickyNoteList 获取频道的所有便签
 func apiChannelStickyNoteList(c *fiber.Ctx) error {
 	channelID := c.Params("channelId")
@@ -178,6 +193,7 @@ func apiChannelStickyNoteList(c *fiber.Ctx) error {
 	// 加载创建者信息
 	for _, note := range notes {
 		note.LoadCreator()
+		note.LoadEditingLockUser()
 	}
 
 	// 获取用户状态
@@ -512,42 +528,187 @@ func apiStickyNoteGet(c *fiber.Ctx) error {
 	}
 
 	note.LoadCreator()
+	note.LoadEditingLockUser()
 	return c.JSON(fiber.Map{"note": note.ToProtocolType()})
 }
 
-// apiStickyNoteUpdateRest 更新便签 (REST)
-func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
+// apiStickyNoteEditLockAcquire 获取或续租便签编辑锁
+func apiStickyNoteEditLockAcquire(c *fiber.Ctx) error {
 	noteID := c.Params("noteId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "sessionId required"})
+	}
 
 	note, err := model.StickyNoteGet(noteID)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
 	}
+	if !canViewStickyNote(note, user.ID) {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
+	}
+	if err := ensureStickyNoteChannelMembership(user.ID, note.ChannelID); err != nil {
+		return c.Status(403).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	now := time.Now()
+	expireAt := now.Add(stickyNoteEditingLockTTL)
+	result := model.GetDB().Model(&model.StickyNoteModel{}).
+		Where("id = ? AND is_deleted = ?", noteID, false).
+		Where("(editing_lock_user_id = '' OR editing_lock_user_id IS NULL OR editing_lock_expire_at IS NULL OR editing_lock_expire_at <= ? OR (editing_lock_user_id = ? AND editing_lock_session_id = ?))", now, user.ID, sessionID).
+		Updates(map[string]interface{}{
+			"editing_lock_user_id":    user.ID,
+			"editing_lock_session_id": sessionID,
+			"editing_lock_expire_at":  expireAt,
+		})
+	if result.Error != nil {
+		return c.Status(500).JSON(fiber.Map{"error": result.Error.Error()})
+	}
+
+	lockedNote, err := loadStickyNoteForResponse(noteID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+	if result.RowsAffected == 0 {
+		return c.Status(409).JSON(fiber.Map{"error": "note is being edited", "note": lockedNote.ToProtocolType()})
+	}
+
+	go BroadcastStickyNoteToChannel(lockedNote.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
+		Note:   lockedNote.ToProtocolType(),
+		Action: "update",
+	})
+	return c.JSON(fiber.Map{"note": lockedNote.ToProtocolType()})
+}
+
+// apiStickyNoteEditLockRelease 释放便签编辑锁
+func apiStickyNoteEditLockRelease(c *fiber.Ctx) error {
+	noteID := c.Params("noteId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
 
 	var req struct {
-		Title       *string `json:"title"`
-		Content     *string `json:"content"`
-		ContentText *string `json:"contentText"`
-		Color       *string `json:"color"`
-		IsPinned    *bool   `json:"isPinned"`
-		NoteType    *string `json:"noteType"`
-		TypeData    *string `json:"typeData"`
-		Visibility  *string `json:"visibility"`
-		ViewerIDs   *string `json:"viewerIds"`
-		EditorIDs   *string `json:"editorIds"`
-		FolderID    *string `json:"folderId"`
-		DefaultX    *int    `json:"defaultX"`
-		DefaultY    *int    `json:"defaultY"`
-		DefaultW    *int    `json:"defaultW"`
-		DefaultH    *int    `json:"defaultH"`
+		SessionID string `json:"sessionId"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+
+	note, err := model.StickyNoteGet(noteID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+	if !canViewStickyNote(note, user.ID) {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
+	}
+	if err := ensureStickyNoteChannelMembership(user.ID, note.ChannelID); err != nil {
+		return c.Status(403).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	query := model.GetDB().Model(&model.StickyNoteModel{}).
+		Where("id = ? AND is_deleted = ?", noteID, false).
+		Where("editing_lock_user_id = ?", user.ID)
+	if sessionID != "" {
+		query = query.Where("editing_lock_session_id = ?", sessionID)
+	}
+	result := query.Updates(map[string]interface{}{
+		"editing_lock_user_id":    "",
+		"editing_lock_session_id": "",
+		"editing_lock_expire_at":  nil,
+	})
+	if result.Error != nil {
+		return c.Status(500).JSON(fiber.Map{"error": result.Error.Error()})
+	}
+
+	updatedNote, err := loadStickyNoteForResponse(noteID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+	if result.RowsAffected > 0 {
+		go BroadcastStickyNoteToChannel(updatedNote.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
+			Note:   updatedNote.ToProtocolType(),
+			Action: "update",
+		})
+	}
+	return c.JSON(fiber.Map{"note": updatedNote.ToProtocolType()})
+}
+
+// apiStickyNoteUpdateRest 更新便签 (REST)
+func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
+	noteID := c.Params("noteId")
+	user := getStickyNoteUser(c)
+	if user == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	note, err := model.StickyNoteGet(noteID)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+	if !canViewStickyNote(note, user.ID) {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
+	}
+	if err := ensureStickyNoteChannelMembership(user.ID, note.ChannelID); err != nil {
+		return c.Status(403).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	var req struct {
+		Title         *string `json:"title"`
+		Content       *string `json:"content"`
+		ContentText   *string `json:"contentText"`
+		Color         *string `json:"color"`
+		IsPinned      *bool   `json:"isPinned"`
+		NoteType      *string `json:"noteType"`
+		TypeData      *string `json:"typeData"`
+		Visibility    *string `json:"visibility"`
+		ViewerIDs     *string `json:"viewerIds"`
+		EditorIDs     *string `json:"editorIds"`
+		FolderID      *string `json:"folderId"`
+		DefaultX      *int    `json:"defaultX"`
+		DefaultY      *int    `json:"defaultY"`
+		DefaultW      *int    `json:"defaultW"`
+		DefaultH      *int    `json:"defaultH"`
+		LockSessionID *string `json:"lockSessionId"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 	}
 
+	now := time.Now()
+	if note.IsEditingLockActive(now) {
+		if note.EditingLockUserID != user.ID {
+			note.LoadCreator()
+			note.LoadEditingLockUser()
+			return c.Status(409).JSON(fiber.Map{"error": "note is being edited", "note": note.ToProtocolType()})
+		}
+		if req.LockSessionID != nil {
+			lockSessionID := strings.TrimSpace(*req.LockSessionID)
+			if lockSessionID != "" {
+				if note.EditingLockSessionID != lockSessionID {
+					note.LoadCreator()
+					note.LoadEditingLockUser()
+					return c.Status(409).JSON(fiber.Map{"error": "note is being edited", "note": note.ToProtocolType()})
+				}
+			}
+		}
+	}
+
 	updates := map[string]interface{}{
-		"updated_at": time.Now(),
+		"updated_at": now,
 	}
 
 	if req.Title != nil {
@@ -595,14 +756,19 @@ func apiStickyNoteUpdateRest(c *fiber.Ctx) error {
 	if req.DefaultH != nil {
 		updates["default_h"] = *req.DefaultH
 	}
+	if req.LockSessionID != nil {
+		lockSessionID := strings.TrimSpace(*req.LockSessionID)
+		if lockSessionID != "" && note.EditingLockUserID == user.ID && note.EditingLockSessionID == lockSessionID {
+			updates["editing_lock_expire_at"] = now.Add(stickyNoteEditingLockTTL)
+		}
+	}
 
 	if err := model.StickyNoteUpdate(noteID, updates); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// 重新加载
-	note, _ = model.StickyNoteGet(noteID)
-	note.LoadCreator()
+	note, _ = loadStickyNoteForResponse(noteID)
 
 	// 广播更新事件
 	go BroadcastStickyNoteToChannel(note.ChannelID, protocol.EventStickyNoteUpdated, &protocol.StickyNoteEventPayload{
@@ -625,6 +791,9 @@ func apiStickyNoteDeleteRest(c *fiber.Ctx) error {
 	note, err := model.StickyNoteGet(noteID)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "note not found"})
+	}
+	if !canViewStickyNote(note, user.ID) {
+		return c.Status(403).JSON(fiber.Map{"error": "permission denied"})
 	}
 
 	channelID := note.ChannelID
