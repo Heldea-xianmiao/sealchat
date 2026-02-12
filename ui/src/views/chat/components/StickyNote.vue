@@ -168,6 +168,18 @@
                     <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
                   </svg>
                 </button>
+                <button
+                  class="sticky-note__toolbar-btn"
+                  :disabled="!defaultIFormEmbedLink"
+                  @click="copyIFormEmbedLink"
+                  :title="defaultIFormEmbedLink ? '复制首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+                >⧉</button>
+                <button
+                  class="sticky-note__toolbar-btn"
+                  :disabled="!defaultIFormEmbedLink"
+                  @click="insertIFormEmbedLinkToSimple"
+                  :title="defaultIFormEmbedLink ? '插入首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+                >↘</button>
               </div>
               <textarea
                 v-model="localContent"
@@ -230,6 +242,10 @@ import { useMessage } from 'naive-ui'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import { useIFormStore } from '@/stores/iform'
+import { useUtilsStore } from '@/stores/utils'
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink'
+import { copyTextWithFallback } from '@/utils/clipboard'
 import StickyNoteEditor from './StickyNoteEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 
@@ -261,7 +277,10 @@ const props = defineProps<{
 const stickyNoteStore = useStickyNoteStore()
 const chatStore = useChatStore()
 const userStore = useUserStore()
+const iFormStore = useIFormStore()
+const utilsStore = useUtilsStore()
 const message = useMessage()
+iFormStore.bootstrap()
 
 const noteEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement | null>(null)
@@ -341,6 +360,72 @@ const isTextType = computed(() => {
   const type = note.value?.noteType || 'text'
   return type === 'text' || type === 'chat'
 })
+
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utilsStore.config?.domain?.trim() || ''
+  if (!domain) {
+    return undefined
+  }
+  const webUrl = utilsStore.config?.webUrl?.trim() || ''
+  let base = domain
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`
+  }
+  return base
+}
+
+const defaultIFormEmbedLink = computed(() => {
+  const channelId = (note.value?.channelId || '').trim()
+  const worldId = (chatStore.currentWorldId || '').trim()
+  if (!channelId || !worldId) {
+    return ''
+  }
+  const firstForm = iFormStore.formsByChannel[channelId]?.[0]
+  if (!firstForm?.id) {
+    return ''
+  }
+  return generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: firstForm.id,
+      width: firstForm.defaultWidth,
+      height: firstForm.defaultHeight,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  )
+})
+
+const copyIFormEmbedLink = async () => {
+  const link = defaultIFormEmbedLink.value
+  if (!link) {
+    message.warning('当前频道暂无可复制 iForm')
+    return
+  }
+  const copied = await copyTextWithFallback(link)
+  if (copied) {
+    message.success('iForm 嵌入链接已复制')
+  } else {
+    message.error('复制失败')
+  }
+}
+
+const insertIFormEmbedLinkToSimple = () => {
+  const link = defaultIFormEmbedLink.value
+  if (!link) {
+    message.warning('当前频道暂无可插入 iForm')
+    return
+  }
+  localContent.value = localContent.value
+    ? `${localContent.value}
+${link}`
+    : link
+  debouncedSaveContent()
+}
 
 const creatorName = computed(() => {
   const creator = note.value?.creator

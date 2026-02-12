@@ -86,6 +86,7 @@ import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/cha
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -154,6 +155,44 @@ const openSplitView = () => {
 const toggleStickyNotes = () => {
   stickyNoteStore.toggleVisible();
 };
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const defaultIFormEmbedLink = computed(() => {
+  const worldId = chat.currentWorldId;
+  const channelId = chat.curChannel?.id;
+  if (!worldId || !channelId) {
+    return '';
+  }
+  const firstForm = iFormStore.currentForms[0];
+  if (!firstForm?.id) {
+    return '';
+  }
+  return generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: firstForm.id,
+      width: firstForm.defaultWidth,
+      height: firstForm.defaultHeight,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  );
+});
 
 type ExternalPanelKey =
   | 'search'
@@ -11896,6 +11935,7 @@ onBeforeUnmount(() => {
                   :rows="1"
                   :input-class="chatInputClassList"
                   :inline-images="inlineImagePreviewMap"
+                  :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"

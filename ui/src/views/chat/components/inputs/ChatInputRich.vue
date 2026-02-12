@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
+import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
 import { Spoiler } from '@/utils/tiptap-spoiler';
+import { useChatStore } from '@/stores/chat';
+import { useIFormStore } from '@/stores/iform';
+import { useUtilsStore } from '@/stores/utils';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -17,6 +22,7 @@ const props = withDefaults(defineProps<{
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
+  defaultIFormEmbedLink?: string
 }>(), {
   modelValue: '',
   placeholder: '',
@@ -29,6 +35,7 @@ const props = withDefaults(defineProps<{
   rows: 1,
   inputClass: () => [],
   inlineImages: () => ({}),
+  defaultIFormEmbedLink: '',
 });
 
 const emit = defineEmits<{
@@ -45,6 +52,12 @@ const emit = defineEmits<{
   (event: 'composition-end'): void
 }>();
 
+const message = useMessage();
+const chat = useChatStore();
+const iform = useIFormStore();
+const utils = useUtilsStore();
+iform.bootstrap();
+
 const editor = shallowRef<Editor | null>(null);
 const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
@@ -60,6 +73,115 @@ const linkModalShow = ref(false);
 const linkText = ref('');
 const linkUrl = ref('');
 const linkOpenInNewTab = ref(false);
+
+const quickIFormModalShow = ref(false);
+const creatingIForm = ref(false);
+const quickIFormForm = reactive({
+  name: '',
+  url: '',
+  embedCode: '',
+  defaultWidth: 640,
+  defaultHeight: 360,
+});
+
+const canQuickCreateIForm = computed(() => {
+  return !!chat.currentWorldId && !!chat.curChannel?.id && iform.canManage;
+});
+
+const resetQuickIFormForm = () => {
+  Object.assign(quickIFormForm, {
+    name: '',
+    url: '',
+    embedCode: '',
+    defaultWidth: 640,
+    defaultHeight: 360,
+  });
+};
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const openQuickIFormCreateModal = () => {
+  if (!chat.curChannel?.id || !chat.currentWorldId) {
+    message.warning('当前未定位到有效频道');
+    return;
+  }
+  if (!iform.canManage) {
+    message.warning('你没有创建 iForm 的权限');
+    return;
+  }
+  resetQuickIFormForm();
+  quickIFormModalShow.value = true;
+};
+
+const confirmQuickIFormCreate = async () => {
+  if (!chat.curChannel?.id || !chat.currentWorldId) {
+    message.warning('当前未定位到有效频道');
+    return;
+  }
+  if (!iform.canManage) {
+    message.warning('你没有创建 iForm 的权限');
+    return;
+  }
+  const name = quickIFormForm.name.trim() || `消息嵌入 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+  const url = quickIFormForm.url.trim();
+  const embedCode = quickIFormForm.embedCode.trim();
+  if (!url && !embedCode) {
+    message.warning('请至少填写 URL 或嵌入代码');
+    return;
+  }
+  const width = Math.max(120, Math.round(quickIFormForm.defaultWidth || 640));
+  const height = Math.max(72, Math.round(quickIFormForm.defaultHeight || 360));
+
+  creatingIForm.value = true;
+  try {
+    const created = await iform.createForm({
+      name,
+      url,
+      embedCode,
+      defaultWidth: width,
+      defaultHeight: height,
+      defaultCollapsed: false,
+      defaultFloating: true,
+    });
+    const createdForm = created?.id
+      ? (iform.currentForms.find((item) => item.id === created.id) || created)
+      : null;
+    if (!createdForm?.id) {
+      throw new Error('创建成功但未获取到控件信息');
+    }
+    const link = generateIFormEmbedLink(
+      {
+        worldId: String(chat.currentWorldId),
+        channelId: String(chat.curChannel.id),
+        formId: createdForm.id,
+        width: createdForm.defaultWidth || width,
+        height: createdForm.defaultHeight || height,
+      },
+      { base: resolveIFormEmbedLinkBase() },
+    );
+    editor.value?.chain().focus().insertContent(link).run();
+    quickIFormModalShow.value = false;
+    message.success('已创建 iForm 并插入嵌入链接');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '创建 iForm 失败');
+  } finally {
+    creatingIForm.value = false;
+  }
+};
 
 // 预设高亮颜色色板 (7个预设 + 1个自定义)
 const highlightColors = [
@@ -420,6 +542,10 @@ const insertStateWidgetTemplate = () => {
   const firstOption = selectedText || '选项1';
   const template = `[${firstOption}|选项2|选项3]`;
   editor.value.chain().focus().insertContent(template).run();
+};
+
+const insertIFormEmbedLink = () => {
+  openQuickIFormCreateModal();
 };
 
 // 高亮颜色操作
@@ -834,6 +960,20 @@ defineExpose({
             </template>
             插入三段状态文本：`[选项1|选项2|选项3]`
           </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                :disabled="!canQuickCreateIForm"
+                @click="insertIFormEmbedLink"
+                title="创建并插入 iForm 嵌入"
+              >
+                ⧉
+              </n-button>
+            </template>
+            {{ canQuickCreateIForm ? '弹窗创建 iForm 并自动插入链接' : '当前频道无权限或不可创建 iForm' }}
+          </n-tooltip>
           <n-button
             size="small"
             text
@@ -970,6 +1110,51 @@ defineExpose({
         <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
           <n-button @click="linkModalShow = false">取消</n-button>
           <n-button type="primary" @click="confirmLink" :disabled="!linkUrl.trim()">确定</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+
+    <n-modal
+      v-model:show="quickIFormModalShow"
+      preset="card"
+      :bordered="false"
+      title="创建消息嵌入 iForm"
+      style="width: 460px; max-width: 92vw;"
+      :mask-closable="!creatingIForm"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="名称">
+          <n-input
+            v-model:value="quickIFormForm.name"
+            placeholder="示例：战斗地图 / 音乐播放器"
+          />
+        </n-form-item>
+        <n-form-item label="URL">
+          <n-input
+            v-model:value="quickIFormForm.url"
+            placeholder="https://example.com"
+          />
+        </n-form-item>
+        <n-form-item label="嵌入代码">
+          <n-input
+            type="textarea"
+            v-model:value="quickIFormForm.embedCode"
+            placeholder="可选：粘贴 iframe 代码"
+            :rows="3"
+          />
+        </n-form-item>
+        <n-form-item label="默认尺寸">
+          <div style="display: flex; gap: 0.5rem; width: 100%;">
+            <n-input-number v-model:value="quickIFormForm.defaultWidth" :min="120" :step="10" style="flex: 1;" placeholder="宽度" />
+            <n-input-number v-model:value="quickIFormForm.defaultHeight" :min="72" :step="10" style="flex: 1;" placeholder="高度" />
+          </div>
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <n-button :disabled="creatingIForm" @click="quickIFormModalShow = false">取消</n-button>
+          <n-button type="primary" :loading="creatingIForm" @click="confirmQuickIFormCreate">创建并插入</n-button>
         </div>
       </template>
     </n-modal>

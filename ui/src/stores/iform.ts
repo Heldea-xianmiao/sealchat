@@ -544,15 +544,16 @@ export const useIFormStore = defineStore('iform', {
       }
       return this.floatingByChannel[channelId]?.[windowId];
     },
-    async createForm(payload: Partial<ChannelIForm> & { name: string }) {
+    async createForm(payload: Partial<ChannelIForm> & { name: string }): Promise<ChannelIForm | undefined> {
       const channelId = this.currentChannelId;
       if (!channelId) {
         throw new Error('未选择频道');
       }
       this.saving = true;
       try {
-        await api.post(`api/v1/channels/${channelId}/iforms`, payload);
+        const { data } = await api.post<{ item?: ChannelIForm }>(`api/v1/channels/${channelId}/iforms`, payload);
         await this.ensureForms(channelId, true);
+        return data?.item;
       } finally {
         this.saving = false;
       }

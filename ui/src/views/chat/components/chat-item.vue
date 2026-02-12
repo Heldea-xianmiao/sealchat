@@ -7,6 +7,7 @@ import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
+import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
@@ -24,9 +25,12 @@ import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
+import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { chatEvent } from '@/stores/chat'
 import CharacterCardBadge from './CharacterCardBadge.vue'
 import MessageReactions from './MessageReactions.vue'
+import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import type { ChannelIForm } from '@/types/iform';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -42,6 +46,7 @@ type EditingPreviewInfo = {
 
 const user = useUserStore();
 const chat = useChatStore();
+const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
 const worldGlossary = useWorldGlossaryStore();
@@ -81,8 +86,66 @@ let inlineImageViewer: Viewer | null = null;
 
 const diceChipHtmlPattern = /<span[^>]*class="[^"]*dice-chip[^"]*"/i;
 
+const MESSAGE_IFORM_MIN_WIDTH = 120;
+const MESSAGE_IFORM_MIN_HEIGHT = 72;
+const MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE = 480;
+
+const resolveSingleIFormLinkFromContent = (content: string) => {
+  let singleIFormLink = parseSingleIFormEmbedLinkText(content);
+  if (!singleIFormLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleIFormLink = parseSingleIFormEmbedLinkText(plainText);
+  }
+  return singleIFormLink;
+};
+
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  const singleIFormLink = resolveSingleIFormLinkFromContent(content);
+  if (singleIFormLink) {
+    const targetChannelForms = singleIFormLink.channelId
+      ? (iFormStore.formsByChannel[singleIFormLink.channelId] || [])
+      : [];
+    const matchedForm = targetChannelForms.find((item) => item.id === singleIFormLink.formId);
+    const width = Math.max(
+      MESSAGE_IFORM_MIN_WIDTH,
+      Math.round(singleIFormLink.width || matchedForm?.defaultWidth || 640),
+    );
+    const height = Math.max(
+      MESSAGE_IFORM_MIN_HEIGHT,
+      Math.round(singleIFormLink.height || matchedForm?.defaultHeight || 360),
+    );
+    const runtimeForm: ChannelIForm = {
+      id: singleIFormLink.formId,
+      channelId: singleIFormLink.channelId,
+      name: matchedForm?.name || '消息嵌入窗',
+      url: matchedForm?.url,
+      embedCode: matchedForm?.embedCode,
+      defaultWidth: width,
+      defaultHeight: height,
+      defaultCollapsed: false,
+      defaultFloating: false,
+      allowPopout: false,
+      orderIndex: 0,
+      mediaOptions: matchedForm?.mediaOptions,
+    };
+    return h(
+      'div',
+      {
+        class: 'message-iform-embed',
+        'data-iform-link': singleIFormLink.rawLink,
+        'data-message-id': payload?.id || '',
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          minWidth: `${MESSAGE_IFORM_MIN_WIDTH}px`,
+          minHeight: `${MESSAGE_IFORM_MIN_HEIGHT}px`,
+        },
+      },
+      [h(IFormEmbedFrame, { form: runtimeForm })],
+    );
+  }
 
   // 检测是否为 TipTap JSON 格式
   if (isTipTapJson(content)) {
@@ -199,6 +262,176 @@ const parseContent = (payload: any, overrideContent?: string) => {
     })}
   </span>
 }
+
+
+let messageIFormResizeObserver: ResizeObserver | null = null;
+let messageIFormResizePersistTimer: ReturnType<typeof setTimeout> | null = null;
+let messageIFormPersistInFlight = false;
+let messageIFormQueuedSize: { width: number; height: number } | null = null;
+let messageIFormLastSyncKey = '';
+let messageIFormResizePointerActive = false;
+
+const cleanupMessageIFormResizeSync = () => {
+  if (messageIFormResizeObserver) {
+    messageIFormResizeObserver.disconnect();
+    messageIFormResizeObserver = null;
+  }
+  if (messageIFormResizePersistTimer) {
+    clearTimeout(messageIFormResizePersistTimer);
+    messageIFormResizePersistTimer = null;
+  }
+  messageIFormQueuedSize = null;
+  messageIFormResizePointerActive = false;
+};
+
+const resolveMessageUpdateOptions = () => {
+  const tone = props.tone;
+  if (tone === 'ic' || tone === 'ooc') {
+    return { icMode: tone as 'ic' | 'ooc' };
+  }
+  return undefined;
+};
+
+const persistMessageIFormSize = async (width: number, height: number) => {
+  const item = props.item as any;
+  const messageId = item?.id;
+  const channelId = item?.channel?.id || item?.channelId || chat.curChannel?.id;
+  if (!messageId || !channelId) {
+    return;
+  }
+  if (!canEdit.value) {
+    return;
+  }
+
+  const singleIFormLink = resolveSingleIFormLinkFromContent(displayContent.value || '');
+  if (!singleIFormLink) {
+    return;
+  }
+
+  const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(width));
+  const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(height));
+  const currentLinkWidth = singleIFormLink.width ? Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(singleIFormLink.width)) : undefined;
+  const currentLinkHeight = singleIFormLink.height ? Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(singleIFormLink.height)) : undefined;
+  if (typeof currentLinkWidth === 'number' && typeof currentLinkHeight === 'number') {
+    if (Math.abs(nextWidth - currentLinkWidth) < 2 && Math.abs(nextHeight - currentLinkHeight) < 2) {
+      return;
+    }
+  }
+
+  const nextLink = updateIFormEmbedLinkSize(singleIFormLink.rawLink, nextWidth, nextHeight);
+  if (!nextLink || nextLink === singleIFormLink.rawLink) {
+    return;
+  }
+
+  const syncKey = `${messageId}:${nextLink}`;
+  if (syncKey === messageIFormLastSyncKey) {
+    return;
+  }
+
+  if (messageIFormPersistInFlight) {
+    messageIFormQueuedSize = { width: nextWidth, height: nextHeight };
+    return;
+  }
+
+  messageIFormPersistInFlight = true;
+  try {
+    const options = resolveMessageUpdateOptions();
+    await chat.messageUpdate(channelId, messageId, nextLink, options);
+    messageIFormLastSyncKey = syncKey;
+  } catch (error) {
+    console.error('同步消息 iForm 尺寸失败', error);
+  } finally {
+    messageIFormPersistInFlight = false;
+    if (messageIFormQueuedSize) {
+      const queuedSize = messageIFormQueuedSize;
+      messageIFormQueuedSize = null;
+      if (queuedSize.width !== nextWidth || queuedSize.height !== nextHeight) {
+        void persistMessageIFormSize(queuedSize.width, queuedSize.height);
+      }
+    }
+  }
+};
+
+const schedulePersistMessageIFormSize = (width: number, height: number) => {
+  if (messageIFormResizePersistTimer) {
+    clearTimeout(messageIFormResizePersistTimer);
+  }
+  messageIFormResizePersistTimer = setTimeout(() => {
+    void persistMessageIFormSize(width, height);
+  }, MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE);
+};
+
+const resetMessageIFormSyncBaseline = () => {
+  const item = props.item as any;
+  const messageId = item?.id || '';
+  const singleIFormLink = resolveSingleIFormLinkFromContent(displayContent.value || '');
+  messageIFormLastSyncKey = messageId && singleIFormLink
+    ? `${messageId}:${singleIFormLink.rawLink}`
+    : '';
+};
+
+const setupMessageIFormResizeSync = () => {
+  cleanupMessageIFormResizeSync();
+  const host = messageContentRef.value;
+  if (!host || typeof ResizeObserver === 'undefined') {
+    return;
+  }
+  const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
+  if (!embedEl) {
+    return;
+  }
+  messageIFormResizeObserver = new ResizeObserver((entries) => {
+    if (!messageIFormResizePointerActive) {
+      return;
+    }
+    const entry = entries[0];
+    if (!entry) {
+      return;
+    }
+    const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(entry.contentRect.width));
+    const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(entry.contentRect.height));
+    schedulePersistMessageIFormSize(nextWidth, nextHeight);
+  });
+  messageIFormResizeObserver.observe(embedEl);
+};
+
+
+const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
+  if (!canEdit.value) {
+    return;
+  }
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest('.message-iform-embed')) {
+    return;
+  }
+  messageIFormResizePointerActive = true;
+};
+
+const flushMessageIFormSizeFromDom = () => {
+  const host = messageContentRef.value;
+  if (!host) {
+    return;
+  }
+  const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
+  if (!embedEl) {
+    return;
+  }
+  const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(embedEl.getBoundingClientRect().width));
+  const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(embedEl.getBoundingClientRect().height));
+  schedulePersistMessageIFormSize(nextWidth, nextHeight);
+};
+
+const handleMessageIFormPointerUp = () => {
+  if (!messageIFormResizePointerActive) {
+    return;
+  }
+  flushMessageIFormSizeFromDom();
+  messageIFormResizePointerActive = false;
+};
+
+const resetMessageIFormPointerState = () => {
+  messageIFormResizePointerActive = false;
+};
 
 const destroyImageViewer = () => {
   if (inlineImageViewer) {
@@ -1473,6 +1706,10 @@ onMounted(() => {
   if (isMobileUa) {
     document.addEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  window.addEventListener('pointerup', handleMessageIFormPointerUp, true);
+  window.addEventListener('mouseup', handleMessageIFormPointerUp, true);
+  window.addEventListener('pointercancel', resetMessageIFormPointerState, true);
+  window.addEventListener('blur', resetMessageIFormPointerState);
 })
 
 watch([displayContent, () => props.tone], () => {
@@ -1480,6 +1717,10 @@ watch([displayContent, () => props.tone], () => {
   ensureImageViewer();
   processMessageLinks();
   processStateTextWidgets();
+  resetMessageIFormSyncBaseline();
+  nextTick(() => {
+    setupMessageIFormResizeSync();
+  });
 }, { immediate: true });
 
 watch(() => (props.item as any)?.widgetData, (newData) => {
@@ -1551,6 +1792,11 @@ onBeforeUnmount(() => {
   if (isMobileUa) {
     document.removeEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  window.removeEventListener('pointerup', handleMessageIFormPointerUp, true);
+  window.removeEventListener('mouseup', handleMessageIFormPointerUp, true);
+  window.removeEventListener('pointercancel', resetMessageIFormPointerState, true);
+  window.removeEventListener('blur', resetMessageIFormPointerState);
+  cleanupMessageIFormResizeSync();
   destroyImageViewer();
   keywordTooltipInstance.hideAll()
   keywordTooltipInstance.destroy()
@@ -1688,7 +1934,7 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick"
+      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
         <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">
@@ -2554,6 +2800,52 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 .state-text-widget--active:hover {
   background-color: rgba(64, 152, 252, 0.18);
   border-bottom-style: solid;
+}
+
+.message-iform-embed {
+  position: relative;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.08)) 88%, transparent);
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 88%, transparent);
+  resize: both;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.message-iform-embed::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.message-iform-embed::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.message-iform-embed:hover {
+  scrollbar-color: color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.24)) 85%, transparent) transparent;
+}
+
+.message-iform-embed:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.24)) 85%, transparent);
+}
+
+.message-iform-embed :deep(.iform-frame) {
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-iform-embed :deep(.iform-frame__iframe),
+.message-iform-embed :deep(.iform-frame__html) {
+  border-radius: 10px;
+}
+
+:root[data-display-palette='night'] .message-iform-embed {
+  border-color: color-mix(in srgb, var(--chat-border-mute, rgba(148, 163, 184, 0.35)) 85%, transparent);
+  background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.45)) 75%, transparent);
 }
 
 .state-text-widget--active:active {

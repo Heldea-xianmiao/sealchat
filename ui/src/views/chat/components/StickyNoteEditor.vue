@@ -4,6 +4,11 @@ import type { Editor } from '@tiptap/vue-3';
 import { Spoiler } from '@/utils/tiptap-spoiler';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { useMessage } from 'naive-ui';
+import { useChatStore } from '@/stores/chat';
+import { useIFormStore } from '@/stores/iform';
+import { useUtilsStore } from '@/stores/utils';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { copyTextWithFallback } from '@/utils/clipboard';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -24,12 +29,78 @@ const emit = defineEmits<{
 }>();
 
 const message = useMessage();
+const chat = useChatStore();
+const iFormStore = useIFormStore();
+const utils = useUtilsStore();
+iFormStore.bootstrap();
+
 const editor = shallowRef<Editor | null>(null);
 const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
 const isUploading = ref(false);
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const defaultIFormEmbedLink = computed(() => {
+  const channelId = (props.channelId || '').trim();
+  const worldId = (chat.currentWorldId || '').trim();
+  if (!channelId || !worldId) {
+    return '';
+  }
+  const firstForm = iFormStore.formsByChannel[channelId]?.[0];
+  if (!firstForm?.id) {
+    return '';
+  }
+  return generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: firstForm.id,
+      width: firstForm.defaultWidth,
+      height: firstForm.defaultHeight,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  );
+});
+
+const insertIFormEmbedLink = () => {
+  const link = defaultIFormEmbedLink.value;
+  if (!link || !editor.value) {
+    message.warning('当前频道暂无可插入 iForm');
+    return;
+  }
+  editor.value.chain().focus().insertContent(link).run();
+};
+
+const copyIFormEmbedLink = async () => {
+  const link = defaultIFormEmbedLink.value;
+  if (!link) {
+    message.warning('当前频道暂无可复制 iForm');
+    return;
+  }
+  const copied = await copyTextWithFallback(link);
+  if (copied) {
+    message.success('iForm 嵌入链接已复制');
+  } else {
+    message.error('复制失败');
+  }
+};
 
 // 颜色选择器状态
 const highlightColorPopoverShow = ref(false);
@@ -446,6 +517,22 @@ defineExpose({
           :title="isActive('link') ? '移除链接' : '插入链接'"
         >
           🔗
+        </button>
+        <button
+          class="sticky-note-editor__btn"
+          :disabled="!defaultIFormEmbedLink"
+          @click="copyIFormEmbedLink"
+          :title="defaultIFormEmbedLink ? '复制首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+        >
+          ⧉
+        </button>
+        <button
+          class="sticky-note-editor__btn"
+          :disabled="!defaultIFormEmbedLink"
+          @click="insertIFormEmbedLink"
+          :title="defaultIFormEmbedLink ? '插入首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+        >
+          ↘
         </button>
         <button
           class="sticky-note-editor__btn"

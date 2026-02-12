@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
+  defaultIFormEmbedLink?: string
 }>(), {
   modelValue: '',
   mode: 'plain',
@@ -33,6 +34,7 @@ const props = withDefaults(defineProps<{
   rows: 1,
   inputClass: () => [],
   inlineImages: () => ({}),
+  defaultIFormEmbedLink: '',
 });
 
 const emit = defineEmits<{
@@ -239,6 +241,7 @@ defineExpose({
     :rows="rows"
     :input-class="inputClass"
     :inline-images="inlineImages"
+    :default-i-form-embed-link="defaultIFormEmbedLink"
     @mention-search="handleSearch"
     @mention-select="handleSelect"
     @keydown="handleKeydown"
