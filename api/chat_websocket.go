@@ -691,6 +691,9 @@ func websocketWorks(app *fiber.App) {
 					case "character.list":
 						apiCharacterList(ctx, msg)
 						solved = true
+					case "character.capability.test":
+						apiCharacterCapabilityTest(ctx, msg)
+						solved = true
 					case "character.new":
 						apiCharacterNew(ctx, msg)
 						solved = true

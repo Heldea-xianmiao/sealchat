@@ -37,11 +37,11 @@ const (
 
 // characterRequestTimeout is the timeout for character API requests
 const (
-	characterRequestTimeout     = 5 * time.Second
-	botCharacterProbeTimeout    = characterRequestTimeout
+	characterRequestTimeout      = 5 * time.Second
+	botCharacterProbeTimeout     = characterRequestTimeout
 	botCharacterProbeMaxAttempts = 3
 	botCharacterProbeRetryDelay  = 2 * time.Second
-	botCharacterUnsupportedText = "当前BOT不支持人物卡API、未开启或未启用。"
+	botCharacterUnsupportedText  = "当前BOT不支持人物卡API、未开启或未启用。"
 )
 
 // apiCharacterGet handles character.get requests
@@ -152,6 +152,68 @@ func apiCharacterList(ctx *ChatContext, msg []byte) {
 	}
 
 	sendCharacterResponse(ctx, data.Echo, resp)
+}
+
+// apiCharacterCapabilityTest force tests BOT character API capability for a channel.
+func apiCharacterCapabilityTest(ctx *ChatContext, msg []byte) {
+	data := struct {
+		Echo string `json:"echo"`
+		Data struct {
+			GroupID string `json:"group_id"`
+			UserID  string `json:"user_id"`
+		} `json:"data"`
+	}{}
+	if err := json.Unmarshal(msg, &data); err != nil {
+		sendCharacterError(ctx, data.Echo, "请求解析失败")
+		return
+	}
+
+	channelID := resolveCharacterChannelID(ctx, data.Data.GroupID)
+	if channelID == "" {
+		sendCharacterError(ctx, data.Echo, "缺少频道ID")
+		return
+	}
+
+	botConn, botInfo, err := findBotConnectionForChannel(ctx, channelID)
+	if err != nil {
+		sendCharacterError(ctx, data.Echo, err.Error())
+		return
+	}
+
+	userID := strings.TrimSpace(data.Data.UserID)
+	if userID == "" && ctx != nil && ctx.User != nil {
+		userID = strings.TrimSpace(ctx.User.ID)
+	}
+
+	payload := map[string]any{
+		"group_id": channelID,
+	}
+	if userID != "" {
+		payload["user_id"] = userID
+	}
+
+	echo := "bot-cap-test-" + utils.NewID()
+	resp := forwardCharacterRequestWithTimeout(botConn, "character.list", echo, payload, botCharacterProbeTimeout)
+	if resp == nil {
+		botInfo.BotCharacterSupport = BotCharacterSupportNo
+		botInfo.BotCharacterProbeFail++
+		botInfo.BotCharacterProbeOn = false
+		sendCharacterError(ctx, data.Echo, "请求超时")
+		return
+	}
+
+	if ok, errMsg := parseCharacterCapabilityProbeResult(resp); !ok {
+		botInfo.BotCharacterSupport = BotCharacterSupportNo
+		botInfo.BotCharacterProbeFail++
+		botInfo.BotCharacterProbeOn = false
+		sendCharacterError(ctx, data.Echo, errMsg)
+		return
+	}
+
+	botInfo.BotCharacterSupport = BotCharacterSupportYes
+	botInfo.BotCharacterProbeFail = 0
+	botInfo.BotCharacterProbeOn = false
+	sendCharacterResponse(ctx, data.Echo, json.RawMessage(`{"ok":true}`))
 }
 
 // findBotConnectionForChannel finds a BOT WebSocket connection for a specific channel
@@ -347,6 +409,56 @@ func startBotCharacterCapabilityProbe(info *ConnInfo) {
 		}
 		info.BotCharacterProbeOn = false
 	}()
+}
+
+func parseCharacterCapabilityProbeResult(resp json.RawMessage) (bool, string) {
+	if len(resp) == 0 {
+		return false, "响应为空"
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(resp, &payload); err != nil {
+		// Received a response from bot but format is not standard; treat as supported.
+		return true, ""
+	}
+	rawOk, hasOk := payload["ok"]
+	if !hasOk {
+		return true, ""
+	}
+	ok, parsed := parseBoolean(rawOk)
+	if !parsed {
+		return true, ""
+	}
+	if ok {
+		return true, ""
+	}
+	errMsg, _ := payload["error"].(string)
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		errMsg = "人物卡API测试失败"
+	}
+	return false, normalizeCharacterErr(errMsg)
+}
+
+func parseBoolean(value any) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1":
+			return true, true
+		case "false", "0":
+			return false, true
+		}
+	case float64:
+		if v == 1 {
+			return true, true
+		}
+		if v == 0 {
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // forwardCharacterRequest forwards a character API request to a BOT
