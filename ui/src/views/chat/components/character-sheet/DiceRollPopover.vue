@@ -17,7 +17,13 @@
 
           <div class="popover-body">
             <div class="popover-template">
-              <span class="template-preview">{{ previewExpression }}</span>
+              <label class="template-label">掷骰公式（可手动修正）</label>
+              <n-input
+                v-model:value="manualExpression"
+                size="small"
+                class="template-input"
+                placeholder="手动编辑掷骰公式"
+              />
             </div>
 
             <div class="popover-mode">
@@ -73,7 +79,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { NButton, NInputNumber } from 'naive-ui';
+import { NButton, NInput, NInputNumber } from 'naive-ui';
+import { buildRollExpression } from './rollExpression';
 
 const props = defineProps<{
   visible: boolean;
@@ -92,9 +99,10 @@ const emit = defineEmits<{
 
 const mode = ref<'normal' | 'adv' | 'dis'>('normal');
 const modifier = ref(0);
+const manualExpression = ref('');
 
 const POPUP_WIDTH = 280;
-const POPUP_HEIGHT = 220;
+const POPUP_HEIGHT = 260;
 const POPUP_PADDING = 8;
 
 const clamp = (value: number, min: number, max: number) => {
@@ -138,36 +146,20 @@ const popoverStyle = computed(() => {
   };
 });
 
-const previewExpression = computed(() => {
-  let expr = props.template || '';
-  const args = props.args || {};
-  for (const [key, value] of Object.entries(args)) {
-    expr = expr.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
-  }
-  const trimmed = expr.trim();
-  const match = trimmed.match(/^(\\.[^\\s]+)\\s*(.*)$/);
-  const command = match ? match[1] : '.ra';
-  let body = match ? match[2] : trimmed;
-  const bodyTrimmed = body.trim();
-  const commandPrefix = `${command} `;
-  if (bodyTrimmed.startsWith(commandPrefix)) {
-    body = bodyTrimmed.slice(commandPrefix.length);
-  } else if (bodyTrimmed === command) {
-    body = '';
-  }
-  const modText = modifier.value === 0 ? '' : `${modifier.value > 0 ? '+' : ''}${modifier.value}`;
-  body = body.trim();
-  const bodyWithMod = body && modText ? `${body}${modText}` : body;
-  const modeToken = mode.value === 'adv' ? 'b' : mode.value === 'dis' ? 'p' : '';
-  if (!bodyWithMod) {
-    const commandWithMod = `${command}${modText}`;
-    return modeToken ? `${commandWithMod} ${modeToken}` : commandWithMod;
-  }
-  return modeToken ? `${command} ${modeToken} ${bodyWithMod}` : `${command} ${bodyWithMod}`;
+const previewExpression = computed(() =>
+  buildRollExpression(props.template, props.args, {
+    mode: mode.value,
+    modifier: modifier.value,
+  })
+);
+
+watch(previewExpression, (expr) => {
+  manualExpression.value = expr;
 });
 
 const handleConfirm = () => {
-  emit('confirm', previewExpression.value);
+  const expression = manualExpression.value.trim() || previewExpression.value;
+  emit('confirm', expression);
   emit('update:visible', false);
 };
 
@@ -191,6 +183,10 @@ watch(
     if (v) {
       mode.value = 'normal';
       modifier.value = 0;
+      manualExpression.value = buildRollExpression(props.template, props.args, {
+        mode: 'normal',
+        modifier: 0,
+      });
     }
   }
 );
@@ -267,13 +263,21 @@ onBeforeUnmount(() => {
 }
 
 .popover-template {
-  padding: 8px 12px;
+  padding: 8px 10px;
   background: var(--sc-bg-input, #f3f4f6);
   border-radius: 8px;
+}
+
+.template-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--sc-text-secondary, #6b7280);
+}
+
+.template-input :deep(.n-input__input-el) {
   font-family: 'SF Mono', monospace;
   font-size: 13px;
-  color: var(--sc-text-primary, #1f2937);
-  word-break: break-all;
 }
 
 .popover-mode {

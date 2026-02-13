@@ -19,6 +19,7 @@ export interface SealChatEventPayload {
     template: string;
     label?: string;
     args?: Record<string, any>;
+    dispatchMode?: 'default' | 'template';
     rect?: { top: number; left: number; width: number; height: number };
     containerRect?: { top: number; left: number; width: number; height: number };
   };

@@ -259,6 +259,13 @@ const getGenericDefaultTemplate = () => `<!DOCTYPE html>
   <div id="content"></div>
   <script>
     var _windowId = null;
+    var _rollDispatchMode = 'default';
+    function normalizeRollDispatchMode(mode) {
+      return mode === 'template' ? 'template' : 'default';
+    }
+    function withRollDispatchMode(roll) {
+      return Object.assign({}, roll || {}, { dispatchMode: _rollDispatchMode });
+    }
     function escapeHtml(text) {
       var div = document.createElement('div');
       div.textContent = text;
@@ -284,8 +291,18 @@ const getGenericDefaultTemplate = () => `<!DOCTYPE html>
           }
         });
       },
+      setRollDispatchMode: function(mode) {
+        _rollDispatchMode = normalizeRollDispatchMode(mode);
+      },
+      setRollMode: function(mode) {
+        _rollDispatchMode = normalizeRollDispatchMode(mode);
+      },
+      // 示例：启用模板内直发掷骰（跳过默认掷骰窗口）
+      // window.sealchat.setRollDispatchMode('template');
       roll: function(template, label, args) {
-        postEvent('ROLL_DICE', { roll: { template: template, label: label || '', args: args || {} } });
+        postEvent('ROLL_DICE', {
+          roll: withRollDispatchMode({ template: template, label: label || '', args: args || {} })
+        });
       },
       updateAttrs: function(attrs) {
         postEvent('UPDATE_ATTRS', { attrs: attrs });
@@ -393,12 +410,12 @@ const getGenericDefaultTemplate = () => `<!DOCTYPE html>
             args = { skill: target.dataset.skill };
           }
           postEvent('ROLL_DICE', {
-            roll: {
+            roll: withRollDispatchMode({
               template: target.dataset.roll,
               label: target.dataset.label || target.innerText || '',
               args: args,
               rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-            }
+            })
           });
           return;
         }
@@ -635,6 +652,15 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
 
   <script>
     var _windowId = null;
+    var _rollDispatchMode = 'default';
+
+    function normalizeRollDispatchMode(mode) {
+      return mode === 'template' ? 'template' : 'default';
+    }
+
+    function withRollDispatchMode(roll) {
+      return Object.assign({}, roll || {}, { dispatchMode: _rollDispatchMode });
+    }
 
     // 工具函数
     function escapeHtml(text) {
@@ -664,6 +690,22 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
             cb(e.data.payload);
           }
         });
+      },
+      setRollDispatchMode: function(mode) {
+        _rollDispatchMode = normalizeRollDispatchMode(mode);
+      },
+      setRollMode: function(mode) {
+        _rollDispatchMode = normalizeRollDispatchMode(mode);
+      },
+      // 示例：启用模板内直发掷骰（跳过默认掷骰窗口）
+      // window.sealchat.setRollDispatchMode('template');
+      roll: function(template, label, args) {
+        postEvent('ROLL_DICE', {
+          roll: withRollDispatchMode({ template: template, label: label || '', args: args || {} })
+        });
+      },
+      updateAttrs: function(attrs) {
+        postEvent('UPDATE_ATTRS', { attrs: attrs });
       },
     };
 
@@ -839,12 +881,12 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
         if (target.dataset && target.dataset.roll) {
           var rect = target.getBoundingClientRect();
           postEvent('ROLL_DICE', {
-            roll: {
+            roll: withRollDispatchMode({
               template: target.dataset.roll,
               label: target.innerText || target.dataset.skill,
               args: { skill: target.dataset.skill },
               rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
-            }
+            })
           });
           return;
         }

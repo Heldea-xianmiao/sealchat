@@ -40,6 +40,7 @@ import CharacterSheetWindow from './CharacterSheetWindow.vue';
 import CharacterSheetBubble from './CharacterSheetBubble.vue';
 import DiceRollPopover from './DiceRollPopover.vue';
 import type { SealChatEventPayload } from './IframeSandbox.vue';
+import { buildRollExpression } from './rollExpression';
 
 const sheetStore = useCharacterSheetStore();
 const chatStore = useChatStore();
@@ -55,8 +56,17 @@ const expandedWindowIds = computed(() =>
   sheetStore.activeWindowIds.filter(id => !sheetStore.windows[id]?.isMinimized)
 );
 
+const executeRollDirectly = (payload: SealChatEventPayload['roll']) => {
+  const expression = buildRollExpression(payload?.template || '', payload?.args);
+  executeRoll(expression);
+};
+
 const handleRollRequest = (payload: SealChatEventPayload['roll']) => {
   if (!payload) return;
+  if (payload.dispatchMode === 'template') {
+    executeRollDirectly(payload);
+    return;
+  }
   pendingRoll.value = payload;
   popoverVisible.value = true;
 };
