@@ -3321,14 +3321,23 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		}
 	}
 
-	// Permission check: sender / @mentioned / admin
+	var widgetEntries []service.StateWidgetEntry
+	if err := json.Unmarshal([]byte(msg.WidgetData), &widgetEntries); err != nil {
+		return nil, fmt.Errorf("invalid widget data: %w", err)
+	}
+	if data.WidgetIndex < 0 || data.WidgetIndex >= len(widgetEntries) {
+		return nil, fmt.Errorf("widget_index %d out of range [0, %d)", data.WidgetIndex, len(widgetEntries))
+	}
+	targetWidget := widgetEntries[data.WidgetIndex]
+
+	// Permission check: sender / @mentioned / @all / admin / widget editable_scope=all
 	allowed := msg.UserID == ctx.User.ID
 	if !allowed {
 		root := protocol.ElementParse(msg.Content)
 		if root != nil {
 			root.Traverse(func(el *protocol.Element) {
 				if el.Type == "at" {
-					if id, ok := el.Attrs["id"].(string); ok && id == ctx.User.ID {
+					if id, ok := el.Attrs["id"].(string); ok && (id == ctx.User.ID || id == "all") {
 						allowed = true
 					}
 				}
@@ -3345,6 +3354,9 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		if role == model.WorldRoleOwner || role == model.WorldRoleAdmin {
 			allowed = true
 		}
+	}
+	if !allowed {
+		allowed = strings.EqualFold(strings.TrimSpace(targetWidget.EditableScope), "all")
 	}
 	if !allowed {
 		return nil, fmt.Errorf("forbidden")

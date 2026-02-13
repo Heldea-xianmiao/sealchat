@@ -11,12 +11,13 @@ import (
 )
 
 type StateWidgetEntry struct {
-	Type    string   `json:"type"`
-	Options []string `json:"options"`
-	Index   int      `json:"index"`
+	Type          string   `json:"type"`
+	Options       []string `json:"options"`
+	Index         int      `json:"index"`
+	EditableScope string   `json:"editable_scope,omitempty"`
 }
 
-var stateWidgetPattern = regexp.MustCompile(`\[([^\[\]\|]+(?:\|[^\[\]\|]+)+)\]`)
+var stateWidgetPattern = regexp.MustCompile(`(@?)\[([^\[\]\|]+(?:\|[^\[\]\|]+)+)\]`)
 
 // BuildStateWidgetDataFromContent parses content for [opt1|opt2|opt3] patterns
 // in text nodes only, returning JSON string or empty string if none found.
@@ -117,7 +118,13 @@ func appendStateWidgetEntriesFromText(text string, entries *[]StateWidgetEntry) 
 			continue
 		}
 
-		inner := text[loc[2]:loc[3]]
+		inner := text[loc[4]:loc[5]]
+		editableScope := ""
+		if loc[2] >= 0 && loc[3] > loc[2] {
+			if text[loc[2]:loc[3]] == "@" {
+				editableScope = "all"
+			}
+		}
 		parts := strings.Split(inner, "|")
 		var opts []string
 		for _, p := range parts {
@@ -130,11 +137,15 @@ func appendStateWidgetEntriesFromText(text string, entries *[]StateWidgetEntry) 
 			continue
 		}
 
-		*entries = append(*entries, StateWidgetEntry{
+		entry := StateWidgetEntry{
 			Type:    "state",
 			Options: opts,
 			Index:   0,
-		})
+		}
+		if editableScope != "" {
+			entry.EditableScope = editableScope
+		}
+		*entries = append(*entries, entry)
 	}
 }
 
