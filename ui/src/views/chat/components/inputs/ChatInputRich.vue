@@ -958,7 +958,7 @@ defineExpose({
                 ◫
               </n-button>
             </template>
-            插入三段状态文本：`[选项1|选项2|选项3]`（全员可改：`@[选项1|选项2|选项3]`）
+            插入三段状态文本：`[选项1|选项2|选项3]`
           </n-tooltip>
           <n-tooltip trigger="hover">
             <template #trigger>

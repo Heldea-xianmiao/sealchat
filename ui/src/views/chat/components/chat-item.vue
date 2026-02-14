@@ -1878,7 +1878,7 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
   }
 };
 
-const STATE_WIDGET_REGEX = /@?\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
+const STATE_WIDGET_REGEX = /\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
 
 type StateWidgetTextSegment = {
   node: Text;
@@ -1899,13 +1899,6 @@ type StateWidgetRenderItem = {
   to: number;
   keepText?: string;
   widgetIndex?: number;
-};
-
-type StateWidgetEntry = {
-  type: string;
-  options: string[];
-  index: number;
-  editable_scope?: string;
 };
 
 const collectStateWidgetTextSegments = (host: HTMLElement): StateWidgetTextSegment[] => {
@@ -1948,7 +1941,7 @@ const collectStateWidgetRanges = (fullText: string): StateWidgetRange[] => {
 const buildStateWidgetRenderMap = (
   segments: StateWidgetTextSegment[],
   ranges: StateWidgetRange[],
-  entries: StateWidgetEntry[],
+  entries: Array<{ type: string; options: string[]; index: number }>,
 ): Map<Text, StateWidgetRenderItem[]> => {
   const renderMap = new Map<Text, StateWidgetRenderItem[]>();
   const pushItem = (node: Text, item: StateWidgetRenderItem) => {
@@ -2003,7 +1996,7 @@ const processStateTextWidgets = () => {
     const item = props.item as any;
     if (!item?.widgetData) return;
 
-    let entries: StateWidgetEntry[];
+    let entries: Array<{ type: string; options: string[]; index: number }>;
     try {
       entries = typeof item.widgetData === 'string' ? JSON.parse(item.widgetData) : item.widgetData;
     } catch { return; }
@@ -2018,7 +2011,7 @@ const processStateTextWidgets = () => {
       const atRegex = /<at\s[^>]*id="([^"]*)"[^>]*\/?>/g;
       let m: RegExpExecArray | null;
       while ((m = atRegex.exec(content)) !== null) {
-        if (m[1] === userId || m[1] === 'all') { isMentioned = true; break; }
+        if (m[1] === userId) { isMentioned = true; break; }
       }
     }
     let isAdmin = false;
@@ -2031,7 +2024,7 @@ const processStateTextWidgets = () => {
         isAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === userId;
       }
     }
-    const canInteractByRole = isSender || isMentioned || isAdmin;
+    const canInteract = isSender || isMentioned || isAdmin;
 
     const segments = collectStateWidgetTextSegments(host);
     if (!segments.length) {
@@ -2072,7 +2065,6 @@ const processStateTextWidgets = () => {
         }
 
         const entry = entries[widgetIdx];
-        const canInteract = canInteractByRole || entry.editable_scope === 'all';
 
         const span = document.createElement('span');
         span.className = 'state-text-widget' + (canInteract ? ' state-text-widget--active' : '');
@@ -2441,7 +2433,7 @@ watch(() => (props.item as any)?.widgetData, (newData) => {
   nextTick(() => {
     const host = messageContentRef.value;
     if (!host || !newData) return;
-    let entries: StateWidgetEntry[];
+    let entries: Array<{ type: string; options: string[]; index: number }>;
     try {
       entries = typeof newData === 'string' ? JSON.parse(newData) : newData;
     } catch { return; }

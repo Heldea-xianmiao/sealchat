@@ -68,45 +68,6 @@ func TestBuildStateWidgetDataFromContent(t *testing.T) {
 	}
 }
 
-func TestBuildStateWidgetDataFromContentEditableScope(t *testing.T) {
-	tests := []struct {
-		name      string
-		content   string
-		wantN     int
-		wantScope []string
-	}{
-		{name: "editable scope all", content: "@[待办|完成]", wantN: 1, wantScope: []string{"all"}},
-		{name: "default scope", content: "[待办|完成]", wantN: 1, wantScope: []string{""}},
-		{name: "mixed scope", content: "普通 [A|B] 和 @[X|Y]", wantN: 2, wantScope: []string{"", "all"}},
-		{name: "editable scope markdown link skip", content: "@[A|B](https://example.com)", wantN: 0, wantScope: nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := BuildStateWidgetDataFromContent(tt.content)
-			if tt.wantN == 0 {
-				if result != "" {
-					t.Fatalf("expected empty, got %q", result)
-				}
-				return
-			}
-
-			var entries []StateWidgetEntry
-			if err := json.Unmarshal([]byte(result), &entries); err != nil {
-				t.Fatalf("invalid JSON: %v", err)
-			}
-			if len(entries) != tt.wantN {
-				t.Fatalf("expected %d entries, got %d", tt.wantN, len(entries))
-			}
-			for i, entry := range entries {
-				if entry.EditableScope != tt.wantScope[i] {
-					t.Fatalf("entry[%d].EditableScope = %q, want %q", i, entry.EditableScope, tt.wantScope[i])
-				}
-			}
-		})
-	}
-}
-
 func TestRotateWidgetIndex(t *testing.T) {
 	// Setup: 2 widgets, first with 3 options, second with 2
 	initial := `[{"type":"state","options":["A","B","C"],"index":0},{"type":"state","options":["X","Y"],"index":0}]`
