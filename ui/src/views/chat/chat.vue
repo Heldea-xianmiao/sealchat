@@ -1102,7 +1102,6 @@ const handleOpenDisplaySettings = () => {
 
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
-  displaySettingsVisible.value = false;
 };
 
 // Avatar prompt handlers
