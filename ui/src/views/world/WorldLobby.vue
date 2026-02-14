@@ -43,13 +43,13 @@ const isWorldLobbyViewMode = (value: unknown): value is WorldLobbyViewMode => va
 
 const readStoredViewMode = (): WorldLobbyViewMode => {
   if (typeof window === 'undefined') {
-    return 'list';
+    return 'grid';
   }
   try {
     const raw = window.localStorage.getItem(WORLD_VIEW_MODE_STORAGE_KEY);
-    return isWorldLobbyViewMode(raw) ? raw : 'list';
+    return isWorldLobbyViewMode(raw) ? raw : 'grid';
   } catch {
-    return 'list';
+    return 'grid';
   }
 };
 
