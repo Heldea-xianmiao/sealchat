@@ -3321,20 +3321,29 @@ func apiWidgetInteract(ctx *ChatContext, data *struct {
 		}
 	}
 
-	// Permission check: sender / @mentioned / admin
-	allowed := msg.UserID == ctx.User.ID
-	if !allowed {
-		root := protocol.ElementParse(msg.Content)
-		if root != nil {
-			root.Traverse(func(el *protocol.Element) {
-				if el.Type == "at" {
-					if id, ok := el.Attrs["id"].(string); ok && id == ctx.User.ID {
-						allowed = true
-					}
-				}
-			})
-		}
+	// Permission check:
+	// - no @ mention: allow channel/world member with read access (already verified above)
+	// - has @ mention: only sender, mentioned user, or world admin/owner
+	hasMention := false
+	isMentioned := false
+	root := protocol.ElementParse(msg.Content)
+	if root != nil {
+		root.Traverse(func(el *protocol.Element) {
+			if el.Type != "at" {
+				return
+			}
+			id, ok := el.Attrs["id"].(string)
+			if !ok || strings.TrimSpace(id) == "" {
+				return
+			}
+			hasMention = true
+			if id == ctx.User.ID {
+				isMentioned = true
+			}
+		})
 	}
+
+	allowed := !hasMention || msg.UserID == ctx.User.ID || isMentioned
 	if !allowed {
 		channel, _ := model.ChannelGet(msg.ChannelID)
 		worldID := ""

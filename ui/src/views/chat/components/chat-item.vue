@@ -2005,26 +2005,28 @@ const processStateTextWidgets = () => {
     // Permission pre-check
     const userId = user.info.id;
     const isSender = item.user?.id === userId || item.userId === userId || item.user_id === userId;
+    const content = item.content || '';
+    const atRegex = /<at\s[^>]*id="([^"]*)"[^>]*\/?>/g;
+    let hasMention = false;
     let isMentioned = false;
-    if (!isSender) {
-      const content = item.content || '';
-      const atRegex = /<at\s[^>]*id="([^"]*)"[^>]*\/?>/g;
-      let m: RegExpExecArray | null;
-      while ((m = atRegex.exec(content)) !== null) {
-        if (m[1] === userId) { isMentioned = true; break; }
+    let m: RegExpExecArray | null;
+    while ((m = atRegex.exec(content)) !== null) {
+      hasMention = true;
+      if (m[1] === userId) {
+        isMentioned = true;
       }
     }
-    let isAdmin = false;
-    if (!isSender && !isMentioned) {
-      const worldId = chat.currentWorldId;
-      if (worldId) {
-        const detail = chat.worldDetailMap[worldId];
-        const memberRole = detail?.memberRole;
-        const ownerId = detail?.world?.ownerId || chat.worldMap[worldId]?.ownerId;
-        isAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === userId;
-      }
-    }
-    const canInteract = isSender || isMentioned || isAdmin;
+
+    const worldId = chat.currentWorldId;
+    const detail = worldId ? chat.worldDetailMap[worldId] : null;
+    const memberRole = detail?.memberRole;
+    const ownerId = detail?.world?.ownerId || (worldId ? chat.worldMap[worldId]?.ownerId : undefined);
+    const isAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === userId;
+
+    const canDefaultInteract = !chat.observerMode;
+    const canInteract = hasMention
+      ? (isSender || isMentioned || isAdmin)
+      : canDefaultInteract;
 
     const segments = collectStateWidgetTextSegments(host);
     if (!segments.length) {
