@@ -6,7 +6,7 @@ import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
 import { Menu, SettingsSharp, Notifications, NotificationsOff } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
-import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed } from 'vue';
+import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
 import UserProfile from './user-profile.vue'
 import { useI18n } from 'vue-i18n'
@@ -35,6 +35,19 @@ const chat = useChatStore();
 const user = useUserStore();
 const worldGlossary = useWorldGlossaryStore();
 const pushStore = usePushNotificationStore();
+const props = withDefaults(defineProps<{
+  sidebarWidthResizeAvailable?: boolean;
+  sidebarWidthResizeMode?: boolean;
+}>(), {
+  sidebarWidthResizeAvailable: false,
+  sidebarWidthResizeMode: false,
+});
+const emit = defineEmits<{
+  (e: 'toggle-sidebar-width-resize'): void;
+}>();
+const handleToggleSidebarWidthResize = () => {
+  emit('toggle-sidebar-width-resize');
+};
 
 const renderIcon = (icon: Component) => {
   return () => {
@@ -723,6 +736,15 @@ const handleOpenWorldGlossary = () => {
               <n-button size="tiny" quaternary @click="showArchiveModal = true">
                 频道归档
               </n-button>
+              <n-button
+                v-if="props.sidebarWidthResizeAvailable"
+                size="tiny"
+                quaternary
+                :class="{ 'sidebar-toggle-active': props.sidebarWidthResizeMode }"
+                @click="handleToggleSidebarWidthResize"
+              >
+                {{ props.sidebarWidthResizeMode ? '结束调宽' : '宽度调整' }}
+              </n-button>
             </div>
           </div>
         </div>
@@ -834,6 +856,7 @@ const handleOpenWorldGlossary = () => {
 
 .sidebar-footer-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
 }

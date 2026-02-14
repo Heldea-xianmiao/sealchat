@@ -72,6 +72,7 @@ export interface CustomTheme {
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
+  sidebarWidth: number         // 左侧频道栏宽度 (px)
   showAvatar: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
@@ -155,6 +156,14 @@ const MESSAGE_PADDING_X_MAX = 48
 const MESSAGE_PADDING_Y_DEFAULT = 14
 const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
+const SIDEBAR_WIDTH_DEFAULT = 272
+const SIDEBAR_WIDTH_MIN = 220
+const SIDEBAR_WIDTH_MAX = 520
+export const SIDEBAR_WIDTH_LIMITS = {
+  DEFAULT: SIDEBAR_WIDTH_DEFAULT,
+  MIN: SIDEBAR_WIDTH_MIN,
+  MAX: SIDEBAR_WIDTH_MAX,
+}
 const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
 const INPUT_AREA_HEIGHT_MIN = 80
 const INPUT_AREA_HEIGHT_MAX = 600
@@ -373,6 +382,7 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'night',
+  sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   showAvatar: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
@@ -522,6 +532,12 @@ const loadSettings = (): DisplaySettings => {
     return {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
+      sidebarWidth: coerceNumberInRange(
+        (parsed as any)?.sidebarWidth,
+        SIDEBAR_WIDTH_DEFAULT,
+        SIDEBAR_WIDTH_MIN,
+        SIDEBAR_WIDTH_MAX,
+      ),
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
@@ -625,6 +641,10 @@ const loadSettings = (): DisplaySettings => {
 const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>): DisplaySettings => ({
   layout: patch && patch.layout ? coerceLayout(patch.layout) : base.layout,
   palette: patch && patch.palette ? coercePalette(patch.palette) : base.palette,
+  sidebarWidth:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'sidebarWidth')
+      ? coerceNumberInRange((patch as any).sidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
+      : base.sidebarWidth,
   showAvatar:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
