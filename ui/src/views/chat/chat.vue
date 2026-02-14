@@ -8005,6 +8005,77 @@ const clearWhisperTargets = () => {
 
 const containsInlineImageMarker = (text: string) => /\[\[图片:[^\]]+\]\]/.test(text);
 
+const AT_TOKEN_FLEX_REGEX = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
+
+const decodeAtTokenText = (value: string) => {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+};
+
+const replaceAtTokensWithDisplayText = (value: string) => {
+  AT_TOKEN_FLEX_REGEX.lastIndex = 0;
+  return value.replace(AT_TOKEN_FLEX_REGEX, (_full, id: string, name: string) => {
+    const display = decodeAtTokenText(name || id || '用户');
+    return `@${display}`;
+  });
+};
+
+const collectMentionIdsFromText = (value: string, output: Set<string>) => {
+  AT_TOKEN_FLEX_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AT_TOKEN_FLEX_REGEX.exec(value)) !== null) {
+    const id = decodeAtTokenText(match[1] || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+};
+
+const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
+  if (!node) {
+    return;
+  }
+
+  if (typeof node.text === 'string' && node.text) {
+    collectMentionIdsFromText(node.text, output);
+  }
+
+  if (node.type === 'mention') {
+    const id = String(node.attrs?.id || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    node.content.forEach((child: any) => collectMentionIdsFromTipTapNode(child, output));
+  }
+};
+
+const collectMentionIdsFromContent = (content: string) => {
+  const output = new Set<string>();
+  if (!content) {
+    return output;
+  }
+
+  collectMentionIdsFromText(content, output);
+
+  if (isTipTapJson(content)) {
+    try {
+      const json = JSON.parse(content);
+      collectMentionIdsFromTipTapNode(json, output);
+    } catch {
+      // ignore
+    }
+  }
+
+  return output;
+};
+
 const collectInlineMarkerIds = (text: string) => {
   const markers = new Set<string>();
   inlineImageMarkerRegexp.lastIndex = 0;
@@ -8102,9 +8173,7 @@ const formatInlinePreviewText = (value: string) => {
   }
 
   // 将 <at> 标签转换为 @名字 格式
-  let replaced = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
-    return `@${name || '用户'}`;
-  });
+  let replaced = replaceAtTokensWithDisplayText(value);
   // 替换图片标记为 [图片]
   replaced = replaced.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
   return normalizePlaceholderWhitespace(replaced);
@@ -8115,7 +8184,13 @@ const extractTipTapText = (node: any): string => {
   if (!node) return '';
 
   if (node.text !== undefined) {
-    return node.text;
+    return replaceAtTokensWithDisplayText(node.text);
+  }
+
+  if (node.type === 'mention') {
+    const mentionId = String(node.attrs?.id || '').trim();
+    const mentionName = String(node.attrs?.name || '').trim();
+    return `@${mentionName || mentionId || '用户'}`;
   }
 
   if (node.type === 'image') {
@@ -8178,9 +8253,7 @@ const renderPreviewContent = (value: string) => {
   }
 
   // 预览模式：将 <at> 标签转换为简单的 @名字 格式
-  let processedValue = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
-    return `@${name || '用户'}`;
-  });
+  let processedValue = replaceAtTokensWithDisplayText(value);
 
   // 处理普通文本和图片标记
   const imageMarkerRegex = /\[\[(?:图片:([^\]]+)|img:id:([^\]]+))\]\]/g;
@@ -9078,7 +9151,8 @@ chatEvent.on('message-created', (e?: Event) => {
     // 检测是否被 @ 了（包括 @all）
     const content = incoming.content || '';
     const currentUserId = user.info.id;
-    const isMentioned = content.includes(`id="${currentUserId}"`) || content.includes('id="all"');
+    const mentionIds = collectMentionIdsFromContent(content);
+    const isMentioned = mentionIds.has(currentUserId) || mentionIds.has('all');
 
     if (isMentioned) {
       // 被 @ 时播放额外提示音或特殊处理

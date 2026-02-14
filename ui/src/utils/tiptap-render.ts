@@ -110,6 +110,61 @@ function shouldFilterTextColor(value: string): boolean {
   return DAY_TEXT_BACKGROUNDS.some((bg) => colorDistance(rgb, bg) <= DAY_TEXT_DISTANCE_THRESHOLD);
 }
 
+const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+
+function decodeMentionText(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function renderMentionAwareText(text: string): string {
+  if (!text) {
+    return '';
+  }
+
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  let lastIndex = 0;
+  let result = '';
+  let match: RegExpExecArray | null;
+
+  while ((match = MENTION_TOKEN_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result += escapeHtml(text.slice(lastIndex, match.index));
+    }
+
+    const atId = decodeMentionText(match[2] || '').trim();
+    const atName = decodeMentionText(match[4] || '').trim();
+    const displayName = atName || atId || '用户';
+    const className = atId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule';
+    result += `<span class="${className}">@${escapeHtml(displayName)}</span>`;
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    result += escapeHtml(text.slice(lastIndex));
+  }
+
+  return result;
+}
+
+function mentionAwarePlainText(text: string): string {
+  if (!text) {
+    return '';
+  }
+
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  return text.replace(MENTION_TOKEN_REGEX, (_full, _quote, id: string, _nameQuote, name: string) => {
+    const atId = decodeMentionText(id || '').trim();
+    const atName = decodeMentionText(name || '').trim();
+    return `@${atName || atId || '用户'}`;
+  });
+}
+
 /**
  * 渲染单个节点
  */
@@ -122,7 +177,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
   if (node.text !== undefined) {
     let text = options.textRenderer
       ? options.textRenderer(node.text)
-      : escapeHtml(node.text);
+      : renderMentionAwareText(node.text);
 
     // 应用文本标记
     if (node.marks && node.marks.length > 0) {
@@ -239,6 +294,13 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" ${title ? `title="${escapeHtml(title)}"` : ''} class="${imageClass}" />`;
 
+    case 'mention':
+      const mentionId = String(node.attrs?.id || '').trim();
+      const mentionName = String(node.attrs?.name || '').trim();
+      const mentionDisplay = mentionName || mentionId || '用户';
+      const mentionClassName = mentionId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule';
+      return `<span class="${mentionClassName}">@${escapeHtml(mentionDisplay)}</span>`;
+
     default:
       // 未知节点类型，返回子内容
       return childrenHtml;
@@ -328,11 +390,17 @@ function extractText(node: TipTapNode): string {
   if (!node) return '';
 
   if (node.text !== undefined) {
-    return node.text;
+    return mentionAwarePlainText(node.text);
   }
 
   if (node.type === 'hardBreak') {
     return '\n';
+  }
+
+  if (node.type === 'mention') {
+    const mentionId = String(node.attrs?.id || '').trim();
+    const mentionName = String(node.attrs?.name || '').trim();
+    return `@${mentionName || mentionId || '用户'}`;
   }
 
   if (node.content && node.content.length > 0) {

@@ -1989,6 +1989,60 @@ const buildStateWidgetRenderMap = (
   return renderMap;
 };
 
+const atTokenRegexForPermission = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
+
+const collectMentionIdsFromText = (content: string, output: Set<string>) => {
+  atTokenRegexForPermission.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = atTokenRegexForPermission.exec(content)) !== null) {
+    const id = String(match[1] || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+};
+
+const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
+  if (!node) {
+    return;
+  }
+
+  if (typeof node.text === 'string' && node.text) {
+    collectMentionIdsFromText(node.text, output);
+  }
+
+  if (node.type === 'mention') {
+    const id = String(node.attrs?.id || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    node.content.forEach((child: any) => collectMentionIdsFromTipTapNode(child, output));
+  }
+};
+
+const collectMentionIdsFromContent = (content: string) => {
+  const output = new Set<string>();
+  if (!content) {
+    return output;
+  }
+
+  collectMentionIdsFromText(content, output);
+
+  if (isTipTapJson(content)) {
+    try {
+      const json = JSON.parse(content);
+      collectMentionIdsFromTipTapNode(json, output);
+    } catch {
+      // ignore
+    }
+  }
+
+  return output;
+};
+
 const processStateTextWidgets = () => {
   nextTick(() => {
     const host = messageContentRef.value;
@@ -2006,16 +2060,9 @@ const processStateTextWidgets = () => {
     const userId = user.info.id;
     const isSender = item.user?.id === userId || item.userId === userId || item.user_id === userId;
     const content = item.content || '';
-    const atRegex = /<at\s[^>]*id="([^"]*)"[^>]*\/?>/g;
-    let hasMention = false;
-    let isMentioned = false;
-    let m: RegExpExecArray | null;
-    while ((m = atRegex.exec(content)) !== null) {
-      hasMention = true;
-      if (m[1] === userId) {
-        isMentioned = true;
-      }
-    }
+    const mentionIds = collectMentionIdsFromContent(content);
+    const hasMention = mentionIds.size > 0;
+    const isMentioned = mentionIds.has(userId) || mentionIds.has('all');
 
     const worldId = chat.currentWorldId;
     const detail = worldId ? chat.worldDetailMap[worldId] : null;
