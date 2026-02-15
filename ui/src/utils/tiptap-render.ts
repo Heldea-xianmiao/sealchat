@@ -111,6 +111,42 @@ function shouldFilterTextColor(value: string): boolean {
 }
 
 const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+const SPOILER_OPEN_TAG = '<span class="tiptap-spoiler" data-spoiler="true">';
+const SPOILER_CLOSE_TAG = '</span>';
+
+function unwrapSpoilerFragment(fragment: string): string | null {
+  if (!fragment.startsWith(SPOILER_OPEN_TAG) || !fragment.endsWith(SPOILER_CLOSE_TAG)) {
+    return null;
+  }
+  return fragment.slice(SPOILER_OPEN_TAG.length, -SPOILER_CLOSE_TAG.length);
+}
+
+function mergeAdjacentSpoilerFragments(fragments: string[]): string {
+  if (fragments.length <= 1) {
+    return fragments.join('');
+  }
+
+  const merged: string[] = [];
+
+  fragments.forEach((fragment) => {
+    if (!fragment) {
+      return;
+    }
+
+    const currentInner = unwrapSpoilerFragment(fragment);
+    const previous = merged.length > 0 ? merged[merged.length - 1] : '';
+    const previousInner = previous ? unwrapSpoilerFragment(previous) : null;
+
+    if (currentInner !== null && previousInner !== null) {
+      merged[merged.length - 1] = `${SPOILER_OPEN_TAG}${previousInner}${currentInner}${SPOILER_CLOSE_TAG}`;
+      return;
+    }
+
+    merged.push(fragment);
+  });
+
+  return merged.join('');
+}
 
 function decodeMentionText(value: string): string {
   return value
@@ -234,7 +270,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
   }
 
   // 渲染子节点
-  const childrenHtml = node.content ? node.content.map((child) => renderNode(child, options)).join('') : '';
+  const childrenHtml = node.content
+    ? mergeAdjacentSpoilerFragments(node.content.map((child) => renderNode(child, options)))
+    : '';
 
   // 渲染块级节点
   switch (node.type) {

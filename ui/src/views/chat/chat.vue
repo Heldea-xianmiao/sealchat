@@ -16291,6 +16291,9 @@ onBeforeUnmount(() => {
 
 .tiptap-spoiler {
   display: inline-block;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   padding: 0 0.2em;
   border-radius: 0.2em;
   border: 1px solid var(--spoiler-border);
@@ -16307,6 +16310,23 @@ onBeforeUnmount(() => {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
+.tiptap-spoiler:not(.is-revealed)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--spoiler-bg);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--spoiler-stripe) 0,
+    var(--spoiler-stripe) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
 .tiptap-spoiler.is-revealed {
   color: inherit;
   background-color: var(--spoiler-reveal-bg);
@@ -16319,6 +16339,12 @@ onBeforeUnmount(() => {
   color: inherit;
   background-color: var(--spoiler-reveal-bg);
   background-image: none;
+}
+
+.tiptap-editor .tiptap-spoiler::after,
+.keyword-rich-content .tiptap-spoiler::after,
+.sticky-note-editor__content .tiptap-spoiler::after {
+  content: none;
 }
 
 /* @ mention option styles */
