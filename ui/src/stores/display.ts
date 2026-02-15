@@ -73,6 +73,7 @@ export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
   sidebarWidth: number         // 左侧频道栏宽度 (px)
+  channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
@@ -383,6 +384,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'night',
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
+  channelNameWrapEnabled: false,
   showAvatar: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
@@ -538,6 +540,7 @@ const loadSettings = (): DisplaySettings => {
         SIDEBAR_WIDTH_MIN,
         SIDEBAR_WIDTH_MAX,
       ),
+      channelNameWrapEnabled: coerceBoolean((parsed as any)?.channelNameWrapEnabled ?? false),
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
@@ -645,6 +648,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'sidebarWidth')
       ? coerceNumberInRange((patch as any).sidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
       : base.sidebarWidth,
+  channelNameWrapEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'channelNameWrapEnabled')
+      ? coerceBoolean((patch as any).channelNameWrapEnabled)
+      : base.channelNameWrapEnabled,
   showAvatar:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)

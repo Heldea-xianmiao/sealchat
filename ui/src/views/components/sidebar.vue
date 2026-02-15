@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import router from '@/router';
 import { chatEvent, useChatStore } from '@/stores/chat';
+import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
@@ -32,6 +33,7 @@ const notifShow = ref(false)
 const userProfileShow = ref(false)
 const adminShow = ref(false)
 const chat = useChatStore();
+const display = useDisplayStore();
 const user = useUserStore();
 const worldGlossary = useWorldGlossaryStore();
 const pushStore = usePushNotificationStore();
@@ -361,10 +363,26 @@ const suffix = (item: SChannel) => {
 
 
 const showAllSubChannels = ref(true);
+const channelNameWrapEnabled = computed({
+  get: () => display.settings.channelNameWrapEnabled,
+  set: (value: boolean) => {
+    display.updateSettings({ channelNameWrapEnabled: value });
+  },
+});
 
 const toggleSubChannelDisplay = () => {
   showAllSubChannels.value = !showAllSubChannels.value;
 };
+
+const toggleChannelNameWrap = () => {
+  channelNameWrapEnabled.value = !channelNameWrapEnabled.value;
+};
+
+const channelTitleClass = computed(() => ({
+  'channel-item-title': true,
+  'channel-item-title--wrap': channelNameWrapEnabled.value,
+  'text-more': !channelNameWrapEnabled.value,
+}));
 
 const resolveMainChannelId = (channel?: SChannel | null): string => {
   if (!channel) {
@@ -520,7 +538,7 @@ const handleOpenWorldGlossary = () => {
         </template>
 
         <!-- 频道列表内容将在这里显示 -->
-        <div class="space-y-1 flex flex-col px-2">
+        <div class="space-y-1 flex flex-col px-2" :class="{ 'channel-wrap-enabled': channelNameWrapEnabled }">
           <template v-if="chat.curChannel">
             <!-- 临时显示的归档频道 -->
             <div
@@ -531,7 +549,7 @@ const handleOpenWorldGlossary = () => {
             >
               <div class="channel-item-main">
                 <n-icon :component="IconNumber"></n-icon>
-                <span class="channel-item-title text-more">{{ chat.temporaryArchivedChannel.name }}</span>
+                <span :class="channelTitleClass">{{ chat.temporaryArchivedChannel.name }}</span>
                 <n-tag class="channel-item-meta" size="tiny" type="warning">归档</n-tag>
               </div>
               <div class="right">
@@ -568,13 +586,13 @@ const handleOpenWorldGlossary = () => {
                   <template v-if="(i.type === 3 || (i as any).isPrivate)">
                     <!-- 私聊 -->
                     <n-icon :component="IconFluentMention24Filled"></n-icon>
-                    <span class="channel-item-title text-more">{{ `${i.name}` }}</span>
+                    <span :class="channelTitleClass">{{ `${i.name}` }}</span>
                   </template>
 
                   <template v-else>
                     <!-- 公开频道 -->
                     <n-icon :component="IconNumber"></n-icon>
-                    <span class="channel-item-title text-more">{{ `${i.name}${suffix(i)} (${(i as any).membersCount})` }}</span>
+                    <span :class="channelTitleClass">{{ `${i.name}${suffix(i)} (${(i as any).membersCount})` }}</span>
                   </template>
                 </div>
 
@@ -627,11 +645,11 @@ const handleOpenWorldGlossary = () => {
                     <div class="channel-item-main channel-item-main--child">
                       <template v-if="(child.type === 3 || (child as any).isPrivate)">
                         <n-icon :component="IconFluentMention24Filled"></n-icon>
-                        <span class="channel-item-title text-more">{{ `${child.name}` }}</span>
+                        <span :class="channelTitleClass">{{ `${child.name}` }}</span>
                       </template>
                       <template v-else>
                         <n-icon :component="IconNumber"></n-icon>
-                        <span class="channel-item-title text-more">{{ `${child.name}${suffix(child)} (${(child as any).membersCount})` }}</span>
+                        <span :class="channelTitleClass">{{ `${child.name}${suffix(child)} (${(child as any).membersCount})` }}</span>
                       </template>
                     </div>
 
@@ -745,6 +763,15 @@ const handleOpenWorldGlossary = () => {
               >
                 {{ props.sidebarWidthResizeMode ? '结束调宽' : '宽度调整' }}
               </n-button>
+              <n-button
+                v-if="props.sidebarWidthResizeAvailable"
+                size="tiny"
+                quaternary
+                :class="{ 'sidebar-toggle-active': channelNameWrapEnabled }"
+                @click="toggleChannelNameWrap"
+              >
+                {{ channelNameWrapEnabled ? '频道单行' : '频道换行' }}
+              </n-button>
             </div>
           </div>
         </div>
@@ -837,12 +864,43 @@ const handleOpenWorldGlossary = () => {
   min-width: 0;
 }
 
+.channel-item-title--wrap {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
 .channel-item-meta {
   flex-shrink: 0;
 }
 
+.channel-wrap-enabled .sider-item {
+  align-items: flex-start;
+}
+
+.channel-wrap-enabled .channel-item-main {
+  align-items: flex-start;
+}
+
 .sider-item:hover {
   background-color: var(--sc-sidebar-hover);
+  align-items: flex-start;
+}
+
+.sider-item:hover .channel-item-main {
+  align-items: flex-start;
+}
+
+.sider-item:hover .channel-item-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 .sider-item.active {
