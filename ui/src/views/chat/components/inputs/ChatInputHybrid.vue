@@ -397,7 +397,8 @@ const classList = computed(() => {
 });
 
 // 渲染内容（解析文本中的图片标记和 @提及）
-const renderContent = (preserveCursor = false) => {
+// 使用可选 sourceText，避免内部输入时被异步旧值回写覆盖
+const renderContent = (preserveCursor = false, sourceText?: string) => {
   if (!editorRef.value) return;
 
   // 保存光标位置
@@ -406,7 +407,7 @@ const renderContent = (preserveCursor = false) => {
     savedPosition = getCursorPosition();
   }
 
-  const text = props.modelValue;
+  const text = sourceText ?? props.modelValue;
   // 匹配图片标记和 Satori <at> 标签
   const combinedRegex = /\[\[图片:([^\]]+)\]\]|<at\s+id="([^"]+)"(?:\s+name="([^"]*)")?\s*\/>/g;
 
@@ -565,7 +566,7 @@ const undo = () => {
 
     nextTick(() => {
       isInternalUpdate.value = false;
-      renderContent(false);
+      renderContent(false, state.content);
       setCursorPosition(state.cursorPosition);
     });
   }
@@ -583,7 +584,7 @@ const redo = () => {
 
     nextTick(() => {
       isInternalUpdate.value = false;
-      renderContent(false);
+      renderContent(false, state.content);
       setCursorPosition(state.cursorPosition);
     });
   }
@@ -646,7 +647,7 @@ const removeImageMarker = (marker: MarkerInfo) => {
   emit('remove-image', marker.markerId);
   nextTick(() => {
     isInternalUpdate.value = false;
-    renderContent(false);
+    renderContent(false, nextValue);
     setCursorPosition(marker.start);
   });
 };
@@ -696,7 +697,7 @@ const applyQuickFormatBoundaryDelete = (result: QuickFormatBoundaryDeleteResult)
   checkMentionTrigger(result.nextValue, result.cursor);
   nextTick(() => {
     isInternalUpdate.value = false;
-    renderContent(false);
+    renderContent(false, result.nextValue);
     setCursorPosition(result.cursor);
   });
 };
@@ -766,7 +767,7 @@ const handleInput = () => {
   nextTick(() => {
     isInternalUpdate.value = false;
     if (!isComposing.value) {
-      renderContent(true);
+      renderContent(true, text);
     }
   });
 };
@@ -837,7 +838,7 @@ const handleMentionSelect = (option: MentionOption) => {
   // 设置光标位置到插入内容之后
   nextTick(() => {
     isInternalUpdate.value = false;
-    renderContent(false);
+    renderContent(false, newValue);
     const newCursorPos = startIndex + String(option.value).length + 1;
     setCursorPosition(newCursorPos);
     editorRef.value?.focus();

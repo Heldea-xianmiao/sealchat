@@ -7196,6 +7196,14 @@ const syncSessionDraftSnapshot = () => {
   });
 };
 
+const scheduleSessionDraftSnapshot = throttle(
+  () => {
+    syncSessionDraftSnapshot();
+  },
+  600,
+  { leading: false, trailing: true },
+);
+
 const tryAutoRestoreSessionDraft = () => {
   const channelKey = currentChannelKey.value;
   if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
@@ -8800,7 +8808,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
-  syncSessionDraftSnapshot();
+  scheduleSessionDraftSnapshot();
   checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
@@ -9604,6 +9612,8 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  scheduleHistorySnapshot.cancel();
+  scheduleSessionDraftSnapshot.cancel();
   syncSessionDraftSnapshot();
   disposeSelfPreviewObserver();
   disposeTypingViewportObserver();
