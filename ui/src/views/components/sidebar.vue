@@ -921,26 +921,20 @@ const handleOpenWorldGlossary = () => {
 
 .sider-item.active {
   background-color: var(--sc-sidebar-active);
+  align-items: flex-start;
 }
 
-@media (max-width: 699px) {
-  /* 移动端：当前频道默认完整显示，无需悬浮 */
-  .sider-item.active {
-    align-items: flex-start;
-  }
+.sider-item.active .channel-item-main {
+  align-items: flex-start;
+}
 
-  .sider-item.active .channel-item-main {
-    align-items: flex-start;
-  }
-
-  .sider-item.active .channel-item-title {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    line-height: 1.3;
-  }
+.sider-item.active .channel-item-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
 }
 
 .sider-item > .right-num {
