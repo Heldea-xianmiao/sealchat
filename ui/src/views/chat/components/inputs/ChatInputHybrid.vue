@@ -169,6 +169,12 @@ const isImageElement = (node: Node): node is HTMLElement =>
 const isMentionElement = (node: Node): node is HTMLElement =>
   node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).classList.contains('hybrid-input__mention');
 
+const isEmptyLinePlaceholderTextNode = (node: Node): node is Text => (
+  node.nodeType === Node.TEXT_NODE
+  && node.textContent === '\u200B'
+  && (node.parentElement?.classList.contains('empty-line') ?? false)
+);
+
 // 从 mention 元素构建原始 Satori 标签
 const buildMentionToken = (element: HTMLElement): string => {
   const atId = element.dataset.atId || '';
@@ -184,6 +190,9 @@ const getMentionTokenLength = (element: HTMLElement): number => {
 
 const getNodeModelLength = (node: Node): number => {
   if (node.nodeType === Node.TEXT_NODE) {
+    if (isEmptyLinePlaceholderTextNode(node)) {
+      return 0;
+    }
     return node.textContent?.length ?? 0;
   }
   if (node.nodeName === 'BR') {
@@ -205,6 +214,9 @@ const getNodeModelLength = (node: Node): number => {
 
 const getOffsetWithinNode = (node: Node, offset: number): number => {
   if (node.nodeType === Node.TEXT_NODE) {
+    if (isEmptyLinePlaceholderTextNode(node)) {
+      return 0;
+    }
     const length = node.textContent?.length ?? 0;
     return clamp(offset, 0, length);
   }
@@ -235,7 +247,7 @@ const reduceNode = (node: Node, target: Node, offset: number): { found: boolean;
   }
 
   if (node.nodeType === Node.TEXT_NODE) {
-    return { found: false, length: node.textContent?.length ?? 0 };
+    return { found: false, length: getNodeModelLength(node) };
   }
 
   if (node.nodeName === 'BR') {
@@ -273,6 +285,9 @@ const calculateModelIndexForPosition = (container: Node, offset: number): number
 
 const resolvePositionByIndex = (node: Node, position: number): { node: Node; offset: number } => {
   if (node.nodeType === Node.TEXT_NODE) {
+    if (isEmptyLinePlaceholderTextNode(node)) {
+      return { node, offset: 0 };
+    }
     const length = node.textContent?.length ?? 0;
     return { node, offset: clamp(position, 0, length) };
   }
@@ -619,6 +634,41 @@ interface QuickFormatBoundaryDeleteResult {
   cursor: number;
 }
 
+const commitInputMutation = (nextValue: string, cursor: number) => {
+  const safeCursor = clamp(cursor, 0, nextValue.length);
+  isInternalUpdate.value = true;
+  emit('update:modelValue', nextValue);
+  addToHistory(nextValue, safeCursor);
+  checkMentionTrigger(nextValue, safeCursor);
+  nextTick(() => {
+    isInternalUpdate.value = false;
+    renderContent(false, nextValue);
+    setCursorPosition(safeCursor);
+  });
+};
+
+const insertLineBreakAtSelection = () => {
+  const selection = getSelectionRange();
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  const nextValue = `${props.modelValue.slice(0, start)}\n${props.modelValue.slice(end)}`;
+  commitInputMutation(nextValue, start + 1);
+};
+
+const deleteLineBreakBeforeCursor = (): boolean => {
+  const selection = getSelectionRange();
+  if (selection.start !== selection.end || selection.start <= 0) {
+    return false;
+  }
+  const breakIndex = selection.start - 1;
+  if (props.modelValue[breakIndex] !== '\n') {
+    return false;
+  }
+  const nextValue = `${props.modelValue.slice(0, breakIndex)}${props.modelValue.slice(selection.start)}`;
+  commitInputMutation(nextValue, breakIndex);
+  return true;
+};
+
 const findMarkerInfoAt = (position: number): MarkerInfo | null => {
   if (!props.modelValue || position < 0) {
     return null;
@@ -692,15 +742,7 @@ const tryDeleteQuickFormatBoundaryMarker = (value: string, cursor: number): Quic
 };
 
 const applyQuickFormatBoundaryDelete = (result: QuickFormatBoundaryDeleteResult) => {
-  isInternalUpdate.value = true;
-  emit('update:modelValue', result.nextValue);
-  addToHistory(result.nextValue, result.cursor);
-  checkMentionTrigger(result.nextValue, result.cursor);
-  nextTick(() => {
-    isInternalUpdate.value = false;
-    renderContent(false, result.nextValue);
-    setCursorPosition(result.cursor);
-  });
+  commitInputMutation(result.nextValue, result.cursor);
 };
 
 const insertPlainTextAtCursor = (text: string) => {
@@ -748,13 +790,14 @@ const insertPlainTextAtCursor = (text: string) => {
 };
 
 // 处理输入事件
-const handleInput = () => {
+const handleInput = (event?: InputEvent) => {
   if (!editorRef.value) return;
 
   let text = extractContentWithLineBreaks();
-  // contenteditable 为空时浏览器常保留占位 <br>，提取逻辑会把它映射成 "\n"。
-  // 若不处理，会把这个换行持久化到 modelValue，表现为“空输入退格多出删不掉的换行”。
-  if (/^\n+$/.test(text)) {
+  // 删除到空时，浏览器经常遗留一个占位换行；仅在非“主动插入换行”场景下归零。
+  const inputType = event?.inputType || '';
+  const isIntentionalLineBreak = inputType === 'insertLineBreak' || inputType === 'insertParagraph';
+  if (/^\n+$/.test(text) && !isIntentionalLineBreak) {
     text = '';
   }
 
@@ -1089,6 +1132,12 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   const composing = event.isComposing || isComposing.value;
+  if (!composing && event.key === 'Enter' && event.shiftKey) {
+    event.preventDefault();
+    insertLineBreakAtSelection();
+    return;
+  }
+
   if (!composing && event.key === 'Backspace') {
     const selection = getSelectionRange();
     if (selection.start === selection.end) {
@@ -1099,6 +1148,11 @@ const handleKeydown = (event: KeyboardEvent) => {
         return;
       }
     }
+  }
+
+  if (!composing && event.key === 'Backspace' && deleteLineBreakBeforeCursor()) {
+    event.preventDefault();
+    return;
   }
 
   if (!composing && (event.key === 'Backspace' || event.key === 'Delete')) {
