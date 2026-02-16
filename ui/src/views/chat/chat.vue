@@ -1,14 +1,13 @@
 <script setup lang="tsx">
 import ChatItem from './components/chat-item.vue';
 import MultiSelectFloatingBar from './components/MultiSelectFloatingBar.vue';
-import { computed, ref, watch, onMounted, onBeforeMount, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { VirtualList } from 'vue-tiny-virtual-list';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import type { Event, Message, User, WhisperMeta } from '@satorijs/protocol'
 import type { ChannelIdentity, ChannelIdentityFolder, GalleryItem, UserInfo, SChannel } from '@/types'
 import { useUserStore } from '@/stores/user';
-import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X } from '@vicons/tabler'
-import { NIcon, c, useDialog, useMessage, type MentionOption } from 'naive-ui';
+import { ArrowBarToDown, Plus, Upload, Send, ArrowBackUp, Palette, Download, ArrowsVertical, Star, StarOff, FolderPlus, DotsVertical, Folders, Copy as CopyIcon, Search as SearchIcon, Check, X, ChevronDown, ChevronRight } from '@vicons/tabler'
+import { NIcon, c, type MentionOption } from 'naive-ui';
 import VueScrollTo from 'vue-scrollto'
 import ChatInputSwitcher from './components/ChatInputSwitcher.vue'
 import ChannelIdentitySwitcher from './components/ChannelIdentitySwitcher.vue'
@@ -34,6 +33,7 @@ import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
+import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
 import { api, urlBase } from '@/stores/_config';
@@ -67,10 +67,12 @@ import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
+import { renderQuickFormatHtmlFromEscaped } from '@/utils/plainQuickFormat';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
+import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { useOnboardingStore } from '@/stores/onboarding';
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
@@ -85,6 +87,7 @@ import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/cha
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -98,6 +101,7 @@ const display = useDisplayStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
+const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
@@ -153,6 +157,44 @@ const openSplitView = () => {
 const toggleStickyNotes = () => {
   stickyNoteStore.toggleVisible();
 };
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const defaultIFormEmbedLink = computed(() => {
+  const worldId = chat.currentWorldId;
+  const channelId = chat.curChannel?.id;
+  if (!worldId || !channelId) {
+    return '';
+  }
+  const firstForm = iFormStore.currentForms[0];
+  if (!firstForm?.id) {
+    return '';
+  }
+  return generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: firstForm.id,
+      width: firstForm.defaultWidth,
+      height: firstForm.defaultHeight,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  );
+});
 
 type ExternalPanelKey =
   | 'search'
@@ -1060,7 +1102,6 @@ const handleOpenDisplaySettings = () => {
 
 const handleDisplaySettingsSave = (settings: DisplaySettings) => {
   display.updateSettings(settings);
-  displaySettingsVisible.value = false;
 };
 
 // Avatar prompt handlers
@@ -1158,6 +1199,7 @@ const emojiPopoverY = ref<number | null>(null);
 const emojiPopoverXCoord = computed(() => emojiPopoverX.value ?? undefined);
 const emojiPopoverYCoord = computed(() => emojiPopoverY.value ?? undefined);
 const emojiSearchQuery = ref('');
+const emojiPanelTab = ref<'gallery' | 'utf'>('gallery');
 const isManagingEmoji = ref(false);
 const emojiRemarkVisible = computed(() => gallery.emojiRemarkVisible);
 
@@ -1708,8 +1750,9 @@ const buildInlineImageDraftFromRich = (markerId: string, src?: string) => {
     record.objectUrl = raw;
     return record;
   }
-  if (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw)) {
-    record.attachmentId = normalizeAttachmentId(raw);
+  const normalized = normalizeAttachmentId(raw);
+  if (normalized && (raw.startsWith('id:') || /^[0-9A-Za-z_-]+$/.test(raw) || /api\/v1\/attachment\//i.test(raw))) {
+    record.attachmentId = normalized;
   }
   return record;
 };
@@ -1722,7 +1765,8 @@ const resolveInlineImageSource = (draft?: InlineImageDraft) => {
     return draft.objectUrl;
   }
   if (draft.attachmentId) {
-    return draft.attachmentId.startsWith('id:') ? draft.attachmentId : `id:${draft.attachmentId}`;
+    const normalized = normalizeAttachmentId(draft.attachmentId);
+    return normalized ? `/api/v1/attachment/${normalized}` : '';
   }
   if (draft.objectUrl) {
     return draft.objectUrl;
@@ -1794,8 +1838,11 @@ const buildRichContentFromPlain = (text: string) => {
       content: [{ type: 'paragraph' }],
     };
   }
-  const lines = text.split('\n');
-  const content = lines.map((line) => {
+  const normalizedText = text.replace(/\r\n/g, '\n');
+  const lines = normalizedText.split('\n');
+  const paragraphNodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
+
+  lines.forEach((line, index) => {
     inlineImageMarkerRegexp.lastIndex = 0;
     let lastIndex = 0;
     const nodes: Array<{ type: string; text?: string; attrs?: Record<string, string> }> = [];
@@ -1817,9 +1864,22 @@ const buildRichContentFromPlain = (text: string) => {
     if (lastIndex < line.length) {
       nodes.push({ type: 'text', text: line.slice(lastIndex) });
     }
-    return nodes.length ? { type: 'paragraph', content: nodes } : { type: 'paragraph' };
+    if (nodes.length) {
+      paragraphNodes.push(...nodes);
+    }
+    if (index < lines.length - 1) {
+      paragraphNodes.push({ type: 'hardBreak' });
+    }
   });
-  return { type: 'doc', content };
+
+  return {
+    type: 'doc',
+    content: [
+      paragraphNodes.length
+        ? { type: 'paragraph', content: paragraphNodes }
+        : { type: 'paragraph' },
+    ],
+  };
 };
 
 const hasUploadingInlineImages = computed(() => {
@@ -1946,8 +2006,35 @@ const handleEmojiTriggerClick = () => {
     emojiPopoverShow.value = false;
     return;
   }
+  emojiPanelTab.value = 'gallery';
   syncEmojiPopoverPosition();
   emojiPopoverShow.value = true;
+};
+
+const switchEmojiPanelTab = (tab: 'gallery' | 'utf') => {
+  emojiPanelTab.value = tab;
+  if (tab !== 'gallery') {
+    isManagingEmoji.value = false;
+  }
+};
+
+const handleUtfEmojiSelect = (emoji: string) => {
+  if (!emoji || emoji.startsWith('id:')) {
+    return;
+  }
+  if (inputMode.value === 'rich') {
+    const editorInstance = textInputRef.value?.getEditor?.();
+    if (editorInstance) {
+      editorInstance.chain().focus().insertContent(emoji).run();
+      return;
+    }
+  }
+  const selection = getInputSelection();
+  const text = textToSend.value;
+  textToSend.value = text.slice(0, selection.start) + emoji + text.slice(selection.end);
+  const cursor = selection.start + emoji.length;
+  nextTick(() => setInputSelection(cursor, cursor));
+  ensureInputFocus();
 };
 
 
@@ -2024,6 +2111,76 @@ const handleSlashInput = (e: InputEvent) => {
       openWhisperPanel('slash');
     });
   }
+};
+
+type IdentityShortcutMatchResult = {
+  matched: ChannelIdentity | null;
+  restContent: string;
+  ambiguous: boolean;
+};
+
+const resolveIdentityShortcutMatch = (rawDraft: string, identities: ChannelIdentity[]): IdentityShortcutMatchResult | null => {
+  const shortcutMatch = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(rawDraft);
+  if (!shortcutMatch) {
+    return null;
+  }
+  const targetNameRaw = (shortcutMatch[1] || '').trim();
+  if (!targetNameRaw) {
+    return null;
+  }
+  const restContent = shortcutMatch[2] ?? '';
+  const targetName = targetNameRaw.toLowerCase();
+  const normalizedCandidates = identities
+    .map((item, index) => {
+      const displayName = (item.displayName || '').trim();
+      return {
+        item,
+        index,
+        normalizedName: displayName.toLowerCase(),
+        length: displayName.length,
+      };
+    })
+    .filter(item => !!item.normalizedName);
+
+  const exact = normalizedCandidates.find(item => item.normalizedName === targetName);
+  if (exact) {
+    return {
+      matched: exact.item,
+      restContent,
+      ambiguous: false,
+    };
+  }
+
+  const prefixCandidates = normalizedCandidates.filter(item => item.normalizedName.startsWith(targetName));
+  if (!prefixCandidates.length) {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: false,
+    };
+  }
+
+  const sortedCandidates = prefixCandidates.slice().sort((a, b) => {
+    if (a.length !== b.length) {
+      return a.length - b.length;
+    }
+    return a.index - b.index;
+  });
+  const best = sortedCandidates[0];
+  const hasAmbiguousShortest = sortedCandidates.some((item, index) => index > 0 && item.length === best.length && item.normalizedName !== best.normalizedName);
+  if (hasAmbiguousShortest) {
+    return {
+      matched: null,
+      restContent,
+      ambiguous: true,
+    };
+  }
+
+  return {
+    matched: best.item,
+    restContent,
+    ambiguous: false,
+  };
 };
 const identityDialogMode = ref<'create' | 'edit'>('create');
 const identityManageVisible = ref(false);
@@ -3773,6 +3930,10 @@ const HISTORY_WINDOW_EXPANSION_LIMIT = 5;
 type ViewMode = 'live' | 'history';
 
 const rows = ref<Message[]>([]);
+const pinnedRows = ref<Message[]>([]);
+const pinnedCollapseStorageKey = 'sealchat.pinnedCollapsed';
+const resolvePinnedCollapsed = () => localStorage.getItem(pinnedCollapseStorageKey) === 'true';
+const pinnedCollapsed = ref(resolvePinnedCollapsed());
 const listRevision = ref(0);
 const messageWindow = reactive({
   viewMode: 'live' as ViewMode,
@@ -3794,6 +3955,10 @@ const viewMode = computed(() => messageWindow.viewMode);
 const inHistoryMode = computed(() => viewMode.value === 'history');
 const historyLocked = computed(() => messageWindow.lockedHistory);
 const anchorMessageId = computed(() => messageWindow.anchorMessageId);
+
+watch(pinnedCollapsed, (collapsed) => {
+  localStorage.setItem(pinnedCollapseStorageKey, String(collapsed));
+});
 
 interface ResetWindowOptions {
   preserveRows?: boolean;
@@ -3890,6 +4055,47 @@ const updateWindowAnchorsFromRows = () => {
   } else {
     messageWindow.afterCursor = '';
   }
+};
+
+const sortPinnedRows = () => {
+  pinnedRows.value = pinnedRows.value
+    .slice()
+    .sort((a, b) => {
+      const pinA = normalizeTimestamp((a as any).pinnedAt ?? (a as any).pinned_at) ?? 0;
+      const pinB = normalizeTimestamp((b as any).pinnedAt ?? (b as any).pinned_at) ?? 0;
+      if (pinA === pinB) {
+        return compareByDisplayOrder(a, b);
+      }
+      return pinB - pinA;
+    });
+};
+
+const removePinnedMessage = (messageId?: string) => {
+  if (!messageId) {
+    return;
+  }
+  pinnedRows.value = pinnedRows.value.filter((msg) => msg.id !== messageId);
+};
+
+const upsertPinnedMessage = (incoming?: Message) => {
+  if (!incoming || !incoming.id) {
+    return;
+  }
+  const isPinned = Boolean((incoming as any).isPinned ?? (incoming as any).is_pinned ?? false);
+  if (!isPinned || (incoming as any).isDeleted || (incoming as any).is_deleted) {
+    removePinnedMessage(incoming.id);
+    return;
+  }
+  const index = pinnedRows.value.findIndex((msg) => msg.id === incoming.id);
+  if (index >= 0) {
+    pinnedRows.value.splice(index, 1, {
+      ...pinnedRows.value[index],
+      ...incoming,
+    });
+  } else {
+    pinnedRows.value.push(incoming);
+  }
+  sortPinnedRows();
 };
 interface VisibleRowEntry {
   message: Message;
@@ -4106,6 +4312,9 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.isDeleted === undefined && msg.is_deleted !== undefined) {
     msg.isDeleted = msg.is_deleted;
   }
+  if (msg.widgetData === undefined && msg.widget_data !== undefined) {
+    msg.widgetData = msg.widget_data;
+  }
 
   if (msg.senderRoleId === undefined && msg.sender_role_id !== undefined) {
     msg.senderRoleId = msg.sender_role_id;
@@ -4187,11 +4396,20 @@ const normalizeMessageShape = (msg: any): Message => {
   if (msg.isArchived === undefined && msg.is_archived !== undefined) {
     msg.isArchived = msg.is_archived;
   }
+  if (msg.isPinned === undefined && msg.is_pinned !== undefined) {
+    msg.isPinned = msg.is_pinned;
+  }
   if (msg.archivedAt === undefined && msg.archived_at !== undefined) {
     msg.archivedAt = msg.archived_at;
   }
+  if (msg.pinnedAt === undefined && msg.pinned_at !== undefined) {
+    msg.pinnedAt = msg.pinned_at;
+  }
   if (msg.archivedBy === undefined && msg.archived_by !== undefined) {
     msg.archivedBy = msg.archived_by;
+  }
+  if (msg.pinnedBy === undefined && msg.pinned_by !== undefined) {
+    msg.pinnedBy = msg.pinned_by;
   }
   if ((msg as any).displayOrder === undefined && (msg as any).display_order !== undefined) {
     (msg as any).displayOrder = Number((msg as any).display_order);
@@ -4205,6 +4423,8 @@ const normalizeMessageShape = (msg: any): Message => {
   msg.updatedAt = normalizedUpdatedAt ?? undefined;
   const normalizedArchivedAt = normalizeTimestamp(msg.archivedAt);
   msg.archivedAt = normalizedArchivedAt ?? undefined;
+  const normalizedPinnedAt = normalizeTimestamp(msg.pinnedAt);
+  msg.pinnedAt = normalizedPinnedAt ?? undefined;
 
   if (msg.quote) {
     msg.quote = normalizeMessageShape(msg.quote);
@@ -4302,6 +4522,85 @@ const registerMessageRow = (el: HTMLElement | null, id: string) => {
   } else {
     messageRowRefs.delete(id);
   }
+  if (id === imageLayoutEditingMessageId) {
+    if (el) {
+      void ensureImageLayoutRowObserver();
+    } else {
+      disconnectImageLayoutRowObserver();
+    }
+  }
+};
+
+let imageLayoutEditingMessageId = "";
+let imageLayoutRowResizeObserver: ResizeObserver | null = null;
+let imageLayoutObservedRowEl: HTMLElement | null = null;
+let imageLayoutObservedRowHeight = 0;
+
+const disconnectImageLayoutRowObserver = () => {
+  if (imageLayoutRowResizeObserver && imageLayoutObservedRowEl) {
+    imageLayoutRowResizeObserver.unobserve(imageLayoutObservedRowEl);
+  }
+  imageLayoutObservedRowEl = null;
+  imageLayoutObservedRowHeight = 0;
+};
+
+const disposeImageLayoutRowObserver = () => {
+  disconnectImageLayoutRowObserver();
+  if (imageLayoutRowResizeObserver) {
+    imageLayoutRowResizeObserver.disconnect();
+    imageLayoutRowResizeObserver = null;
+  }
+};
+
+const ensureImageLayoutRowObserver = async () => {
+  if (!imageLayoutEditingMessageId || typeof ResizeObserver === "undefined") {
+    disconnectImageLayoutRowObserver();
+    return;
+  }
+  await nextTick();
+  const rowEl = messageRowRefs.get(imageLayoutEditingMessageId);
+  if (!rowEl) {
+    disconnectImageLayoutRowObserver();
+    return;
+  }
+  if (!imageLayoutRowResizeObserver) {
+    imageLayoutRowResizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+      const nextHeight = entry.contentRect.height;
+      if (nextHeight > imageLayoutObservedRowHeight && isNearBottom()) {
+        scrollToBottom();
+      }
+      imageLayoutObservedRowHeight = nextHeight;
+    });
+  }
+  if (imageLayoutObservedRowEl !== rowEl) {
+    if (imageLayoutObservedRowEl) {
+      imageLayoutRowResizeObserver.unobserve(imageLayoutObservedRowEl);
+    }
+    imageLayoutObservedRowEl = rowEl;
+    imageLayoutObservedRowHeight = rowEl.getBoundingClientRect().height;
+    imageLayoutRowResizeObserver.observe(rowEl);
+  }
+};
+
+const handleImageLayoutEditStateChange = (payload?: { messageId?: string; active?: boolean }) => {
+  const messageId = String(payload?.messageId || "").trim();
+  const active = Boolean(payload?.active);
+  if (!active) {
+    if (!messageId || messageId === imageLayoutEditingMessageId) {
+      imageLayoutEditingMessageId = "";
+      disconnectImageLayoutRowObserver();
+    }
+    return;
+  }
+  if (!messageId) {
+    return;
+  }
+  imageLayoutEditingMessageId = messageId;
+  void ensureImageLayoutRowObserver();
 };
 
 const messageExistsLocally = (id: string) => rows.value.some((msg) => msg.id === id);
@@ -4333,6 +4632,9 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
   }
   const sorted = nextRows.sort(compareByDisplayOrder);
   rows.value = sorted;
+  items.forEach((incoming) => {
+    upsertPinnedMessage(incoming);
+  });
   computeAfterCursorFromRows();
   if (cursor) {
     if (cursor.before !== undefined) {
@@ -4345,6 +4647,23 @@ const mergeIncomingMessages = (items: Message[], cursor?: { before?: string | nu
     if (cursor.after !== undefined) {
       messageWindow.afterCursor = cursor.after || '';
     }
+  }
+};
+
+const fetchPinnedMessages = async () => {
+  if (!chat.curChannel?.id) {
+    pinnedRows.value = [];
+    return;
+  }
+  try {
+    const list = await chat.pinnedMessageList(chat.curChannel.id, 20);
+    pinnedRows.value = normalizeMessageList(list || []).filter((item) => {
+      return Boolean((item as any).isPinned ?? (item as any).is_pinned ?? false);
+    });
+    sortPinnedRows();
+  } catch (error) {
+    pinnedRows.value = [];
+    console.warn('加载置顶消息失败', error);
   }
 };
 
@@ -5311,6 +5630,7 @@ const upsertMessage = (incoming?: Message) => {
   }
   if ((incoming as any).is_deleted || (incoming as any).isDeleted) {
     rows.value = rows.value.filter((msg) => msg.id !== incoming.id);
+    removePinnedMessage(incoming.id);
     return;
   }
   const index = rows.value.findIndex((msg) => msg.id === incoming.id);
@@ -5324,6 +5644,7 @@ const upsertMessage = (incoming?: Message) => {
     rows.value.push(incoming);
   }
   sortRowsByDisplayOrder();
+  upsertPinnedMessage(incoming);
 };
 
 async function replaceUsernames(text: string) {
@@ -5405,7 +5726,7 @@ const resolveTypingPreviewMode = (): TypingBroadcastState => {
   if (legacy === 'false') {
     return 'indicator';
   }
-  return 'indicator';
+  return 'content';
 };
 const typingPreviewMode = ref<TypingBroadcastState>(resolveTypingPreviewMode());
 if (localStorage.getItem(legacyTypingPreviewKey) !== null) {
@@ -6875,6 +7196,14 @@ const syncSessionDraftSnapshot = () => {
   });
 };
 
+const scheduleSessionDraftSnapshot = throttle(
+  () => {
+    syncSessionDraftSnapshot();
+  },
+  600,
+  { leading: false, trailing: true },
+);
+
 const tryAutoRestoreSessionDraft = () => {
   const channelKey = currentChannelKey.value;
   if (!channelKey || channelKey === HISTORY_CHANNEL_FALLBACK) {
@@ -7683,6 +8012,77 @@ const clearWhisperTargets = () => {
 
 const containsInlineImageMarker = (text: string) => /\[\[图片:[^\]]+\]\]/.test(text);
 
+const AT_TOKEN_FLEX_REGEX = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
+
+const decodeAtTokenText = (value: string) => {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+};
+
+const replaceAtTokensWithDisplayText = (value: string) => {
+  AT_TOKEN_FLEX_REGEX.lastIndex = 0;
+  return value.replace(AT_TOKEN_FLEX_REGEX, (_full, id: string, name: string) => {
+    const display = decodeAtTokenText(name || id || '用户');
+    return `@${display}`;
+  });
+};
+
+const collectMentionIdsFromText = (value: string, output: Set<string>) => {
+  AT_TOKEN_FLEX_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AT_TOKEN_FLEX_REGEX.exec(value)) !== null) {
+    const id = decodeAtTokenText(match[1] || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+};
+
+const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
+  if (!node) {
+    return;
+  }
+
+  if (typeof node.text === 'string' && node.text) {
+    collectMentionIdsFromText(node.text, output);
+  }
+
+  if (node.type === 'mention') {
+    const id = String(node.attrs?.id || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    node.content.forEach((child: any) => collectMentionIdsFromTipTapNode(child, output));
+  }
+};
+
+const collectMentionIdsFromContent = (content: string) => {
+  const output = new Set<string>();
+  if (!content) {
+    return output;
+  }
+
+  collectMentionIdsFromText(content, output);
+
+  if (isTipTapJson(content)) {
+    try {
+      const json = JSON.parse(content);
+      collectMentionIdsFromTipTapNode(json, output);
+    } catch {
+      // ignore
+    }
+  }
+
+  return output;
+};
+
 const collectInlineMarkerIds = (text: string) => {
   const markers = new Set<string>();
   inlineImageMarkerRegexp.lastIndex = 0;
@@ -7780,9 +8180,7 @@ const formatInlinePreviewText = (value: string) => {
   }
 
   // 将 <at> 标签转换为 @名字 格式
-  let replaced = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
-    return `@${name || '用户'}`;
-  });
+  let replaced = replaceAtTokensWithDisplayText(value);
   // 替换图片标记为 [图片]
   replaced = replaced.replace(/\[\[图片:[^\]]+\]\]/g, '[图片]');
   return normalizePlaceholderWhitespace(replaced);
@@ -7793,7 +8191,13 @@ const extractTipTapText = (node: any): string => {
   if (!node) return '';
 
   if (node.text !== undefined) {
-    return node.text;
+    return replaceAtTokensWithDisplayText(node.text);
+  }
+
+  if (node.type === 'mention') {
+    const mentionId = String(node.attrs?.id || '').trim();
+    const mentionName = String(node.attrs?.name || '').trim();
+    return `@${mentionName || mentionId || '用户'}`;
   }
 
   if (node.type === 'image') {
@@ -7821,19 +8225,19 @@ const renderDicePreviewSegment = (text: string) => {
   if (!text) return '';
   const matches = matchDiceExpressions(text, defaultDiceExpr.value);
   if (!matches.length) {
-    return escapeHtml(text);
+    return renderQuickFormatHtmlFromEscaped(escapeHtml(text));
   }
   let html = '';
   let cursor = 0;
   matches.forEach((match, index) => {
     if (match.start > cursor) {
-      html += escapeHtml(text.slice(cursor, match.start));
+      html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor, match.start)));
     }
     html += buildPreviewDiceChip(match, index);
     cursor = match.end;
   });
   if (cursor < text.length) {
-    html += escapeHtml(text.slice(cursor));
+    html += renderQuickFormatHtmlFromEscaped(escapeHtml(text.slice(cursor)));
   }
   return html;
 };
@@ -7856,9 +8260,7 @@ const renderPreviewContent = (value: string) => {
   }
 
   // 预览模式：将 <at> 标签转换为简单的 @名字 格式
-  let processedValue = value.replace(/<at\s+id="[^"]*"(?:\s+name="([^"]*)")?\s*\/>/g, (_, name) => {
-    return `@${name || '用户'}`;
-  });
+  let processedValue = replaceAtTokensWithDisplayText(value);
 
   // 处理普通文本和图片标记
   const imageMarkerRegex = /\[\[(?:图片:([^\]]+)|img:id:([^\]]+))\]\]/g;
@@ -7943,9 +8345,8 @@ const buildMessageHtml = async (draft: string) => {
   });
 
   let escaped = contentEscape(sanitizedDraft);
-  escaped = escaped.replace(/\r\n/g, '\n').replace(/\n/g, '<br />');
   escaped = await replaceUsernames(escaped);
-  let html = escaped;
+  let html = renderQuickFormatHtmlFromEscaped(escaped);
   placeholderMap.forEach((value, key) => {
     html = html.split(key).join(value);
   });
@@ -8087,8 +8488,9 @@ const handleRichImageInsert = async (files: File[]) => {
       draftRecord.status = 'uploaded';
       draftRecord.error = '';
 
-      // 更新编辑器中的图片 URL（使用 id: 协议）
-      const finalUrl = `id:${result.attachmentId}`;
+      // 更新编辑器中的图片 URL（使用可直接访问的相对路径）
+      const normalizedId = normalizeAttachmentId(result.attachmentId);
+      const finalUrl = normalizedId ? `/api/v1/attachment/${normalizedId}` : objectUrl;
       const { state } = editor;
       const { doc } = state;
 
@@ -8201,20 +8603,23 @@ const send = throttle(async () => {
   let draft = textToSend.value;
   let identityIdOverride: string | undefined;
 
-  // 仅纯文本模式支持 `/角色名 内容` 快捷切换
+  // 仅纯文本模式支持 `/角色名` 或 `/角色名 内容` 快捷切换
   if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith('/')) {
-    const shortcutMatch = /^\/(\S+)\s+([\s\S]*)$/.exec(draft);
-    if (shortcutMatch) {
-      const targetName = shortcutMatch[1];
-      const restContent = shortcutMatch[2] || '';
-      const identities = chat.channelIdentities[chat.curChannel.id] || [];
-      const matched = identities.find(item => item.displayName === targetName);
-      if (matched) {
-        chat.setActiveIdentity(chat.curChannel.id, matched.id);
-        draft = restContent;
-        textToSend.value = restContent;
-        emitTypingPreview();
-        identityIdOverride = matched.id;
+    const identities = chat.channelIdentities[chat.curChannel.id] || [];
+    const shortcutResult = resolveIdentityShortcutMatch(draft, identities);
+    if (shortcutResult?.ambiguous) {
+      message.warning('匹配到多个同长度角色，请输入更长名称');
+      return;
+    }
+    if (shortcutResult?.matched) {
+      chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
+      draft = shortcutResult.restContent;
+      textToSend.value = shortcutResult.restContent;
+      emitTypingPreview();
+      identityIdOverride = shortcutResult.matched.id;
+      if (!shortcutResult.restContent.trim()) {
+        stopTypingPreviewNow();
+        return;
       }
     }
   }
@@ -8403,7 +8808,7 @@ const handleDiceDefaultUpdate = async (expr: string) => {
 watch(textToSend, (value) => {
   handleWhisperCommand(value);
   scheduleHistorySnapshot();
-  syncSessionDraftSnapshot();
+  scheduleSessionDraftSnapshot();
   checkKeywordSuggest();
   if (isEditing.value) {
     chat.updateEditingDraft(value);
@@ -8655,24 +9060,38 @@ onMounted(async () => {
 
   chatEvent.off('message-deleted', '*');
   chatEvent.on('message-deleted', (e?: Event) => {
-    console.log('delete', e?.message?.id)
+    const targetId = e?.message?.id;
+    if (!targetId) {
+      return;
+    }
+    console.log('delete', targetId)
     for (let i of rows.value) {
-      if (i.id === e?.message?.id) {
+      if (i.id === targetId) {
         i.content = '';
         (i as any).is_revoked = true;
       }
       if (i.quote) {
-        if (i.quote?.id === e?.message?.id) {
+        if (i.quote?.id === targetId) {
           i.quote.content = '';
           (i as any).quote.is_revoked = true;
         }
       }
     }
+    for (let i of pinnedRows.value) {
+      if (i.id === targetId) {
+        i.content = '';
+        (i as any).is_revoked = true;
+      }
+      if (i.quote?.id === targetId) {
+        i.quote.content = '';
+        (i.quote as any).is_revoked = true;
+      }
+    }
   });
 
-  chatEvent.off('message-removed', '*');
-  chatEvent.on('message-removed', (e?: Event) => {
-    const targetId = e?.message?.id;
+chatEvent.off('message-removed', '*');
+chatEvent.on('message-removed', (e?: Event) => {
+  const targetId = e?.message?.id;
     if (!targetId) {
       return;
     }
@@ -8685,9 +9104,10 @@ onMounted(async () => {
         i.quote.content = '';
         (i.quote as any).is_deleted = true;
       }
-    }
-    rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
-    if (archiveDrawerVisible.value) {
+  }
+  rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
+  removePinnedMessage(targetId);
+  if (archiveDrawerVisible.value) {
       const index = archivedMessagesRaw.value.findIndex((item) => item.id === targetId);
       if (index >= 0) {
         archivedMessagesRaw.value.splice(index, 1);
@@ -8738,7 +9158,8 @@ chatEvent.on('message-created', (e?: Event) => {
     // 检测是否被 @ 了（包括 @all）
     const content = incoming.content || '';
     const currentUserId = user.info.id;
-    const isMentioned = content.includes(`id="${currentUserId}"`) || content.includes('id="all"');
+    const mentionIds = collectMentionIdsFromContent(content);
+    const isMentioned = mentionIds.has(currentUserId) || mentionIds.has('all');
 
     if (isMentioned) {
       // 被 @ 时播放额外提示音或特殊处理
@@ -8809,9 +9230,41 @@ chatEvent.on('message-created', (e?: Event) => {
   }
 });
 
+chatEvent.off('channel-image-layout-updated' as any, '*');
+chatEvent.on('channel-image-layout-updated' as any, (e?: Event) => {
+  const payload = (e as any)?.channelImageLayout || (e as any)?.channel_image_layout;
+  if (!payload) {
+    return;
+  }
+  const channelId = String(payload.channelId || payload.channel_id || e?.channel?.id || '').trim();
+  if (!channelId || channelId !== chat.curChannel?.id) {
+    return;
+  }
+  channelImageLayout.applyRealtimeUpdate(payload);
+});
+
 chatEvent.off('message-updated', '*');
 chatEvent.on('message-updated', (e?: Event) => {
   if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  if ((e as any).is_interactive_update) {
+    const incoming = normalizeMessageShape(e.message);
+    const rowIndex = rows.value.findIndex((m: any) => m.id === incoming.id);
+    if (rowIndex >= 0) {
+      rows.value[rowIndex] = {
+        ...rows.value[rowIndex],
+        ...incoming,
+      };
+    }
+    const pinIndex = pinnedRows.value.findIndex((m: any) => m.id === incoming.id);
+    if (pinIndex >= 0) {
+      pinnedRows.value[pinIndex] = {
+        ...pinnedRows.value[pinIndex],
+        ...incoming,
+      };
+      sortPinnedRows();
+    }
     return;
   }
   const incoming = normalizeMessageShape(e.message);
@@ -8866,6 +9319,7 @@ chatEvent.on('message-archived', (e?: Event) => {
       rows.value.splice(index, 1);
     }
   }
+  removePinnedMessage(incoming.id);
   if (archiveDrawerVisible.value) {
     const entry = toArchivedPanelEntry(incoming as Message);
     const index = archivedMessagesRaw.value.findIndex(item => item.id === entry.id);
@@ -8875,6 +9329,28 @@ chatEvent.on('message-archived', (e?: Event) => {
       archivedMessagesRaw.value.unshift(entry);
     }
   }
+});
+
+chatEvent.off('message-pinned', '*');
+chatEvent.on('message-pinned', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const incoming = normalizeMessageShape(e.message);
+  (incoming as any).isPinned = true;
+  upsertPinnedMessage(incoming);
+  upsertMessage(incoming as Message);
+});
+
+chatEvent.off('message-unpinned', '*');
+chatEvent.on('message-unpinned', (e?: Event) => {
+  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+    return;
+  }
+  const incoming = normalizeMessageShape(e.message);
+  (incoming as any).isPinned = false;
+  removePinnedMessage(incoming.id);
+  upsertMessage(incoming as Message);
 });
 
 chatEvent.off('message-unarchived', '*');
@@ -9073,6 +9549,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     } else {
       await fetchLatestMessages();
     }
+    await fetchPinnedMessages();
   })
 
   chatEvent.on('search-jump', async (e: any) => {
@@ -9098,6 +9575,7 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     }
     clearInputModeCache();
     resetWindowState('live');
+    pinnedRows.value = [];
     resetDragState();
     localReorderOps.clear();
     showButton.value = false;
@@ -9107,11 +9585,13 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
     scheduleHistoryAutoRestore();
     const fetchTask = fetchLatestMessages();
     fetchTask.finally(() => {
+      void fetchPinnedMessages();
       void maybePromptIdentitySync();
     });
   })
 
   await fetchLatestMessages();
+  await fetchPinnedMessages();
   firstLoad = true;
   await maybePromptIdentitySync();
 
@@ -9132,9 +9612,12 @@ onBeforeUnmount(() => {
   stopTypingPreviewNow();
   stopEditingPreviewNow();
   resetTypingPreview();
+  scheduleHistorySnapshot.cancel();
+  scheduleSessionDraftSnapshot.cancel();
   syncSessionDraftSnapshot();
   disposeSelfPreviewObserver();
   disposeTypingViewportObserver();
+  disposeImageLayoutRowObserver();
   cancelDrag();
   stopTopObserver();
   stopBottomObserver();
@@ -9811,6 +10294,7 @@ const keyDown = function (e: KeyboardEvent) {
 
 const atOptions = ref<MentionOption[]>([])
 const atLoading = ref(true)
+let atSearchRequestSeq = 0
 const atRenderLabel = (option: MentionOption) => {
   switch (option.type) {
     case 'cmd':
@@ -9842,6 +10326,7 @@ const atRenderLabel = (option: MentionOption) => {
 const atPrefix = computed(() => chat.atOptionsOn ? ['@', '/', '.'] : ['@']);
 
 const atHandleSearch = async (pattern: string, prefix: string) => {
+  const requestSeq = ++atSearchRequestSeq;
   pauseKeydown.value = true;
   atLoading.value = true;
 
@@ -9868,82 +10353,92 @@ const atHandleSearch = async (pattern: string, prefix: string) => {
     }
   }
 
-  switch (prefix) {
-    case '@': {
-      await ensurePinyinLoaded();
-      const channelId = chat.curChannel?.id;
-      if (!channelId) {
-        atOptions.value = [];
-        break;
-      }
-      const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
-      const result = await chat.fetchMentionableMembers(channelId, icMode);
-      let lst: MentionOption[] = [];
-      // @all option
-      if (result.canAtAll) {
-        const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
-        if (allMatches) {
+  try {
+    switch (prefix) {
+      case '@': {
+        await ensurePinyinLoaded();
+        if (requestSeq !== atSearchRequestSeq) {
+          return;
+        }
+        const channelId = chat.curChannel?.id;
+        if (!channelId) {
+          atOptions.value = [];
+          break;
+        }
+        const icMode = chat.icMode as 'ic' | 'ooc' | undefined;
+        const result = await chat.fetchMentionableMembers(channelId, icMode);
+        if (requestSeq !== atSearchRequestSeq) {
+          return;
+        }
+        let lst: MentionOption[] = [];
+        // @all option
+        if (result.canAtAll) {
+          const allMatches = !pattern || matchText(pattern, '全体成员') || pattern.toLowerCase() === 'all';
+          if (allMatches) {
+            lst.push({
+              type: 'at',
+              value: '<at id="all" name="全体成员"/>',
+              label: '全体成员',
+              data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+            });
+          }
+        }
+        // Filter and map members
+        for (const item of result.items) {
+          if (pattern && !matchText(pattern, item.displayName)) {
+            continue;
+          }
+          const escapedName = item.displayName.replace(/"/g, '&quot;');
           lst.push({
             type: 'at',
-            value: '<at id="all" name="全体成员"/>',
-            label: '全体成员',
-            data: { userId: 'all', displayName: '全体成员', identityType: 'all' },
+            value: `<at id="${item.userId}" name="${escapedName}"/>`,
+            label: item.displayName,
+            data: item,
           });
         }
+        atOptions.value = lst.slice(0, 10);
+        break;
       }
-      // Filter and map members
-      for (const item of result.items) {
-        if (pattern && !matchText(pattern, item.displayName)) {
-          continue;
-        }
-        const escapedName = item.displayName.replace(/"/g, '&quot;');
-        lst.push({
-          type: 'at',
-          value: `<at id="${item.userId}" name="${escapedName}"/>`,
-          label: item.displayName,
-          data: item,
-        });
-      }
-      atOptions.value = lst.slice(0, 10);
-      break;
-    }
-    case '.': case '/':
-      // 好像暂时没法组织他弹出
-      // if (!cmdCheck()) {
-      //   atLoading.value = false;
-      //   pauseKeydown.value = false;
-      //   return;
-      // }
+      case '.': case '/':
+        // 好像暂时没法组织他弹出
+        // if (!cmdCheck()) {
+        //   atLoading.value = false;
+        //   pauseKeydown.value = false;
+        //   return;
+        // }
 
-      if (chat.atOptionsOn) {
-        atOptions.value = [[`x`, 'x d100'],].map((i) => {
-          return {
-            type: 'cmd',
-            value: i[0],
-            label: i[0],
-            data: {
-              "info": '/x 简易骰点指令，如：/x d100 (100面骰)'
+        if (chat.atOptionsOn) {
+          atOptions.value = [[`x`, 'x d100'],].map((i) => {
+            return {
+              type: 'cmd',
+              value: i[0],
+              label: i[0],
+              data: {
+                "info": '/x 简易骰点指令，如：/x d100 (100面骰)'
+              }
+            }
+          });
+
+          for (let [id, data] of Object.entries(utils.botCommands)) {
+            for (let [k, v] of Object.entries(data)) {
+              atOptions.value.push({
+                type: 'cmd',
+                value: k,
+                label: k,
+                data: {
+                  "info": `/${k} ` + (v as any).split('\n', 1)[0].replace(/^\.\S+/, '')
+                }
+              })
             }
           }
-        });
-
-        for (let [id, data] of Object.entries(utils.botCommands)) {
-          for (let [k, v] of Object.entries(data)) {
-            atOptions.value.push({
-              type: 'cmd',
-              value: k,
-              label: k,
-              data: {
-                "info": `/${k} ` + (v as any).split('\n', 1)[0].replace(/^\.\S+/, '')
-              }
-            })
-          }
         }
-      }
-      break;
+        break;
+    }
+  } finally {
+    if (requestSeq === atSearchRequestSeq) {
+      atLoading.value = false;
+    }
   }
-
-  atLoading.value = false;
 }
 
 const { stop: stopTopObserver } = useIntersectionObserver(
@@ -10024,7 +10519,20 @@ const avatarLongpress = (data: any) => {
 }
 
 // Multi-select handlers
-const allMessageIds = computed(() => rows.value.map(row => row.id));
+const allMessageIds = computed(() => {
+  const ids = new Set<string>();
+  for (const row of rows.value) {
+    if (row.id) {
+      ids.add(row.id);
+    }
+  }
+  for (const row of pinnedRows.value) {
+    if (row.id) {
+      ids.add(row.id);
+    }
+  }
+  return Array.from(ids);
+});
 
 const getMultiSelectedMessages = () => {
   if (!chat.multiSelect?.selectedIds.size) return [];
@@ -10276,7 +10784,7 @@ const insertGalleryInline = (attachmentId: string) => {
   const normalized = attachmentId.startsWith('id:') ? attachmentId.slice(3) : attachmentId;
   if (inputMode.value === 'rich') {
     const editor = textInputRef.value?.getEditor?.();
-    editor?.chain().focus().setImage({ src: `id:${normalized}` }).run();
+    editor?.chain().focus().setImage({ src: `/api/v1/attachment/${normalized}` }).run();
     return;
   }
 
@@ -10467,6 +10975,49 @@ onBeforeUnmount(() => {
     <IFormPanelHost />
 
     <div
+      v-if="display.settings.showPinnedMessages && pinnedRows.length > 0"
+      class="chat-pinned-zone px-4"
+      :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar }]"
+    >
+      <div class="chat-pinned-zone__header" @click="pinnedCollapsed = !pinnedCollapsed">
+        <span class="chat-pinned-zone__title">置顶消息</span>
+        <n-icon class="chat-pinned-zone__toggle" size="14">
+          <component :is="pinnedCollapsed ? ChevronRight : ChevronDown" />
+        </n-icon>
+      </div>
+      <div v-show="!pinnedCollapsed" class="chat-pinned-zone__list">
+        <template v-for="pinItem in pinnedRows" :key="`pinned-${pinItem.id}`">
+          <div :class="['chat-pinned-zone__row', rowClass(pinItem)]" :data-message-id="pinItem.id">
+            <div :class="rowSurfaceClass(pinItem)">
+              <chat-item
+                :avatar="getMessageAvatar(pinItem)"
+                :username="getMessageDisplayName(pinItem)"
+                :identity-color="getMessageIdentityColor(pinItem)"
+                :content="pinItem.content"
+                :item="pinItem"
+                :all-message-ids="allMessageIds"
+                :editing-preview="editingPreviewMap[pinItem.id]"
+                :tone="getMessageTone(pinItem)"
+                :show-avatar="display.showAvatar"
+                :hide-avatar="false"
+                :show-header="true"
+                :layout="display.layout"
+                :is-self="isSelfMessage(pinItem)"
+                :is-merged="false"
+                :world-keyword-editable="canManageWorldKeywords"
+                @avatar-longpress="avatarLongpress(pinItem)"
+                @edit="beginEdit(pinItem)"
+                @edit-save="saveEdit"
+                @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
+              />
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div
       class="chat overflow-y-auto h-full px-4 pt-6"
       :class="[`chat--layout-${display.layout}`, `chat--palette-${display.palette}`, { 'chat--no-avatar': !display.showAvatar, 'chat--show-drag-indicator': display.settings.showDragIndicator, 'chat--has-background': !!channelBackgroundStyle }]"
       v-show="rows.length > 0 || messageWindow.loadingLatest"
@@ -10528,6 +11079,7 @@ onBeforeUnmount(() => {
                     @edit="beginEdit(entry.message)"
                     @edit-save="saveEdit"
                     @edit-cancel="cancelEditing"
+                    @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                   />
                 </div>
               </div>
@@ -10561,6 +11113,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
             <template v-else>
@@ -10592,6 +11145,7 @@ onBeforeUnmount(() => {
                 @edit="beginEdit(entry.message)"
                 @edit-save="saveEdit"
                 @edit-cancel="cancelEditing"
+                @image-layout-edit-state-change="handleImageLayoutEditStateChange"
               />
             </template>
           </div>
@@ -10708,7 +11262,7 @@ onBeforeUnmount(() => {
             </VirtualList> -->
     </div>
     <div
-      v-if="rows.length === 0 && !messageWindow.loadingLatest"
+      v-if="rows.length === 0 && (!display.settings.showPinnedMessages || pinnedRows.length === 0) && !messageWindow.loadingLatest"
       class="flex h-full items-center text-2xl justify-center text-gray-400"
     >说点什么吧</div>
 
@@ -10949,27 +11503,38 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
 
-                        <div v-if="hasEmojiItems && hasMultipleTabs" class="emoji-panel__tabs">
+                        <div class="emoji-panel__tabs emoji-panel__tabs--with-utf">
+                          <template v-if="hasEmojiItems && hasMultipleTabs">
+                            <button
+                              class="emoji-panel__tab"
+                              :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === null }"
+                              @click="switchEmojiPanelTab('gallery'); activeEmojiTab = null"
+                            >
+                              全部
+                            </button>
+                            <button
+                              v-for="tab in emojiTabOptions"
+                              :key="tab.id"
+                              class="emoji-panel__tab"
+                              :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'gallery' && activeEmojiTab === tab.id }"
+                              :title="tab.name"
+                              @click="switchEmojiPanelTab('gallery'); activeEmojiTab = tab.id"
+                            >
+                              <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                            </button>
+                          </template>
                           <button
-                            class="emoji-panel__tab"
-                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === null }"
-                            @click="activeEmojiTab = null"
+                            class="emoji-panel__tab emoji-panel__tab--utf"
+                            :class="{ 'emoji-panel__tab--active': emojiPanelTab === 'utf' }"
+                            title="UTF 表情"
+                            @click="switchEmojiPanelTab('utf')"
                           >
-                            全部
-                          </button>
-                          <button
-                            v-for="tab in emojiTabOptions"
-                            :key="tab.id"
-                            class="emoji-panel__tab"
-                            :class="{ 'emoji-panel__tab--active': activeEmojiTab === tab.id }"
-                            :title="tab.name"
-                            @click="activeEmojiTab = tab.id"
-                          >
-                            <span class="emoji-panel__tab-text">{{ tab.name }}</span>
+                            <span class="emoji-panel__tab-icon" aria-hidden="true">😊</span>
+                            <span class="emoji-panel__tab-text">UTF</span>
                           </button>
                         </div>
 
-                        <div v-if="hasEmojiItems" class="emoji-panel__search">
+                        <div v-if="emojiPanelTab === 'gallery' && hasEmojiItems" class="emoji-panel__search">
                           <n-input
                             v-model:value="emojiSearchQuery"
                             size="small"
@@ -10978,11 +11543,25 @@ onBeforeUnmount(() => {
                           />
                         </div>
 
-                        <div v-if="!hasEmojiItems" class="emoji-panel__empty">
+                        <div v-if="emojiPanelTab === 'gallery' && !hasEmojiItems" class="emoji-panel__empty">
                           当前没有收藏的表情，可以在聊天窗口的图片上<b class="px-1">长按</b>或<b class="px-1">右键</b>添加
                         </div>
 
-                        <div v-else class="emoji-panel__content">
+                        <div
+                          class="emoji-panel__content"
+                          :class="{ 'emoji-panel__content--utf': emojiPanelTab === 'utf' }"
+                        >
+                          <template v-if="emojiPanelTab === 'utf'">
+                            <div class="emoji-panel__utf-host">
+                              <EmojiPickerModal
+                                embedded
+                                mode="emoji-only"
+                                initial-tab="emoji"
+                                @select="handleUtfEmojiSelect"
+                              />
+                            </div>
+                          </template>
+                          <template v-else>
                           <template v-if="isManagingEmoji">
                             <div v-if="filteredEmojiItems.length === 0" class="emoji-panel__empty">
                               没有匹配的表情
@@ -11036,6 +11615,7 @@ onBeforeUnmount(() => {
                                 </div>
                               </div>
                             </div>
+                          </template>
                           </template>
                         </div>
                       </div>
@@ -11537,6 +12117,7 @@ onBeforeUnmount(() => {
                   :rows="1"
                   :input-class="chatInputClassList"
                   :inline-images="inlineImagePreviewMap"
+                  :default-i-form-embed-link="defaultIFormEmbedLink"
                   @mention-search="atHandleSearch"
                   @mention-select="handleMentionSelect"
                   @keydown="keyDown"
@@ -12041,6 +12622,87 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 1;
   pointer-events: none;
+}
+
+.chat-pinned-zone {
+  position: relative;
+  z-index: 2;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.chat-pinned-zone__header {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0;
+  color: rgba(100, 116, 139, 0.95);
+}
+
+.chat-pinned-zone__title {
+  line-height: 1.25;
+}
+
+.chat-pinned-zone__toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-pinned-zone__list {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0;
+  padding: 0;
+  background: rgba(248, 250, 252, 0.66);
+  backdrop-filter: blur(6px);
+}
+
+.chat-pinned-zone__row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.chat-pinned-zone :deep(.message-row) {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.chat-pinned-zone :deep(.chat-item) {
+  padding-bottom: 0 !important;
+}
+
+.chat-pinned-zone :deep(.message-row__surface) {
+  border-radius: 0 !important;
+}
+
+.chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__header {
+  color: rgba(203, 213, 225, 0.92);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__list {
+  border-color: rgba(148, 163, 184, 0.3);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+:root[data-display-palette='night'] .chat-pinned-zone__row + .chat-pinned-zone__row {
+  border-top-color: rgba(148, 163, 184, 0.22);
+}
+
+:root[data-custom-theme='true'] .chat-pinned-zone__header {
+  color: var(--sc-text-tertiary);
+}
+
+:root[data-custom-theme='true'] .chat-pinned-zone__list {
+  border-color: var(--sc-border-default);
+  background: color-mix(in srgb, var(--sc-bg-surface) 74%, transparent);
 }
 
 .message-row {
@@ -13096,7 +13758,9 @@ onBeforeUnmount(() => {
 
   /* 代码样式 */
   code {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--chat-inline-code-bg, rgba(0, 0, 0, 0.05));
+    color: var(--chat-inline-code-fg, inherit);
+    border: 1px solid var(--chat-inline-code-border, transparent);
     border-radius: 0.25rem;
     padding: 0.125rem 0.375rem;
     font-family: 'Courier New', monospace;
@@ -13320,7 +13984,9 @@ onBeforeUnmount(() => {
   }
 
   code {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--chat-inline-code-bg, rgba(0, 0, 0, 0.05));
+    color: var(--chat-inline-code-fg, inherit);
+    border: 1px solid var(--chat-inline-code-border, transparent);
     border-radius: 0.25rem;
     padding: 0.125rem 0.375rem;
     font-family: 'Courier New', monospace;
@@ -14560,6 +15226,20 @@ onBeforeUnmount(() => {
   padding-right: 4px;
 }
 
+.emoji-panel__content--utf {
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.emoji-panel__utf-host {
+  height: 320px;
+  min-height: 0;
+}
+
+.emoji-panel__utf-host :deep(.emoji-picker-container--embedded) {
+  height: 100%;
+}
+
 @media (max-width: 768px) {
   .emoji-panel {
     width: calc(100vw - 32px);
@@ -14639,6 +15319,21 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.emoji-panel__tabs--with-utf {
+  align-items: center;
+}
+
+.emoji-panel__tab--utf {
+  margin-left: auto;
+  gap: 4px;
+  min-width: 64px;
+}
+
+.emoji-panel__tab-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .emoji-panel__search {
@@ -15596,6 +16291,9 @@ onBeforeUnmount(() => {
 
 .tiptap-spoiler {
   display: inline-block;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   padding: 0 0.2em;
   border-radius: 0.2em;
   border: 1px solid var(--spoiler-border);
@@ -15612,6 +16310,23 @@ onBeforeUnmount(() => {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
+.tiptap-spoiler:not(.is-revealed)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--spoiler-bg);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--spoiler-stripe) 0,
+    var(--spoiler-stripe) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
 .tiptap-spoiler.is-revealed {
   color: inherit;
   background-color: var(--spoiler-reveal-bg);
@@ -15624,6 +16339,12 @@ onBeforeUnmount(() => {
   color: inherit;
   background-color: var(--spoiler-reveal-bg);
   background-image: none;
+}
+
+.tiptap-editor .tiptap-spoiler::after,
+.keyword-rich-content .tiptap-spoiler::after,
+.sticky-note-editor__content .tiptap-spoiler::after {
+  content: none;
 }
 
 /* @ mention option styles */

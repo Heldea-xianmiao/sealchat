@@ -48,6 +48,7 @@ const characterApiUnavailableText = computed(() => {
   if (!channelId) return '请先选择频道';
   return cardStore.getCharacterApiDisabledReason(channelId) || characterApiUnsupportedText;
 });
+const revalidatingCharacterApi = ref(false);
 
 const ensureCharacterApiEnabled = (showMessage = true) => {
   const channelId = resolvedChannelId.value;
@@ -134,29 +135,58 @@ const syncBadgeTemplateToWorld = async () => {
   }
 };
 
+const loadPanelData = async (channelId: string) => {
+  await cardStore.loadCards(channelId);
+  await templateStore.ensureTemplatesLoaded();
+  await templateStore.loadBindings(channelId);
+  await templateStore.migrateLocalTemplatesIfNeeded(
+    channelId,
+    channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
+  );
+  await templateStore.loadBindings(channelId);
+};
+
+const handleRevalidateCharacterApi = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return;
+  }
+  if (revalidatingCharacterApi.value) {
+    return;
+  }
+  revalidatingCharacterApi.value = true;
+  try {
+    const result = await cardStore.revalidateCharacterApi(channelId);
+    if (result.ok) {
+      message.success('人物卡 API 验证成功，已解除禁用');
+      return;
+    }
+    message.error(result.error || '人物卡 API 验证失败');
+  } finally {
+    revalidatingCharacterApi.value = false;
+  }
+};
+
 watch(() => props.visible, async (val) => {
   if (val && resolvedChannelId.value && !characterApiDisabled.value) {
-    await cardStore.loadCards(resolvedChannelId.value);
-    await templateStore.ensureTemplatesLoaded();
-    await templateStore.loadBindings(resolvedChannelId.value);
-    await templateStore.migrateLocalTemplatesIfNeeded(
-      resolvedChannelId.value,
-      channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
-    );
-    await templateStore.loadBindings(resolvedChannelId.value);
+    await loadPanelData(resolvedChannelId.value);
   }
 }, { immediate: true });
 
 watch(resolvedChannelId, async (newId) => {
   if (props.visible && newId && !characterApiDisabled.value) {
-    await cardStore.loadCards(newId);
-    await templateStore.ensureTemplatesLoaded();
-    await templateStore.loadBindings(newId);
-    await templateStore.migrateLocalTemplatesIfNeeded(
-      newId,
-      channelCards.value.map(item => ({ id: item.id, name: item.name, sheetType: item.sheetType || '' })),
-    );
-    await templateStore.loadBindings(newId);
+    await loadPanelData(newId);
+  }
+});
+
+watch(characterApiDisabled, async (disabled, prevDisabled) => {
+  const channelId = resolvedChannelId.value;
+  if (!props.visible || !channelId) {
+    return;
+  }
+  if (prevDisabled && !disabled) {
+    await loadPanelData(channelId);
   }
 });
 
@@ -806,7 +836,17 @@ const openPreview = async (card: CharacterCard) => {
       </template>
 
       <div v-if="characterApiDisabled" class="character-api-unavailable">
-        {{ characterApiUnavailableText }}
+        <span class="character-api-unavailable__text">{{ characterApiUnavailableText }}</span>
+        <n-button
+          size="tiny"
+          tertiary
+          type="warning"
+          :loading="revalidatingCharacterApi"
+          :disabled="!resolvedChannelId"
+          @click="handleRevalidateCharacterApi"
+        >
+          重新验证
+        </n-button>
       </div>
 
       <div class="character-card-settings">
@@ -1134,6 +1174,10 @@ const openPreview = async (card: CharacterCard) => {
 }
 
 .character-api-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   margin-bottom: 0.75rem;
   padding: 0.65rem 0.75rem;
   border-radius: 8px;
@@ -1142,6 +1186,11 @@ const openPreview = async (card: CharacterCard) => {
   color: var(--sc-text-primary);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.character-api-unavailable__text {
+  flex: 1;
+  min-width: 0;
 }
 
 .settings-row {

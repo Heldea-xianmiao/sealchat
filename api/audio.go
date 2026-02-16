@@ -200,14 +200,14 @@ func AudioAssetImport(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "音频导入目录未配置")
 	}
 	var req struct {
-		All         bool                        `json:"all"`
-		Paths       []string                    `json:"paths"`
-		Scope       model.AudioAssetScope       `json:"scope"`
-		WorldID     string                      `json:"worldId"`
-		FolderID    string                      `json:"folderId"`
-		Tags        []string                    `json:"tags"`
-		Visibility  model.AudioAssetVisibility  `json:"visibility"`
-		Description string                      `json:"description"`
+		All         bool                       `json:"all"`
+		Paths       []string                   `json:"paths"`
+		Scope       model.AudioAssetScope      `json:"scope"`
+		WorldID     string                     `json:"worldId"`
+		FolderID    string                     `json:"folderId"`
+		Tags        []string                   `json:"tags"`
+		Visibility  model.AudioAssetVisibility `json:"visibility"`
+		Description string                     `json:"description"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "导入请求解析失败")
@@ -724,17 +724,25 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusForbidden, err, "仅频道成员可更新播放状态")
 	}
 	state, err := service.AudioUpsertPlaybackState(service.AudioPlaybackUpdateInput{
-		ChannelID:    req.ChannelID,
-		SceneID:      req.SceneID,
-		Tracks:       req.Tracks,
-		IsPlaying:    req.IsPlaying,
-		Position:     req.Position,
-		LoopEnabled:  req.LoopEnabled,
-		PlaybackRate: req.PlaybackRate,
+		ChannelID:            req.ChannelID,
+		SceneID:              req.SceneID,
+		Tracks:               req.Tracks,
+		IsPlaying:            req.IsPlaying,
+		Position:             req.Position,
+		LoopEnabled:          req.LoopEnabled,
+		PlaybackRate:         req.PlaybackRate,
 		WorldPlaybackEnabled: req.WorldPlaybackEnabled,
-		ActorID:      user.ID,
+		BaseRevision:         req.BaseRevision,
+		ActorID:              user.ID,
 	})
 	if err != nil {
+		var conflictErr *service.AudioPlaybackRevisionConflictError
+		if errors.As(err, &conflictErr) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"message": "播放状态版本冲突",
+				"state":   buildAudioPlaybackResponse(conflictErr.CurrentState),
+			})
+		}
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新播放状态失败")
 	}
 	if state != nil {
@@ -858,14 +866,15 @@ func strPtr(value string) *string {
 }
 
 type audioPlaybackStateRequest struct {
-	ChannelID    string                    `json:"channelId"`
-	SceneID      *string                   `json:"sceneId"`
-	Tracks       []service.AudioTrackState `json:"tracks"`
-	IsPlaying    bool                      `json:"isPlaying"`
-	Position     float64                   `json:"position"`
-	LoopEnabled  bool                      `json:"loopEnabled"`
-	PlaybackRate float64                   `json:"playbackRate"`
-	WorldPlaybackEnabled bool              `json:"worldPlaybackEnabled"`
+	ChannelID            string                    `json:"channelId"`
+	SceneID              *string                   `json:"sceneId"`
+	Tracks               []service.AudioTrackState `json:"tracks"`
+	IsPlaying            bool                      `json:"isPlaying"`
+	Position             float64                   `json:"position"`
+	LoopEnabled          bool                      `json:"loopEnabled"`
+	PlaybackRate         float64                   `json:"playbackRate"`
+	WorldPlaybackEnabled bool                      `json:"worldPlaybackEnabled"`
+	BaseRevision         int64                     `json:"baseRevision"`
 }
 
 func ensureChannelMembership(userID, channelID string) error {
@@ -885,16 +894,17 @@ func buildAudioPlaybackResponse(state *model.AudioPlaybackState) interface{} {
 	}
 	tracks := []model.AudioTrackState(state.Tracks)
 	return fiber.Map{
-		"channelId":    state.ChannelID,
-		"sceneId":      state.SceneID,
-		"tracks":       tracks,
-		"isPlaying":    state.IsPlaying,
-		"position":     state.Position,
-		"loopEnabled":  state.LoopEnabled,
-		"playbackRate": state.PlaybackRate,
+		"channelId":            state.ChannelID,
+		"sceneId":              state.SceneID,
+		"tracks":               tracks,
+		"isPlaying":            state.IsPlaying,
+		"position":             state.Position,
+		"loopEnabled":          state.LoopEnabled,
+		"playbackRate":         state.PlaybackRate,
 		"worldPlaybackEnabled": state.WorldPlaybackEnabled,
-		"updatedBy":    state.UpdatedBy,
-		"updatedAt":    state.UpdatedAt,
+		"revision":             state.Revision,
+		"updatedBy":            state.UpdatedBy,
+		"updatedAt":            state.UpdatedAt.Unix(),
 	}
 }
 
@@ -906,16 +916,17 @@ func broadcastAudioPlaybackState(operator *model.UserModel, state *model.AudioPl
 		return
 	}
 	payload := &protocol.AudioPlaybackStatePayload{
-		ChannelID:    state.ChannelID,
-		SceneID:      state.SceneID,
-		Tracks:       convertTrackStates(state.Tracks),
-		IsPlaying:    state.IsPlaying,
-		Position:     state.Position,
-		LoopEnabled:  state.LoopEnabled,
-		PlaybackRate: state.PlaybackRate,
+		ChannelID:            state.ChannelID,
+		SceneID:              state.SceneID,
+		Tracks:               convertTrackStates(state.Tracks),
+		IsPlaying:            state.IsPlaying,
+		Position:             state.Position,
+		LoopEnabled:          state.LoopEnabled,
+		PlaybackRate:         state.PlaybackRate,
 		WorldPlaybackEnabled: state.WorldPlaybackEnabled,
-		UpdatedBy:    state.UpdatedBy,
-		UpdatedAt:    state.UpdatedAt.Unix(),
+		Revision:             state.Revision,
+		UpdatedBy:            state.UpdatedBy,
+		UpdatedAt:            state.UpdatedAt.Unix(),
 	}
 	event := &protocol.Event{
 		Type: protocol.EventAudioStateUpdated,
@@ -948,17 +959,21 @@ func convertTrackStates(list model.JSONList[model.AudioTrackState]) []protocol.A
 	result := make([]protocol.AudioTrackState, 0, len(list))
 	for _, item := range list {
 		result = append(result, protocol.AudioTrackState{
-			Type:         item.Type,
-			AssetID:      item.AssetID,
-			Volume:       item.Volume,
-			Muted:        item.Muted,
-			Solo:         item.Solo,
-			FadeIn:       item.FadeIn,
-			FadeOut:      item.FadeOut,
-			IsPlaying:    item.IsPlaying,
-			Position:     item.Position,
-			LoopEnabled:  item.LoopEnabled,
-			PlaybackRate: item.PlaybackRate,
+			Type:             item.Type,
+			AssetID:          item.AssetID,
+			Volume:           item.Volume,
+			Muted:            item.Muted,
+			Solo:             item.Solo,
+			FadeIn:           item.FadeIn,
+			FadeOut:          item.FadeOut,
+			IsPlaying:        item.IsPlaying,
+			Position:         item.Position,
+			LoopEnabled:      item.LoopEnabled,
+			PlaybackRate:     item.PlaybackRate,
+			PlaylistFolderID: item.PlaylistFolderID,
+			PlaylistMode:     item.PlaylistMode,
+			PlaylistAssetIDs: append([]string(nil), item.PlaylistAssetIDs...),
+			PlaylistIndex:    item.PlaylistIndex,
 		})
 	}
 	return result

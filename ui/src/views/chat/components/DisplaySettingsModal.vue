@@ -55,6 +55,7 @@ watch(
     draft.showInputPreview = value.showInputPreview
     draft.autoScrollTypingPreview = value.autoScrollTypingPreview
     draft.mergeNeighbors = value.mergeNeighbors
+    draft.showPinnedMessages = value.showPinnedMessages
     draft.alwaysShowTimestamp = value.alwaysShowTimestamp
     draft.timestampFormat = value.timestampFormat
     draft.maxExportMessages = value.maxExportMessages
@@ -129,12 +130,93 @@ const handleRestoreDefaults = () => {
 }
 
 const handleClose = () => emit('update:visible', false)
-const handleConfirm = () => {
-  // Exclude custom theme fields - they are managed directly by store actions
+
+const stripCustomThemeFields = (value: DisplaySettings) => {
+  // Custom theme fields are managed directly by store actions, not by this draft.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = draft
-  emit('save', rest as any)
+  const { customThemeEnabled, customThemes, activeCustomThemeId, ...rest } = value as any
+  return rest as DisplaySettings
 }
+
+const deepEqual = (a: any, b: any): boolean => {
+  if (a === b) return true
+  if (a === null || b === null) return a === b
+  if (typeof a !== typeof b) return false
+  if (typeof a !== 'object') return false
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i += 1) {
+      if (!deepEqual(a[i], b[i])) return false
+    }
+    return true
+  }
+
+  const aKeys = Object.keys(a).sort()
+  const bKeys = Object.keys(b).sort()
+  if (aKeys.length !== bKeys.length) return false
+  for (let i = 0; i < aKeys.length; i += 1) {
+    const k = aKeys[i]
+    if (k !== bKeys[i]) return false
+    if (!deepEqual(a[k], b[k])) return false
+  }
+  return true
+}
+
+const AUTO_SAVE_DEBOUNCE_MS = 150
+let autoSaveTimer: number | undefined
+const scheduleAutoSave = () => {
+  if (typeof window === 'undefined') return
+  if (!props.visible) return
+
+  if (autoSaveTimer !== undefined) {
+    window.clearTimeout(autoSaveTimer)
+  }
+
+  autoSaveTimer = window.setTimeout(() => {
+    const next = stripCustomThemeFields(draft as any)
+    const cur = stripCustomThemeFields(props.settings as any)
+    if (deepEqual(next, cur)) return
+    emit('save', next as any)
+  }, AUTO_SAVE_DEBOUNCE_MS)
+}
+
+const flushAutoSave = () => {
+  const next = stripCustomThemeFields(draft as any)
+  const cur = stripCustomThemeFields(props.settings as any)
+  if (deepEqual(next, cur)) return
+  emit('save', next as any)
+}
+
+watch(
+  draft,
+  () => {
+    scheduleAutoSave()
+  },
+  { deep: true },
+)
+
+watch(
+  () => props.visible,
+  (visible, prevVisible) => {
+    // If user closes the modal right after editing, flush pending changes once.
+    if (!visible && prevVisible) {
+      if (typeof window !== 'undefined' && autoSaveTimer !== undefined) {
+        window.clearTimeout(autoSaveTimer)
+        autoSaveTimer = undefined
+      }
+      flushAutoSave()
+      return
+    }
+    if (visible) return
+    if (typeof window === 'undefined') return
+    if (autoSaveTimer !== undefined) {
+      window.clearTimeout(autoSaveTimer)
+      autoSaveTimer = undefined
+    }
+  },
+)
 
 const handleOpenTutorialHub = () => {
   onboarding.restart()
@@ -152,6 +234,7 @@ const handleOpenTutorialHub = () => {
     @update:show="emit('update:visible', $event)"
   >
     <div class="display-settings">
+      <p class="display-settings__autosave-hint">更改会自动保存并立即生效。</p>
       <section class="display-settings__section">
         <header>
           <div>
@@ -315,6 +398,19 @@ const handleOpenTutorialHub = () => {
         <n-switch v-model:value="draft.showInputPreview">
           <template #checked>预览开启</template>
           <template #unchecked>预览关闭</template>
+        </n-switch>
+      </section>
+
+      <section class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">置顶消息显示</p>
+            <p class="section-desc">控制聊天顶部置顶消息区域是否显示</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.showPinnedMessages">
+          <template #checked>显示置顶消息</template>
+          <template #unchecked>隐藏置顶消息</template>
         </n-switch>
       </section>
 
@@ -756,12 +852,11 @@ const handleOpenTutorialHub = () => {
         </div>
       </section>
 
-      <n-space justify="space-between" align="center" class="display-settings__footer">
+      <n-space justify="end" align="center" class="display-settings__footer">
         <n-space size="small">
-          <n-button quaternary size="small" text-color="#fff" @click="handleClose">取消</n-button>
+          <n-button quaternary size="small" text-color="#fff" @click="handleClose">关闭</n-button>
           <n-button tertiary size="small" text-color="#fff" @click="handleRestoreDefaults">恢复默认</n-button>
         </n-space>
-        <n-button type="primary" size="small" @click="handleConfirm">应用设置</n-button>
       </n-space>
     </div>
   </n-modal>
@@ -787,6 +882,13 @@ const handleOpenTutorialHub = () => {
   flex-direction: column;
   gap: 1rem;
   color: var(--sc-text-primary);
+}
+
+.display-settings__autosave-hint {
+  margin: 0 0 0.25rem;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--sc-text-secondary);
 }
 
 .display-settings__controls {

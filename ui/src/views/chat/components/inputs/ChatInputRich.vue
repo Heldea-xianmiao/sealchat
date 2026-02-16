@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
+import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
 import { Spoiler } from '@/utils/tiptap-spoiler';
+import { useChatStore } from '@/stores/chat';
+import { useIFormStore } from '@/stores/iform';
+import { useUtilsStore } from '@/stores/utils';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { matchText } from '@/utils/pinyinMatch';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -17,6 +23,7 @@ const props = withDefaults(defineProps<{
   rows?: number
   inputClass?: string | Record<string, boolean> | Array<string | Record<string, boolean>>
   inlineImages?: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>
+  defaultIFormEmbedLink?: string
 }>(), {
   modelValue: '',
   placeholder: '',
@@ -29,6 +36,7 @@ const props = withDefaults(defineProps<{
   rows: 1,
   inputClass: () => [],
   inlineImages: () => ({}),
+  defaultIFormEmbedLink: '',
 });
 
 const emit = defineEmits<{
@@ -45,11 +53,441 @@ const emit = defineEmits<{
   (event: 'composition-end'): void
 }>();
 
+const message = useMessage();
+const chat = useChatStore();
+const iform = useIFormStore();
+const utils = useUtilsStore();
+iform.bootstrap();
+
 const editor = shallowRef<Editor | null>(null);
 const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
+const isComposing = ref(false);
+
+// Mention 面板状态
+const mentionVisible = ref(false);
+const mentionActiveIndex = ref(0);
+const mentionTriggerInfo = ref<{ prefix: string; startPos: number; cursorPos: number } | null>(null);
+const mentionSearchValue = ref('');
+const mentionDropdownRef = ref<HTMLDivElement | null>(null);
+const mentionDropdownStyle = ref<Record<string, string>>({});
+const rootRef = ref<HTMLElement | null>(null);
+let mentionPositionRaf: number | null = null;
+
+const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+
+const decodeMentionText = (value: string) => {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+};
+
+const encodeMentionAttr = (value: string) => {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;');
+};
+
+const buildMentionToken = (id: string, name: string) => {
+  const safeId = encodeMentionAttr(id.trim());
+  if (!safeId) {
+    return '';
+  }
+  const safeName = encodeMentionAttr(name.trim());
+  const nameAttr = safeName ? ` name="${safeName}"` : '';
+  return `<at id="${safeId}"${nameAttr}/>`;
+};
+
+const splitTextWithMentionTokens = (text: string, marks?: any[]) => {
+  const result: any[] = [];
+  if (!text) {
+    return result;
+  }
+
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const pushText = (value: string) => {
+    if (!value) return;
+    const node: any = { type: 'text', text: value };
+    if (marks?.length) {
+      node.marks = marks;
+    }
+    result.push(node);
+  };
+
+  while ((match = MENTION_TOKEN_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      pushText(text.slice(lastIndex, match.index));
+    }
+
+    const id = decodeMentionText(match[2] || '').trim();
+    const name = decodeMentionText(match[4] || '').trim();
+    if (id) {
+      result.push({
+        type: 'satoriMention',
+        attrs: {
+          id,
+          name,
+        },
+      });
+    } else {
+      pushText(match[0]);
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    pushText(text.slice(lastIndex));
+  }
+
+  if (!result.length) {
+    pushText(text);
+  }
+
+  return result;
+};
+
+const normalizeMentionTokensInNode = (node: any): any[] => {
+  if (!node || typeof node !== 'object') {
+    return [node];
+  }
+
+  if (node.type === 'text' && typeof node.text === 'string') {
+    return splitTextWithMentionTokens(node.text, node.marks);
+  }
+
+  const nextNode: any = { ...node };
+  if (Array.isArray(node.content)) {
+    const normalizedChildren: any[] = [];
+    node.content.forEach((child: any) => {
+      normalizedChildren.push(...normalizeMentionTokensInNode(child));
+    });
+    nextNode.content = normalizedChildren;
+  }
+
+  return [nextNode];
+};
+
+const normalizeMentionTokensInDoc = (json: any) => {
+  if (!json || typeof json !== 'object') {
+    return json;
+  }
+  const normalized = normalizeMentionTokensInNode(json);
+  return normalized[0] ?? json;
+};
+
+const serializeMentionNodesInNode = (node: any): any[] => {
+  if (!node || typeof node !== 'object') {
+    return [node];
+  }
+
+  if (node.type === 'satoriMention') {
+    const id = String(node.attrs?.id || '').trim();
+    const name = String(node.attrs?.name || '').trim();
+    const token = buildMentionToken(id, name);
+    if (!token) {
+      return [];
+    }
+    return [{ type: 'text', text: token }];
+  }
+
+  const nextNode: any = { ...node };
+  if (Array.isArray(node.content)) {
+    const serializedChildren: any[] = [];
+    node.content.forEach((child: any) => {
+      serializedChildren.push(...serializeMentionNodesInNode(child));
+    });
+    nextNode.content = serializedChildren;
+  }
+
+  return [nextNode];
+};
+
+const serializeMentionNodesToTokens = (json: any) => {
+  if (!json || typeof json !== 'object') {
+    return json;
+  }
+  const serialized = serializeMentionNodesInNode(json);
+  return serialized[0] ?? json;
+};
+
+const parseMentionOption = (option: MentionOption) => {
+  const data = (option as any)?.data || {};
+  const idFromData = String(data.userId || data.id || '').trim();
+  const nameFromData = String(data.displayName || option.label || '').trim();
+  if (idFromData) {
+    return { id: idFromData, name: nameFromData };
+  }
+
+  const value = String(option.value || '');
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  const match = MENTION_TOKEN_REGEX.exec(value);
+  if (!match) {
+    return { id: '', name: '' };
+  }
+  return {
+    id: decodeMentionText(match[2] || '').trim(),
+    name: decodeMentionText(match[4] || '').trim(),
+  };
+};
+
+const updateMentionDropdownPosition = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const host = rootRef.value;
+  if (!host) {
+    return;
+  }
+
+  const rect = host.getBoundingClientRect();
+  const safeWidth = Math.min(rect.width, window.innerWidth - 12);
+  const safeLeft = Math.min(
+    Math.max(6, rect.left),
+    Math.max(6, window.innerWidth - safeWidth - 6),
+  );
+  const bottom = Math.max(0, window.innerHeight - rect.top + 6);
+
+  mentionDropdownStyle.value = {
+    position: 'fixed',
+    left: `${safeLeft}px`,
+    width: `${safeWidth}px`,
+    bottom: `${bottom}px`,
+    zIndex: '4200',
+  };
+};
+
+const scheduleMentionDropdownPosition = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (mentionPositionRaf !== null) {
+    cancelAnimationFrame(mentionPositionRaf);
+  }
+  mentionPositionRaf = window.requestAnimationFrame(() => {
+    mentionPositionRaf = null;
+    updateMentionDropdownPosition();
+  });
+};
+
+const handleMentionViewportChange = () => {
+  if (mentionVisible.value) {
+    scheduleMentionDropdownPosition();
+  }
+};
+
+const getMentionOptionText = (option: MentionOption) => {
+  const data = (option as any)?.data || {};
+  const candidates = [
+    option.label,
+    option.value,
+    data.displayName,
+    data.userId,
+    data.identityId,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  return candidates.join(' ');
+};
+
+const mentionFilteredOptions = computed(() => {
+  const options = props.mentionOptions || [];
+  const keyword = mentionSearchValue.value.trim();
+  if (!keyword) {
+    return options;
+  }
+  return options.filter((option) => matchText(keyword, getMentionOptionText(option)));
+});
+
+const closeMentionPanel = () => {
+  mentionVisible.value = false;
+  mentionTriggerInfo.value = null;
+  mentionActiveIndex.value = 0;
+  mentionSearchValue.value = '';
+};
+
+const scrollActiveMentionIntoView = () => {
+  nextTick(() => {
+    const container = mentionDropdownRef.value;
+    if (!container) {
+      return;
+    }
+    const items = container.querySelectorAll('.mention-dropdown__item');
+    const target = items[mentionActiveIndex.value] as HTMLElement | undefined;
+    if (target?.scrollIntoView) {
+      target.scrollIntoView({ block: 'nearest' });
+    }
+  });
+};
+
+const handleMentionHover = (index: number) => {
+  mentionActiveIndex.value = index;
+  scrollActiveMentionIntoView();
+};
+
+const handleMentionSelect = (option: MentionOption) => {
+  const ed = editor.value;
+  if (!ed || !mentionTriggerInfo.value) return;
+
+  const mention = parseMentionOption(option);
+  if (!mention.id) {
+    return;
+  }
+
+  const from = Math.max(1, mentionTriggerInfo.value.startPos);
+  const to = Math.max(from, mentionTriggerInfo.value.cursorPos);
+
+  ed.chain().focus().insertContentAt({ from, to }, [
+    {
+      type: 'satoriMention',
+      attrs: {
+        id: mention.id,
+        name: mention.name,
+      },
+    },
+    {
+      type: 'text',
+      text: ' ',
+    },
+  ]).run();
+  emit('mention-select', option);
+  closeMentionPanel();
+};
+
+const handleMentionKeydown = (event: KeyboardEvent): boolean => {
+  if (!mentionVisible.value) {
+    return false;
+  }
+
+  const optionsCount = mentionFilteredOptions.value.length;
+  if (!optionsCount) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMentionPanel();
+      return true;
+    }
+    return false;
+  }
+
+  switch (event.key) {
+    case 'ArrowUp':
+      event.preventDefault();
+      mentionActiveIndex.value = Math.max(0, mentionActiveIndex.value - 1);
+      scrollActiveMentionIntoView();
+      return true;
+    case 'ArrowDown':
+      event.preventDefault();
+      mentionActiveIndex.value = Math.min(optionsCount - 1, mentionActiveIndex.value + 1);
+      scrollActiveMentionIntoView();
+      return true;
+    case 'Enter':
+    case 'Tab':
+      event.preventDefault();
+      const selectedOption = mentionFilteredOptions.value[mentionActiveIndex.value];
+      if (selectedOption) {
+        handleMentionSelect(selectedOption);
+      }
+      return true;
+    case 'Escape':
+      event.preventDefault();
+      closeMentionPanel();
+      return true;
+  }
+
+  return false;
+};
+
+const handleMentionSearchKeydown = (event: KeyboardEvent) => {
+  if (handleMentionKeydown(event)) {
+    return;
+  }
+};
+
+const checkMentionTrigger = (ed: any) => {
+  if (isComposing.value) {
+    return;
+  }
+
+  const { from, to } = ed.state.selection;
+  if (from !== to) {
+    closeMentionPanel();
+    return;
+  }
+
+  const textBeforeCursor = ed.state.doc.textBetween(0, from, '\n', '\n');
+
+  for (const prefix of props.mentionPrefix) {
+    const prefixStr = String(prefix);
+    const lastPrefixIndex = textBeforeCursor.lastIndexOf(prefixStr);
+
+    if (lastPrefixIndex === -1) continue;
+
+    const charBefore = lastPrefixIndex > 0 ? textBeforeCursor[lastPrefixIndex - 1] : '';
+    const isValidStart = lastPrefixIndex === 0 || /[\s\n]/.test(charBefore);
+
+    if (!isValidStart) continue;
+
+    const pattern = textBeforeCursor.substring(lastPrefixIndex + prefixStr.length);
+
+    if (/\s/.test(pattern)) continue;
+
+    mentionVisible.value = true;
+    mentionActiveIndex.value = 0;
+    mentionSearchValue.value = pattern;
+    mentionTriggerInfo.value = {
+      prefix: prefixStr,
+      startPos: Math.max(1, from - pattern.length - prefixStr.length),
+      cursorPos: from,
+    };
+    emit('mention-search', pattern, prefixStr);
+    return;
+  }
+
+  closeMentionPanel();
+};
+
+watch(mentionVisible, (visible) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (visible) {
+    nextTick(() => {
+      scheduleMentionDropdownPosition();
+    });
+    window.addEventListener('resize', handleMentionViewportChange);
+    window.addEventListener('scroll', handleMentionViewportChange, true);
+    return;
+  }
+
+  window.removeEventListener('resize', handleMentionViewportChange);
+  window.removeEventListener('scroll', handleMentionViewportChange, true);
+});
+
+watch([mentionVisible, mentionFilteredOptions], () => {
+  if (!mentionVisible.value) {
+    return;
+  }
+  const optionCount = mentionFilteredOptions.value.length;
+  if (!optionCount) {
+    mentionActiveIndex.value = 0;
+    scheduleMentionDropdownPosition();
+    return;
+  }
+  if (mentionActiveIndex.value >= optionCount) {
+    mentionActiveIndex.value = 0;
+  }
+  scrollActiveMentionIntoView();
+  scheduleMentionDropdownPosition();
+});
 
 // 颜色选择器状态
 const highlightColorPopoverShow = ref(false);
@@ -60,6 +498,115 @@ const linkModalShow = ref(false);
 const linkText = ref('');
 const linkUrl = ref('');
 const linkOpenInNewTab = ref(false);
+
+const quickIFormModalShow = ref(false);
+const creatingIForm = ref(false);
+const quickIFormForm = reactive({
+  name: '',
+  url: '',
+  embedCode: '',
+  defaultWidth: 640,
+  defaultHeight: 360,
+});
+
+const canQuickCreateIForm = computed(() => {
+  return !!chat.currentWorldId && !!chat.curChannel?.id && iform.canManage;
+});
+
+const resetQuickIFormForm = () => {
+  Object.assign(quickIFormForm, {
+    name: '',
+    url: '',
+    embedCode: '',
+    defaultWidth: 640,
+    defaultHeight: 360,
+  });
+};
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const openQuickIFormCreateModal = () => {
+  if (!chat.curChannel?.id || !chat.currentWorldId) {
+    message.warning('当前未定位到有效频道');
+    return;
+  }
+  if (!iform.canManage) {
+    message.warning('你没有创建 iForm 的权限');
+    return;
+  }
+  resetQuickIFormForm();
+  quickIFormModalShow.value = true;
+};
+
+const confirmQuickIFormCreate = async () => {
+  if (!chat.curChannel?.id || !chat.currentWorldId) {
+    message.warning('当前未定位到有效频道');
+    return;
+  }
+  if (!iform.canManage) {
+    message.warning('你没有创建 iForm 的权限');
+    return;
+  }
+  const name = quickIFormForm.name.trim() || `消息嵌入 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+  const url = quickIFormForm.url.trim();
+  const embedCode = quickIFormForm.embedCode.trim();
+  if (!url && !embedCode) {
+    message.warning('请至少填写 URL 或嵌入代码');
+    return;
+  }
+  const width = Math.max(120, Math.round(quickIFormForm.defaultWidth || 640));
+  const height = Math.max(72, Math.round(quickIFormForm.defaultHeight || 360));
+
+  creatingIForm.value = true;
+  try {
+    const created = await iform.createForm({
+      name,
+      url,
+      embedCode,
+      defaultWidth: width,
+      defaultHeight: height,
+      defaultCollapsed: false,
+      defaultFloating: true,
+    });
+    const createdForm = created?.id
+      ? (iform.currentForms.find((item) => item.id === created.id) || created)
+      : null;
+    if (!createdForm?.id) {
+      throw new Error('创建成功但未获取到控件信息');
+    }
+    const link = generateIFormEmbedLink(
+      {
+        worldId: String(chat.currentWorldId),
+        channelId: String(chat.curChannel.id),
+        formId: createdForm.id,
+        width: createdForm.defaultWidth || width,
+        height: createdForm.defaultHeight || height,
+      },
+      { base: resolveIFormEmbedLinkBase() },
+    );
+    editor.value?.chain().focus().insertContent(link).run();
+    quickIFormModalShow.value = false;
+    message.success('已创建 iForm 并插入嵌入链接');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '创建 iForm 失败');
+  } finally {
+    creatingIForm.value = false;
+  }
+};
 
 // 预设高亮颜色色板 (7个预设 + 1个自定义)
 const highlightColors = [
@@ -143,7 +690,7 @@ const initEditor = async () => {
     isInitializing.value = true;
 
     const [
-      { Editor: EditorClass },
+      { Editor: EditorClass, Node: TiptapNodeClass, mergeAttributes },
       { EditorContent: EditorContentComp, BubbleMenu: BubbleMenuComp },
       { default: StarterKit },
       { default: Link },
@@ -169,10 +716,50 @@ const initEditor = async () => {
     EditorContent = EditorContentComp;
     BubbleMenu = BubbleMenuComp;
 
+    const SatoriMention = TiptapNodeClass.create({
+      name: 'satoriMention',
+      inline: true,
+      group: 'inline',
+      atom: true,
+      selectable: false,
+      draggable: false,
+      addAttributes() {
+        return {
+          id: { default: '' },
+          name: { default: '' },
+        };
+      },
+      parseHTML() {
+        return [{ tag: 'span[data-satori-mention-id]' }];
+      },
+      renderHTML({ node, HTMLAttributes }: any) {
+        const id = String(node.attrs?.id || '').trim();
+        const name = String(node.attrs?.name || '').trim();
+        const display = name || id || '用户';
+        const cls = id === 'all' ? 'tiptap-mention-chip tiptap-mention-chip--all' : 'tiptap-mention-chip';
+        return [
+          'span',
+          mergeAttributes(HTMLAttributes, {
+            class: cls,
+            contenteditable: 'false',
+            'data-satori-mention-id': id,
+            'data-satori-mention-name': name,
+          }),
+          `@${display}`,
+        ];
+      },
+      renderText({ node }: any) {
+        const id = String(node.attrs?.id || '').trim();
+        const name = String(node.attrs?.name || '').trim();
+        return `@${name || id || '用户'}`;
+      },
+    });
+
     // 创建编辑器实例
     editor.value = new EditorClass({
       content: props.modelValue || '<p></p>',
       extensions: [
+        SatoriMention,
         StarterKit.configure({
           heading: {
             levels: [1, 2, 3],
@@ -214,6 +801,9 @@ const initEditor = async () => {
           class: 'tiptap-content',
         },
         handleKeyDown: (_view, event) => {
+          if (handleMentionKeydown(event)) {
+            return true;
+          }
           emit('keydown', event);
           return event.defaultPrevented;
         },
@@ -260,9 +850,11 @@ const initEditor = async () => {
       },
       onUpdate: ({ editor: ed }) => {
         const json = ed.getJSON();
-        const jsonString = JSON.stringify(json);
+        const serializedJson = serializeMentionNodesToTokens(json);
+        const jsonString = JSON.stringify(serializedJson);
         isSyncingFromProps.value = true;
         emit('update:modelValue', jsonString);
+        checkMentionTrigger(ed);
         nextTick(() => {
           isSyncingFromProps.value = false;
         });
@@ -271,8 +863,14 @@ const initEditor = async () => {
         isFocused.value = true;
         emit('focus');
       },
-      onBlur: () => {
+      onBlur: ({ event }) => {
         isFocused.value = false;
+        const relatedTarget = (event as FocusEvent).relatedTarget as HTMLElement | null;
+        if (!relatedTarget?.closest('.mention-dropdown')) {
+          setTimeout(() => {
+            closeMentionPanel();
+          }, 150);
+        }
         emit('blur');
       },
       onCreate: ({ editor: ed }) => {
@@ -283,7 +881,8 @@ const initEditor = async () => {
         }
         try {
           const json = JSON.parse(props.modelValue);
-          ed.commands.setContent(json, false);
+          const normalized = normalizeMentionTokensInDoc(json);
+          ed.commands.setContent(normalized, false);
         } catch {
           // 如果不是 JSON，当作纯文本
           ed.commands.setContent(props.modelValue, false);
@@ -313,10 +912,12 @@ watch(() => props.modelValue, (newValue) => {
   }
 
   try {
-    const currentJson = JSON.stringify(editor.value.getJSON());
-    if (currentJson !== newValue) {
-      const json = JSON.parse(newValue);
-      editor.value.commands.setContent(json, false);
+    const incomingJson = JSON.parse(newValue);
+    const normalizedIncoming = normalizeMentionTokensInDoc(incomingJson);
+    const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
+    const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
+    if (currentSerialized !== incomingSerialized) {
+      editor.value.commands.setContent(normalizedIncoming, false);
     }
   } catch {
     // 非 JSON 格式，跳过
@@ -411,6 +1012,20 @@ const setTextAlign = (align: 'left' | 'center' | 'right' | 'justify') => editor.
 const toggleHighlight = () => editor.value?.chain().focus().toggleHighlight().run();
 const insertHorizontalRule = () => editor.value?.chain().focus().setHorizontalRule().run();
 const clearFormatting = () => editor.value?.chain().focus().clearNodes().unsetAllMarks().run();
+const insertStateWidgetTemplate = () => {
+  if (!editor.value) return;
+  const { from, to } = editor.value.state.selection;
+  const selectedText = from !== to
+    ? editor.value.state.doc.textBetween(from, to, ' ').trim()
+    : '';
+  const firstOption = selectedText || '选项1';
+  const template = `[${firstOption}|选项2|选项3]`;
+  editor.value.chain().focus().insertContent(template).run();
+};
+
+const insertIFormEmbedLink = () => {
+  openQuickIFormCreateModal();
+};
 
 // 高亮颜色操作
 const setHighlightColor = (color: string) => {
@@ -501,14 +1116,27 @@ const isActive = (name: string, attrs?: Record<string, any>) => {
 };
 
 const handleCompositionStart = () => {
+  isComposing.value = true;
   emit('composition-start');
 };
 
 const handleCompositionEnd = () => {
+  isComposing.value = false;
   emit('composition-end');
+  if (editor.value) {
+    checkMentionTrigger(editor.value);
+  }
 };
 
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleMentionViewportChange);
+    window.removeEventListener('scroll', handleMentionViewportChange, true);
+    if (mentionPositionRaf !== null) {
+      cancelAnimationFrame(mentionPositionRaf);
+      mentionPositionRaf = null;
+    }
+  }
   editor.value?.destroy();
 });
 
@@ -527,7 +1155,7 @@ defineExpose({
 </script>
 
 <template>
-  <div :class="classList">
+  <div ref="rootRef" :class="classList">
     <div v-if="isInitializing" class="tiptap-loading">
       <n-spin size="small" />
       <span class="ml-2 text-sm text-gray-500">加载编辑器...</span>
@@ -811,6 +1439,33 @@ defineExpose({
           >
             🖼
           </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                @click="insertStateWidgetTemplate"
+                title="插入三段状态文本"
+              >
+                ◫
+              </n-button>
+            </template>
+            插入三段状态文本：`[选项1|选项2|选项3]`
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                size="small"
+                text
+                :disabled="!canQuickCreateIForm"
+                @click="insertIFormEmbedLink"
+                title="创建并插入 iForm 嵌入"
+              >
+                ⧉
+              </n-button>
+            </template>
+            {{ canQuickCreateIForm ? '弹窗创建 iForm 并自动插入链接' : '当前频道无权限或不可创建 iForm' }}
+          </n-tooltip>
           <n-button
             size="small"
             text
@@ -838,6 +1493,48 @@ defineExpose({
         @compositionend="handleCompositionEnd"
       >
         <component :is="EditorContent" v-if="editor" :editor="editor" />
+
+        <Teleport to="body">
+          <Transition name="mention-fade">
+            <div
+              v-if="mentionVisible"
+              class="mention-dropdown"
+              :style="mentionDropdownStyle"
+              tabindex="-1"
+              ref="mentionDropdownRef"
+              @pointerdown.stop
+            >
+              <input
+                v-model="mentionSearchValue"
+                class="mention-dropdown__search"
+                type="text"
+                placeholder="搜索成员"
+                @keydown="handleMentionSearchKeydown"
+                @pointerdown.stop
+              />
+              <div
+                v-for="(option, index) in mentionFilteredOptions"
+                :key="option.value"
+                :class="['mention-dropdown__item', { 'is-active': index === mentionActiveIndex }]"
+                @pointerdown.stop
+                @mousedown.prevent="handleMentionSelect(option)"
+                @mouseenter="handleMentionHover(index)"
+              >
+                <component
+                  :is="mentionRenderLabel ? mentionRenderLabel(option) : undefined"
+                  v-if="mentionRenderLabel"
+                />
+                <span v-else>{{ option.label }}</span>
+              </div>
+              <div v-if="mentionLoading" class="mention-dropdown__loading">
+                加载中...
+              </div>
+              <div v-else-if="mentionFilteredOptions.length === 0" class="mention-dropdown__empty">
+                无匹配成员
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
 
         <!-- BubbleMenu 浮动工具栏 -->
         <component
@@ -947,6 +1644,51 @@ defineExpose({
         <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
           <n-button @click="linkModalShow = false">取消</n-button>
           <n-button type="primary" @click="confirmLink" :disabled="!linkUrl.trim()">确定</n-button>
+        </div>
+      </template>
+    </n-modal>
+
+
+    <n-modal
+      v-model:show="quickIFormModalShow"
+      preset="card"
+      :bordered="false"
+      title="创建消息嵌入 iForm"
+      style="width: 460px; max-width: 92vw;"
+      :mask-closable="!creatingIForm"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="名称">
+          <n-input
+            v-model:value="quickIFormForm.name"
+            placeholder="示例：战斗地图 / 音乐播放器"
+          />
+        </n-form-item>
+        <n-form-item label="URL">
+          <n-input
+            v-model:value="quickIFormForm.url"
+            placeholder="https://example.com"
+          />
+        </n-form-item>
+        <n-form-item label="嵌入代码">
+          <n-input
+            type="textarea"
+            v-model:value="quickIFormForm.embedCode"
+            placeholder="可选：粘贴 iframe 代码"
+            :rows="3"
+          />
+        </n-form-item>
+        <n-form-item label="默认尺寸">
+          <div style="display: flex; gap: 0.5rem; width: 100%;">
+            <n-input-number v-model:value="quickIFormForm.defaultWidth" :min="120" :step="10" style="flex: 1;" placeholder="宽度" />
+            <n-input-number v-model:value="quickIFormForm.defaultHeight" :min="72" :step="10" style="flex: 1;" placeholder="高度" />
+          </div>
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <n-button :disabled="creatingIForm" @click="quickIFormModalShow = false">取消</n-button>
+          <n-button type="primary" :loading="creatingIForm" @click="confirmQuickIFormCreate">创建并插入</n-button>
         </div>
       </template>
     </n-modal>
@@ -1085,6 +1827,76 @@ defineExpose({
   /* Firefox */
   scrollbar-width: thin;
   scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.mention-dropdown {
+  position: fixed;
+  max-height: min(240px, 45vh);
+  overflow-y: auto;
+  background: var(--sc-bg-surface, #ffffff);
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  z-index: 4200;
+
+  &__search {
+    width: calc(100% - 16px);
+    margin: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--sc-border-mute, #e5e7eb);
+    border-radius: 6px;
+    background: var(--sc-bg-input, #ffffff);
+    color: var(--text-color-1);
+    font-size: 0.75rem;
+    outline: none;
+  }
+
+  &__search:focus {
+    border-color: rgba(99, 102, 241, 0.6);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.16);
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+
+    &:hover,
+    &.is-active {
+      background-color: var(--sc-bg-hover, rgba(59, 130, 246, 0.08));
+    }
+
+    &.is-active {
+      background-color: var(--sc-bg-active, rgba(59, 130, 246, 0.12));
+    }
+  }
+
+  &__loading {
+    padding: 8px 12px;
+    color: var(--sc-text-secondary, #6b7280);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  &__empty {
+    padding: 8px 12px;
+    color: var(--sc-text-secondary, #9ca3af);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+}
+
+.mention-fade-enter-active,
+.mention-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.mention-fade-enter-from,
+.mention-fade-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .tiptap-bubble-menu {
@@ -1226,6 +2038,12 @@ defineExpose({
   color: #e5e7eb;
   border-bottom-color: #60a5fa;
 }
+
+:root[data-display-palette='night'] .mention-dropdown {
+  background: var(--sc-bg-surface, #1e1e2e);
+  border-color: var(--sc-border-mute, #3f3f5a);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
 </style>
 
 <style lang="scss">
@@ -1254,6 +2072,25 @@ defineExpose({
 
   p + p {
     margin-top: 0.5rem;
+  }
+
+  .tiptap-mention-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 0.4em;
+    margin: 0 0.05em;
+    border-radius: 4px;
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+    font-weight: 500;
+    line-height: 1.45;
+    user-select: none;
+    cursor: default;
+  }
+
+  .tiptap-mention-chip--all {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
   }
 
   /* 标题样式 */
@@ -1388,11 +2225,11 @@ defineExpose({
   .rich-inline-image,
   img {
     max-width: 100%;
-    max-height: 12rem;
+    max-height: 6rem;
     height: auto;
-    border-radius: 0.5rem;
-    vertical-align: middle;
-    margin: 0.5rem 0.25rem;
+    border-radius: 0.375rem;
+    vertical-align: text-bottom;
+    margin: 0 0.25rem;
     display: inline-block;
     object-fit: contain;
   }
@@ -1503,5 +2340,15 @@ defineExpose({
 :root[data-display-palette='night'] .tiptap-content mark {
   background-color: #854d0e;
   color: #fef3c7;
+}
+
+:root[data-display-palette='night'] .tiptap-content .tiptap-mention-chip {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+:root[data-display-palette='night'] .tiptap-content .tiptap-mention-chip--all {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #f87171;
 }
 </style>

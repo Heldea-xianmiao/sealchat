@@ -34,17 +34,17 @@ const (
 // StickyNoteModel 便签数据模型
 type StickyNoteModel struct {
 	StringPKBaseModel
-	ChannelID   string     `json:"channel_id" gorm:"size:100;index:idx_sticky_channel_order,priority:1" binding:"required"`
-	WorldID     string     `json:"world_id" gorm:"size:100;index"`
-	FolderID    string     `json:"folder_id" gorm:"size:100;index"` // 所属文件夹
-	Title       string     `json:"title" gorm:"size:255"`
-	Content     string     `json:"content" gorm:"type:text"`      // HTML 富文本
-	ContentText string     `json:"content_text" gorm:"type:text"` // 纯文本版本（用于搜索）
-	Color       string     `json:"color" gorm:"size:32;default:'yellow'"`
-	CreatorID   string     `json:"creator_id" gorm:"size:100;index"`
-	IsPublic    bool       `json:"is_public" gorm:"default:true"`
-	IsPinned    bool       `json:"is_pinned" gorm:"default:false"`
-	OrderIndex  int        `json:"order_index" gorm:"default:0;index:idx_sticky_channel_order,priority:2"`
+	ChannelID   string `json:"channel_id" gorm:"size:100;index:idx_sticky_channel_order,priority:1" binding:"required"`
+	WorldID     string `json:"world_id" gorm:"size:100;index"`
+	FolderID    string `json:"folder_id" gorm:"size:100;index"` // 所属文件夹
+	Title       string `json:"title" gorm:"size:255"`
+	Content     string `json:"content" gorm:"type:text"`      // HTML 富文本
+	ContentText string `json:"content_text" gorm:"type:text"` // 纯文本版本（用于搜索）
+	Color       string `json:"color" gorm:"size:32;default:'yellow'"`
+	CreatorID   string `json:"creator_id" gorm:"size:100;index"`
+	IsPublic    bool   `json:"is_public" gorm:"default:true"`
+	IsPinned    bool   `json:"is_pinned" gorm:"default:false"`
+	OrderIndex  int    `json:"order_index" gorm:"default:0;index:idx_sticky_channel_order,priority:2"`
 
 	// 便签类型相关
 	NoteType StickyNoteType `json:"note_type" gorm:"size:32;default:'text';index"` // text/counter/list/slider/chat/timer/clock/roundCounter
@@ -61,13 +61,19 @@ type StickyNoteModel struct {
 	DefaultW int `json:"default_w" gorm:"default:300"`
 	DefaultH int `json:"default_h" gorm:"default:250"`
 
+	// 编辑锁
+	EditingLockUserID    string     `json:"editing_lock_user_id" gorm:"size:100;index"`
+	EditingLockSessionID string     `json:"editing_lock_session_id" gorm:"size:128;index"`
+	EditingLockExpireAt  *time.Time `json:"editing_lock_expire_at" gorm:"index"`
+
 	// 软删除
 	IsDeleted bool       `json:"is_deleted" gorm:"default:false;index"`
 	DeletedAt *time.Time `json:"deleted_at"`
 	DeletedBy string     `json:"deleted_by" gorm:"size:100"`
 
 	// 关联
-	Creator *UserModel `json:"creator" gorm:"-"`
+	Creator         *UserModel `json:"creator" gorm:"-"`
+	EditingLockUser *UserModel `json:"editing_lock_user" gorm:"-"`
 }
 
 func (*StickyNoteModel) TableName() string {
@@ -183,6 +189,32 @@ func (s *StickyNoteModel) LoadCreator() {
 	}
 }
 
+func (s *StickyNoteModel) IsEditingLockActive(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	if s.EditingLockUserID == "" || s.EditingLockExpireAt == nil {
+		return false
+	}
+	return s.EditingLockExpireAt.After(now)
+}
+
+func (s *StickyNoteModel) LoadEditingLockUser() {
+	if s == nil {
+		return
+	}
+	if !s.IsEditingLockActive(time.Now()) {
+		s.EditingLockUser = nil
+		return
+	}
+	if s.EditingLockUserID != "" && s.EditingLockUser == nil {
+		user := UserGet(s.EditingLockUserID)
+		if user != nil {
+			s.EditingLockUser = user
+		}
+	}
+}
+
 // ToProtocolType 转换为协议类型
 func (s *StickyNoteModel) ToProtocolType() *protocol.StickyNote {
 	note := &protocol.StickyNote{
@@ -219,6 +251,20 @@ func (s *StickyNoteModel) ToProtocolType() *protocol.StickyNote {
 	}
 	if s.Creator != nil {
 		note.Creator = s.Creator.ToProtocolType()
+	}
+	now := time.Now()
+	if s.IsEditingLockActive(now) {
+		lock := &protocol.StickyNoteEditingLock{
+			UserID:    s.EditingLockUserID,
+			SessionID: s.EditingLockSessionID,
+		}
+		if s.EditingLockExpireAt != nil {
+			lock.ExpireAt = s.EditingLockExpireAt.UnixMilli()
+		}
+		if s.EditingLockUser != nil {
+			lock.User = s.EditingLockUser.ToProtocolType()
+		}
+		note.EditingLock = lock
 	}
 	return note
 }

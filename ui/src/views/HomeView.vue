@@ -1,16 +1,18 @@
 <script setup lang="tsx">
-import { computed, ref, onMounted, watch, nextTick } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import Chat from './chat/chat.vue'
 import ChatHeader from './components/header.vue'
 import ChatSidebar from './components/sidebar.vue'
 import { useWindowSize } from '@vueuse/core'
 import { useChatStore, chatEvent } from '@/stores/chat';
+import { SIDEBAR_WIDTH_LIMITS, useDisplayStore } from '@/stores/display';
 import { useRoute, useRouter } from 'vue-router';
 import { useMessage } from 'naive-ui';
 import { useEmailBindReminder, EmailBindPrompt } from '@/composables/useEmailBindReminder';
 
 const { width } = useWindowSize()
 const chat = useChatStore();
+const display = useDisplayStore();
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
@@ -26,10 +28,33 @@ const handleEmailDismiss = async () => {
 
 const active = ref(false)
 const isSidebarCollapsed = ref(false)
+const sidebarResizeMode = ref(false)
 
 const isMobileViewport = computed(() => width.value < 700)
 const computedCollapsed = computed(() => isMobileViewport.value || isSidebarCollapsed.value)
 const collapsedWidth = computed(() => 0)
+const sidebarResizeDragging = ref(false)
+const sidebarResizePointerId = ref<number | null>(null)
+const sidebarResizeStartX = ref(0)
+const sidebarResizeStartWidth = ref(0)
+const sidebarWidthPreview = ref<number | null>(null)
+
+const computeSidebarMaxWidth = () => {
+  const viewportWidth = Number(width.value) || 0
+  if (viewportWidth <= 0) return SIDEBAR_WIDTH_LIMITS.MAX
+  const maxByViewport = Math.floor(viewportWidth * 0.6)
+  return Math.max(SIDEBAR_WIDTH_LIMITS.MIN, Math.min(SIDEBAR_WIDTH_LIMITS.MAX, maxByViewport))
+}
+
+const clampSidebarWidth = (value: number) => {
+  const maxWidth = computeSidebarMaxWidth()
+  return Math.min(maxWidth, Math.max(SIDEBAR_WIDTH_LIMITS.MIN, Math.round(value)))
+}
+
+const effectiveSidebarWidth = computed(() => {
+  const base = sidebarWidthPreview.value ?? display.settings.sidebarWidth
+  return clampSidebarWidth(base)
+})
 
 const toggleSidebar = () => {
   if (isMobileViewport.value) {
@@ -37,6 +62,87 @@ const toggleSidebar = () => {
     return
   }
   isSidebarCollapsed.value = !isSidebarCollapsed.value
+}
+
+const toggleSidebarResizeMode = () => {
+  if (sidebarResizeMode.value) {
+    finishSidebarResize()
+    sidebarResizeMode.value = false
+    return
+  }
+  if (isMobileViewport.value || isSidebarCollapsed.value) return
+  sidebarResizeMode.value = true
+}
+
+const applySidebarWidth = (value: number) => {
+  const next = clampSidebarWidth(value)
+  if (display.settings.sidebarWidth === next) return
+  display.updateSettings({ sidebarWidth: next })
+}
+
+const clearResizeCursorState = () => {
+  if (typeof document === 'undefined') return
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+const finishSidebarResize = (event?: PointerEvent) => {
+  if (!sidebarResizeDragging.value) return
+  if (
+    event
+    && sidebarResizePointerId.value !== null
+    && event.pointerId !== sidebarResizePointerId.value
+  ) {
+    return
+  }
+  sidebarResizeDragging.value = false
+  if (event) {
+    try {
+      (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId)
+    } catch {
+      // ignore capture failure
+    }
+  }
+  const finalWidth = clampSidebarWidth(sidebarWidthPreview.value ?? display.settings.sidebarWidth)
+  sidebarWidthPreview.value = null
+  sidebarResizePointerId.value = null
+  clearResizeCursorState()
+  applySidebarWidth(finalWidth)
+}
+
+const handleSidebarResizePointerDown = (event: PointerEvent) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (!sidebarResizeMode.value) return
+  if (isMobileViewport.value || isSidebarCollapsed.value) return
+  sidebarResizeDragging.value = true
+  sidebarResizePointerId.value = event.pointerId
+  sidebarResizeStartX.value = event.clientX
+  sidebarResizeStartWidth.value = effectiveSidebarWidth.value
+  sidebarWidthPreview.value = effectiveSidebarWidth.value
+  try {
+    (event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  } catch {
+    // ignore capture failure
+  }
+  if (typeof document !== 'undefined') {
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+}
+
+const handleSidebarResizePointerMove = (event: PointerEvent) => {
+  if (!sidebarResizeDragging.value) return
+  if (sidebarResizePointerId.value !== event.pointerId) return
+  const deltaX = event.clientX - sidebarResizeStartX.value
+  sidebarWidthPreview.value = clampSidebarWidth(sidebarResizeStartWidth.value + deltaX)
+}
+
+const handleSidebarResizePointerUp = (event: PointerEvent) => {
+  finishSidebarResize(event)
+}
+
+const handleSidebarResizePointerCancel = (event: PointerEvent) => {
+  finishSidebarResize(event)
 }
 
 onMounted(() => {
@@ -191,6 +297,29 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => computedCollapsed.value,
+  (collapsed) => {
+    if (collapsed) {
+      finishSidebarResize()
+      sidebarResizeMode.value = false
+    }
+  },
+)
+
+watch(
+  () => width.value,
+  () => {
+    if (sidebarResizeDragging.value && sidebarWidthPreview.value !== null) {
+      sidebarWidthPreview.value = clampSidebarWidth(sidebarWidthPreview.value)
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  clearResizeCursorState()
+})
+
 </script>
 
 <template>
@@ -205,10 +334,30 @@ watch(
         collapse-mode="width"
         :collapsed="computedCollapsed"
         :collapsed-width="collapsedWidth"
+        :width="effectiveSidebarWidth"
         :native-scrollbar="false"
       >
-        <ChatSidebar v-if="!isMobileViewport && !isSidebarCollapsed" />
+        <ChatSidebar
+          v-if="!isMobileViewport && !isSidebarCollapsed"
+          :sidebar-width-resize-available="!isMobileViewport && !isSidebarCollapsed"
+          :sidebar-width-resize-mode="sidebarResizeMode"
+          @toggle-sidebar-width-resize="toggleSidebarResizeMode"
+        />
       </n-layout-sider>
+
+      <div
+        v-if="!computedCollapsed && sidebarResizeMode"
+        class="sc-layout-sider-resize-handle"
+        :class="{ 'is-dragging': sidebarResizeDragging }"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整侧边栏宽度"
+        tabindex="-1"
+        @pointerdown="handleSidebarResizePointerDown"
+        @pointermove="handleSidebarResizePointerMove"
+        @pointerup="handleSidebarResizePointerUp"
+        @pointercancel="handleSidebarResizePointerCancel"
+      />
 
       <n-layout class="sc-layout-content">
         <Chat @drawer-show="active = true" />
@@ -232,14 +381,30 @@ watch(
 </template>
 
 <style lang="scss">
-.xxx {
-  display: none;
+.sc-layout-sider-resize-handle {
+  position: relative;
+  width: 8px;
+  flex: 0 0 8px;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  background: transparent;
 }
 
-@media (min-width: 1024px) {
-  .xxx {
-    display: block;
-  }
+.sc-layout-sider-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--sc-border-strong);
 }
 
+.sc-layout-sider-resize-handle:hover::before,
+.sc-layout-sider-resize-handle.is-dragging::before {
+  width: 2px;
+  background: rgba(14, 165, 233, 0.65);
+}
 </style>

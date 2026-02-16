@@ -19,6 +19,9 @@ declare module '@satorijs/protocol' {
     whisperMeta?: WhisperMeta;
     whisperToIds?: User[];
     senderRoleId?: string;
+    isPinned?: boolean;
+    pinnedAt?: number;
+    pinnedBy?: string;
     isDeleted?: boolean;
     deletedAt?: number;
     deletedBy?: string;
@@ -51,6 +54,9 @@ export interface SatoriMessage {
 
   sender_member_name?: string;
   sender_role_id?: string;
+  isPinned?: boolean;
+  pinnedAt?: number;
+  pinnedBy?: string;
   isWhisper?: boolean;
   whisperTo?: User | null;
   whisperToIds?: User[];

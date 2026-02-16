@@ -7,6 +7,7 @@ import (
 	"html"
 	htmltemplate "html/template"
 	"net"
+	neturl "net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -114,8 +115,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		if html, ok := convertTipTapToHTML(originalContent); ok {
 			htmlContent = html
 		} else {
-			// 非富文本内容，直接使用原始内容作为 HTML
-			htmlContent = originalContent
+			htmlContent = enhancePlainContentForHTMLExport(originalContent)
 		}
 		// 将 <at> 标签转换为带样式的 HTML
 		htmlContent = convertAtTagsToHTML(htmlContent)
@@ -1041,6 +1041,330 @@ func normalizePlainText(s string) string {
 	return strings.TrimSpace(s)
 }
 
+type quickFormatFlavor int
+
+const (
+	quickFormatFlavorHTML quickFormatFlavor = iota
+	quickFormatFlavorBBCode
+)
+
+type quickToken struct {
+	token string
+	html  string
+	bb    string
+}
+
+var (
+	quickCodeFenceLiteralPattern = regexp.MustCompile("```([\\s\\S]*?)```")
+	quickInlineCodePattern  = regexp.MustCompile("`([^`\\n]+)`")
+	quickLinkPattern        = regexp.MustCompile(`\[([^\]\\n]+)\]\((https?://[^\s)]+)\)`)
+	quickBoldPattern        = regexp.MustCompile(`\*\*([^\n*][^*\n]*?)\*\*`)
+	quickItalicPattern      = regexp.MustCompile(`(^|[^*])\*([^*\n]+)\*`)
+	htmlTagPattern          = regexp.MustCompile(`(?is)<[a-zA-Z][^>]*>`)
+	bbcodePrePattern        = regexp.MustCompile(`(?is)<pre\b[^>]*>\s*<code\b[^>]*>(.*?)</code>\s*</pre>`)
+	bbcodeInlineCodePattern = regexp.MustCompile(`(?is)<code\b[^>]*>(.*?)</code>`)
+	bbcodeLinkPattern       = regexp.MustCompile(`(?is)<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	bbcodeStrongPattern     = regexp.MustCompile(`(?is)<\/?strong\b[^>]*>`)
+	bbcodeBoldPattern       = regexp.MustCompile(`(?is)<\/?b\b[^>]*>`)
+	bbcodeEmPattern         = regexp.MustCompile(`(?is)<\/?em\b[^>]*>`)
+	bbcodeItalicPattern     = regexp.MustCompile(`(?is)<\/?i\b[^>]*>`)
+	bbcodeBrPattern         = regexp.MustCompile(`(?is)<br\s*/?>`)
+	bbcodePBoundaryPattern  = regexp.MustCompile(`(?is)</p>\s*<p\b[^>]*>`)
+	bbcodeAnyTagPattern     = regexp.MustCompile(`(?is)</?[^>]+>`)
+)
+
+func enhancePlainContentForHTMLExport(content string) string {
+	if content == "" {
+		return ""
+	}
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	if normalized == "" {
+		return ""
+	}
+	if isLikelyHTMLContent(normalized) {
+		return normalized
+	}
+
+	protected, tokens := protectAtTagsForQuickFormat(normalized)
+	converted := convertQuickFormatForFlavor(protected, quickFormatFlavorHTML)
+	for _, token := range tokens {
+		converted = strings.ReplaceAll(converted, token.token, token.html)
+	}
+	return converted
+}
+
+func isLikelyHTMLContent(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, "<at") {
+		return true
+	}
+	if strings.Contains(trimmed, "<img") || strings.Contains(trimmed, "<br") {
+		return true
+	}
+	return htmlTagPattern.MatchString(trimmed)
+}
+
+func protectAtTagsForQuickFormat(input string) (string, []quickToken) {
+	if input == "" || !strings.Contains(input, "<at") {
+		return input, nil
+	}
+	tokens := make([]quickToken, 0, 4)
+	index := 0
+	result := atTagPattern.ReplaceAllStringFunc(input, func(match string) string {
+		token := fmt.Sprintf("__QF_AT_%d__", index)
+		index++
+		tokens = append(tokens, quickToken{token: token, html: match, bb: convertAtTagsToMention(match)})
+		return token
+	})
+	return result, tokens
+}
+
+func convertQuickFormatForFlavor(input string, flavor quickFormatFlavor) string {
+	if input == "" {
+		return ""
+	}
+
+	fenceTokens := make([]quickToken, 0, 4)
+	fenceIndex := 0
+	protected := quickCodeFenceLiteralPattern.ReplaceAllStringFunc(input, func(segment string) string {
+		token := fmt.Sprintf("__QF_FENCE_%d__", fenceIndex)
+		fenceIndex++
+		fenceTokens = append(fenceTokens, quickToken{token: token, html: segment, bb: segment})
+		return token
+	})
+
+	inlined := convertQuickInline(protected, flavor)
+	for _, token := range fenceTokens {
+		replacement := token.html
+		if flavor == quickFormatFlavorBBCode {
+			replacement = token.bb
+		}
+		inlined = strings.ReplaceAll(inlined, token.token, replacement)
+	}
+
+	if flavor == quickFormatFlavorHTML {
+		inlined = strings.ReplaceAll(inlined, "\n", "<br />")
+	}
+
+	return inlined
+}
+
+func convertQuickInline(input string, flavor quickFormatFlavor) string {
+	if input == "" {
+		return ""
+	}
+
+	escaped := htmlEscape(input)
+
+	inlineCodes := make([]quickToken, 0, 4)
+	codeIndex := 0
+	escaped = quickInlineCodePattern.ReplaceAllStringFunc(escaped, func(segment string) string {
+		match := quickInlineCodePattern.FindStringSubmatch(segment)
+		if len(match) < 2 {
+			return segment
+		}
+		token := fmt.Sprintf("__QF_INLINE_CODE_%d__", codeIndex)
+		codeIndex++
+		entry := quickToken{token: token}
+		switch flavor {
+		case quickFormatFlavorBBCode:
+			entry.bb = "[code]" + match[1] + "[/code]"
+		default:
+			entry.html = "<code>" + match[1] + "</code>"
+		}
+		inlineCodes = append(inlineCodes, entry)
+		return token
+	})
+
+	links := make([]quickToken, 0, 4)
+	linkIndex := 0
+	escaped = quickLinkPattern.ReplaceAllStringFunc(escaped, func(segment string) string {
+		match := quickLinkPattern.FindStringSubmatch(segment)
+		if len(match) < 3 {
+			return segment
+		}
+		label := match[1]
+		url := html.UnescapeString(strings.TrimSpace(match[2]))
+		if !isSafeQuickLink(url) {
+			return segment
+		}
+		token := fmt.Sprintf("__QF_LINK_%d__", linkIndex)
+		linkIndex++
+		entry := quickToken{token: token}
+		switch flavor {
+		case quickFormatFlavorBBCode:
+			entry.bb = "[url=" + url + "]" + label + "[/url]"
+		default:
+			entry.html = "<a href=\"" + htmlEscape(url) + "\" class=\"text-blue-500\" target=\"_blank\" rel=\"noopener noreferrer\">" + label + "</a>"
+		}
+		links = append(links, entry)
+		return token
+	})
+
+	escaped = quickBoldPattern.ReplaceAllString(escaped, "<strong>$1</strong>")
+	escaped = quickItalicPattern.ReplaceAllString(escaped, "$1<em>$2</em>")
+
+	for _, token := range links {
+		replacement := token.html
+		if flavor == quickFormatFlavorBBCode {
+			replacement = token.bb
+		}
+		escaped = strings.ReplaceAll(escaped, token.token, replacement)
+	}
+
+	for _, token := range inlineCodes {
+		replacement := token.html
+		if flavor == quickFormatFlavorBBCode {
+			replacement = token.bb
+		}
+		escaped = strings.ReplaceAll(escaped, token.token, replacement)
+	}
+
+	if flavor == quickFormatFlavorBBCode {
+		escaped = strings.ReplaceAll(escaped, "<strong>", "[b]")
+		escaped = strings.ReplaceAll(escaped, "</strong>", "[/b]")
+		escaped = strings.ReplaceAll(escaped, "<em>", "[i]")
+		escaped = strings.ReplaceAll(escaped, "</em>", "[/i]")
+	}
+
+	return escaped
+}
+
+func isSafeQuickLink(raw string) bool {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return false
+	}
+	parsed, err := neturl.Parse(value)
+	if err != nil || parsed == nil {
+		return false
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	return scheme == "http" || scheme == "https"
+}
+
+func convertRenderedHTMLToBBCode(input string) string {
+	if strings.TrimSpace(input) == "" {
+		return ""
+	}
+
+	text := convertAtTagsToMention(input)
+	codeBlocks := make([]quickToken, 0, 4)
+	codeIndex := 0
+
+	text = bbcodePrePattern.ReplaceAllStringFunc(text, func(segment string) string {
+		match := bbcodePrePattern.FindStringSubmatch(segment)
+		if len(match) < 2 {
+			return segment
+		}
+		body := html.UnescapeString(stripRichText(match[1]))
+		token := fmt.Sprintf("__QF_BB_BLOCK_%d__", codeIndex)
+		codeIndex++
+		codeBlocks = append(codeBlocks, quickToken{token: token, bb: "[code]" + body + "[/code]"})
+		return token
+	})
+
+	text = bbcodeInlineCodePattern.ReplaceAllStringFunc(text, func(segment string) string {
+		match := bbcodeInlineCodePattern.FindStringSubmatch(segment)
+		if len(match) < 2 {
+			return segment
+		}
+		body := html.UnescapeString(stripRichText(match[1]))
+		return "[code]" + body + "[/code]"
+	})
+
+	text = bbcodeLinkPattern.ReplaceAllStringFunc(text, func(segment string) string {
+		match := bbcodeLinkPattern.FindStringSubmatch(segment)
+		if len(match) < 3 {
+			return segment
+		}
+		href := html.UnescapeString(strings.TrimSpace(match[1]))
+		label := html.UnescapeString(stripRichText(match[2]))
+		if !isSafeQuickLink(href) {
+			return label
+		}
+		return "[url=" + href + "]" + label + "[/url]"
+	})
+
+	text = bbcodeStrongPattern.ReplaceAllStringFunc(text, func(segment string) string {
+		if strings.HasPrefix(strings.ToLower(segment), "</") {
+			return "[/b]"
+		}
+		return "[b]"
+	})
+	text = bbcodeBoldPattern.ReplaceAllStringFunc(text, func(segment string) string {
+		if strings.HasPrefix(strings.ToLower(segment), "</") {
+			return "[/b]"
+		}
+		return "[b]"
+	})
+	text = bbcodeEmPattern.ReplaceAllStringFunc(text, func(segment string) string {
+		if strings.HasPrefix(strings.ToLower(segment), "</") {
+			return "[/i]"
+		}
+		return "[i]"
+	})
+	text = bbcodeItalicPattern.ReplaceAllStringFunc(text, func(segment string) string {
+		if strings.HasPrefix(strings.ToLower(segment), "</") {
+			return "[/i]"
+		}
+		return "[i]"
+	})
+
+	text = bbcodePBoundaryPattern.ReplaceAllString(text, "\n")
+	text = bbcodeBrPattern.ReplaceAllString(text, "\n")
+	text = bbcodeAnyTagPattern.ReplaceAllString(text, "")
+	text = html.UnescapeString(text)
+
+	for _, token := range codeBlocks {
+		text = strings.ReplaceAll(text, token.token, token.bb)
+	}
+
+	return normalizePlainText(text)
+}
+
+func buildBBCodeBody(msg *ExportMessage) string {
+	if msg == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(msg.Content)
+	if raw == "" {
+		return ""
+	}
+
+	var body string
+	if htmlValue, ok := convertTipTapToHTML(raw); ok {
+		htmlValue = convertAtTagsToHTML(htmlValue)
+		body = convertRenderedHTMLToBBCode(htmlValue)
+	} else if isLikelyHTMLContent(raw) {
+		body = convertRenderedHTMLToBBCode(raw)
+	} else {
+		protected, tokens := protectAtTagsForQuickFormat(raw)
+		body = convertQuickFormatForFlavor(protected, quickFormatFlavorBBCode)
+		for _, token := range tokens {
+			body = strings.ReplaceAll(body, token.token, token.bb)
+		}
+		body = normalizePlainText(body)
+	}
+
+	body = wrapOOCContent(msg.IcMode, body)
+	parts := make([]string, 0, 3)
+	if msg.IsArchived {
+		parts = append(parts, "[已归档]")
+	}
+	if msg.IsWhisper {
+		if label := formatWhisperTargets(msg.WhisperTargets); label != "" {
+			parts = append(parts, label)
+		}
+	}
+	parts = append(parts, body)
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
 var (
 	attachmentTokenPattern    = regexp.MustCompile(`^[0-9A-Za-z_-]+$`)
 	attachmentBaseURLOverride string
@@ -1403,7 +1727,7 @@ func buildBBCodeTextLine(payload *ExportPayload, msg *ExportMessage) string {
 	}
 	headerParts = append(headerParts, fmt.Sprintf("<%s>", msg.SenderName))
 	header := strings.Join(headerParts, " ")
-	content := buildContentBody(msg)
+	content := buildBBCodeBody(msg)
 	color := sanitizeBBCodeColor(msg.SenderColor, "#111111")
 	return fmt.Sprintf("[color=silver]%s[/color][color=%s] %s [/color]", header, color, content)
 }

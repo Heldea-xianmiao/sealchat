@@ -11,6 +11,27 @@ export type StickyNoteType = 'text' | 'counter' | 'list' | 'slider' | 'chat' | '
 // 便签可见性
 export type StickyNoteVisibility = 'all' | 'owner' | 'editors' | 'viewers'
 
+export interface StickyNoteUserBrief {
+    id: string
+    nickname?: string
+    nick?: string
+    name?: string
+    avatar?: string
+}
+
+export interface StickyNoteEditingLock {
+    userId: string
+    sessionId?: string
+    expireAt: number
+    user?: StickyNoteUserBrief
+}
+
+type StickyNoteUpdateResult = {
+    ok: boolean
+    conflict?: boolean
+    note?: StickyNote
+}
+
 // 类型特定数据结构
 export interface CounterTypeData {
     value: number
@@ -56,6 +77,12 @@ export interface RoundCounterTypeData {
 
 export type StickyNoteTypeData = CounterTypeData | ListTypeData | SliderTypeData | TimerTypeData | ClockTypeData | RoundCounterTypeData | null
 
+export interface StickyNoteEmbedLayoutState {
+    collapsed?: boolean
+    width?: number
+    height?: number
+}
+
 // 便签类型定义
 export interface StickyNote {
     id: string
@@ -81,13 +108,8 @@ export interface StickyNote {
     defaultH: number
     createdAt: number
     updatedAt: number
-    creator?: {
-        id: string
-        nickname?: string
-        nick?: string
-        name?: string
-        avatar: string
-    }
+    creator?: StickyNoteUserBrief
+    editingLock?: StickyNoteEditingLock
 }
 
 // 便签文件夹类型
@@ -142,6 +164,7 @@ const STORAGE_KEY_PREFIX = 'sealchat_sticky_notes'
 const MIN_NOTE_WIDTH = 200
 const MIN_NOTE_HEIGHT = 150
 const VIEWPORT_PADDING = 8
+const STICKY_NOTE_EMBED_LAYOUT_KEY = '__embedLayout'
 let viewportListenerBound = false
 
 export const useStickyNoteStore = defineStore('stickyNote', () => {
@@ -158,6 +181,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     const activeNoteIds = ref<string[]>([])
     // 当前正在编辑的便签ID
     const editingNoteId = ref<string | null>(null)
+    // 当前编辑会话（用于锁校验）
+    const editingSessionByNoteId = ref<Record<string, string>>({})
     // 当前频道ID
     const currentChannelId = ref<string>('')
     // 最大z-index
@@ -475,25 +500,85 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
 
     // 更新便签内容
     async function updateNote(noteId: string, updates: Partial<StickyNote>) {
+        return updateNoteWithOptions(noteId, updates)
+    }
+
+    async function updateNoteWithOptions(
+        noteId: string,
+        updates: Partial<StickyNote>,
+        options?: { lockSessionId?: string }
+    ): Promise<StickyNoteUpdateResult> {
+        const payload: Record<string, any> = { ...updates }
+        const lockSessionId = options?.lockSessionId ?? editingSessionByNoteId.value[noteId]
+        if (lockSessionId) {
+            payload.lockSessionId = lockSessionId
+        }
+
         // 如果 content 是 TipTap JSON，自动生成纯文本版本用于搜索
-        if (updates.content && isTipTapJson(updates.content)) {
-            updates.contentText = tiptapJsonToPlainText(updates.content)
+        if (payload.content && isTipTapJson(payload.content)) {
+            payload.contentText = tiptapJsonToPlainText(payload.content)
         }
 
         const existing = notes.value[noteId]
         if (existing) {
             notes.value[noteId] = {
                 ...existing,
-                ...updates
+                ...payload
             }
             persistLocalCache()
         }
         try {
-            const response = await api.patch(`api/v1/sticky-notes/${noteId}`, updates)
+            const response = await api.patch(`api/v1/sticky-notes/${noteId}`, payload)
             notes.value[noteId] = response.data.note
             persistLocalCache()
+            return { ok: true, note: response.data.note as StickyNote }
         } catch (err) {
+            const status = (err as any)?.response?.status
+            const lockedNote = (err as any)?.response?.data?.note as StickyNote | undefined
+            if (status === 409 && lockedNote?.id) {
+                notes.value[lockedNote.id] = lockedNote
+                persistLocalCache()
+                return { ok: false, conflict: true, note: lockedNote }
+            }
             console.error('更新便签失败:', err)
+            return { ok: false, conflict: false }
+        }
+    }
+
+    async function acquireEditLock(noteId: string, sessionId: string): Promise<StickyNoteUpdateResult> {
+        try {
+            const response = await api.post(`api/v1/sticky-notes/${noteId}/edit-lock/acquire`, { sessionId })
+            const note: StickyNote | undefined = response.data?.note
+            if (note?.id) {
+                notes.value[note.id] = note
+                persistLocalCache()
+            }
+            return { ok: true, note }
+        } catch (err) {
+            const status = (err as any)?.response?.status
+            const lockedNote = (err as any)?.response?.data?.note as StickyNote | undefined
+            if (status === 409 && lockedNote?.id) {
+                notes.value[lockedNote.id] = lockedNote
+                persistLocalCache()
+                return { ok: false, conflict: true, note: lockedNote }
+            }
+            console.error('获取便签编辑锁失败:', err)
+            return { ok: false, conflict: false }
+        }
+    }
+
+    async function releaseEditLock(noteId: string, sessionId?: string) {
+        try {
+            const response = await api.post(`api/v1/sticky-notes/${noteId}/edit-lock/release`, { sessionId })
+            const note: StickyNote | undefined = response.data?.note
+            if (note?.id) {
+                notes.value[note.id] = note
+                persistLocalCache()
+            }
+            return true
+        } catch (err) {
+            console.error('释放便签编辑锁失败:', err)
+            return false
         }
     }
 
@@ -615,6 +700,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         if (idx !== -1) {
             activeNoteIds.value.splice(idx, 1)
         }
+        delete editingSessionByNoteId.value[noteId]
         if (editingNoteId.value === noteId) {
             editingNoteId.value = null
         }
@@ -646,13 +732,29 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
     }
 
     // 开始编辑
-    function startEditing(noteId: string) {
+    function startEditing(noteId: string, sessionId?: string) {
+        if (editingNoteId.value && editingNoteId.value !== noteId) {
+            delete editingSessionByNoteId.value[editingNoteId.value]
+        }
         editingNoteId.value = noteId
+        if (sessionId) {
+            editingSessionByNoteId.value[noteId] = sessionId
+        }
     }
 
     // 结束编辑
-    function stopEditing() {
-        editingNoteId.value = null
+    function stopEditing(noteId?: string) {
+        const targetId = noteId || editingNoteId.value
+        if (targetId) {
+            delete editingSessionByNoteId.value[targetId]
+        }
+        if (!noteId || editingNoteId.value === noteId) {
+            editingNoteId.value = null
+        }
+    }
+
+    function getEditingSessionId(noteId: string) {
+        return editingSessionByNoteId.value[noteId]
     }
 
     function clampNumber(value: number, min: number, max: number) {
@@ -819,6 +921,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         userStates.value = {}
         activeNoteIds.value = []
         editingNoteId.value = null
+        editingSessionByNoteId.value = {}
         currentChannelId.value = ''
         maxZIndex.value = 1000
         loading.value = false
@@ -826,19 +929,119 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         privateCreateEnabled.value = false
     }
 
-    // 解析 typeData
+    function parseRawTypeDataObject(note?: StickyNote | null): Record<string, any> {
+        if (!note?.typeData) return {}
+        try {
+            const parsed = JSON.parse(note.typeData)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, any>
+            }
+        } catch {
+            // ignore
+        }
+        return {}
+    }
+
+    function normalizeEmbedLayoutState(raw: any): StickyNoteEmbedLayoutState {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return {}
+        }
+        const layout: StickyNoteEmbedLayoutState = {}
+        if (typeof raw.collapsed === 'boolean') {
+            layout.collapsed = raw.collapsed
+        }
+        if (Number.isFinite(raw.width) && raw.width > 0) {
+            layout.width = Math.round(raw.width)
+        }
+        if (Number.isFinite(raw.height) && raw.height > 0) {
+            layout.height = Math.round(raw.height)
+        }
+        return layout
+    }
+
+    // 解析 typeData（不包含嵌入布局内部字段）
     function parseTypeData<T extends StickyNoteTypeData>(note: StickyNote): T | null {
         if (!note.typeData) return null
         try {
-            return JSON.parse(note.typeData) as T
+            const parsed = JSON.parse(note.typeData)
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                const record = parsed as Record<string, any>
+                if (Object.prototype.hasOwnProperty.call(record, STICKY_NOTE_EMBED_LAYOUT_KEY)) {
+                    const { [STICKY_NOTE_EMBED_LAYOUT_KEY]: _ignored, ...rest } = record
+                    if (Object.keys(rest).length === 0) {
+                        return null
+                    }
+                    return rest as T
+                }
+            }
+            return parsed as T
         } catch {
             return null
         }
     }
 
+    function getEmbedLayoutState(noteId: string): StickyNoteEmbedLayoutState {
+        const note = notes.value[noteId]
+        if (!note) return {}
+        const raw = parseRawTypeDataObject(note)[STICKY_NOTE_EMBED_LAYOUT_KEY]
+        return normalizeEmbedLayoutState(raw)
+    }
+
+    async function updateEmbedLayoutState(noteId: string, updates: StickyNoteEmbedLayoutState) {
+        const note = notes.value[noteId]
+        if (!note) return false
+
+        const patch = normalizeEmbedLayoutState(updates)
+        const current = getEmbedLayoutState(noteId)
+        const next: StickyNoteEmbedLayoutState = {
+            ...current,
+            ...patch,
+        }
+        if (
+            current.collapsed === next.collapsed &&
+            current.width === next.width &&
+            current.height === next.height
+        ) {
+            return true
+        }
+
+        const record = parseRawTypeDataObject(note)
+        record[STICKY_NOTE_EMBED_LAYOUT_KEY] = next
+
+        const noteUpdates: Partial<StickyNote> = {
+            typeData: JSON.stringify(record)
+        }
+        if (typeof next.width === 'number') {
+            noteUpdates.defaultW = next.width
+        }
+        if (typeof next.height === 'number') {
+            noteUpdates.defaultH = next.height
+        }
+        const result = await updateNoteWithOptions(noteId, noteUpdates)
+        return result.ok
+    }
+
     // 更新 typeData
     async function updateTypeData(noteId: string, typeData: StickyNoteTypeData) {
-        const typeDataStr = JSON.stringify(typeData)
+        const note = notes.value[noteId]
+        const embedLayout = getEmbedLayoutState(noteId)
+        const hasEmbedLayout = Boolean(
+            note &&
+                (embedLayout.collapsed !== undefined || embedLayout.width !== undefined || embedLayout.height !== undefined)
+        )
+
+        let nextTypeData: any
+        if (hasEmbedLayout) {
+            if (typeData && typeof typeData === 'object' && !Array.isArray(typeData)) {
+                nextTypeData = { ...typeData, [STICKY_NOTE_EMBED_LAYOUT_KEY]: embedLayout }
+            } else {
+                nextTypeData = { [STICKY_NOTE_EMBED_LAYOUT_KEY]: embedLayout }
+            }
+        } else {
+            nextTypeData = typeData
+        }
+
+        const typeDataStr = JSON.stringify(nextTypeData)
         await updateNote(noteId, { typeData: typeDataStr })
     }
 
@@ -933,6 +1136,9 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         loadChannelNotes,
         createNote,
         updateNote,
+        updateNoteWithOptions,
+        acquireEditLock,
+        releaseEditLock,
         deleteNote,
         updateUserState,
         pushNote,
@@ -944,6 +1150,7 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         restoreNote,
         startEditing,
         stopEditing,
+        getEditingSessionId,
         resetNotePosition,
         resetAllOpenNotes,
         handleStickyNoteEvent,
@@ -952,6 +1159,8 @@ export const useStickyNoteStore = defineStore('stickyNote', () => {
         setPrivateCreateEnabled,
         reset,
         parseTypeData,
+        getEmbedLayoutState,
+        updateEmbedLayoutState,
         updateTypeData,
         getDefaultTypeData,
         // 文件夹操作

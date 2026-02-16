@@ -614,6 +614,9 @@ func websocketWorks(app *fiber.App) {
 					case "message.update":
 						apiWrap(ctx, msg, apiMessageUpdate)
 						solved = true
+					case "widget.interact":
+						apiWrap(ctx, msg, apiWidgetInteract)
+						solved = true
 					case "message.delete":
 						apiWrap(ctx, msg, apiMessageDelete)
 						solved = true
@@ -640,6 +643,15 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "message.unarchive":
 						apiWrap(ctx, msg, apiMessageUnarchive)
+						solved = true
+					case "message.pin":
+						apiWrap(ctx, msg, apiMessagePin)
+						solved = true
+					case "message.unpin":
+						apiWrap(ctx, msg, apiMessageUnpin)
+						solved = true
+					case "message.pin.list":
+						apiWrap(ctx, msg, apiMessagePinList)
 						solved = true
 					case "message.edit.history":
 						apiWrap(ctx, msg, apiMessageEditHistory)
@@ -678,6 +690,9 @@ func websocketWorks(app *fiber.App) {
 						solved = true
 					case "character.list":
 						apiCharacterList(ctx, msg)
+						solved = true
+					case "character.capability.test":
+						apiCharacterCapabilityTest(ctx, msg)
 						solved = true
 					case "character.new":
 						apiCharacterNew(ctx, msg)

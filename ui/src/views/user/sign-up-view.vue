@@ -73,6 +73,13 @@ const emailError = computed(() => {
   return emailPattern.test(form.email.trim()) ? '' : '请输入有效的邮箱地址';
 });
 
+const shouldForceCaptchaRetry = (errMsg: string) => {
+  if (!errMsg) {
+    return false;
+  }
+  return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误'].some((keyword) => errMsg.includes(keyword));
+};
+
 const sendEmailCode = async () => {
   if (emailCodeSending.value || emailCodeCountdown.value > 0) return;
 
@@ -113,7 +120,22 @@ const sendEmailCode = async () => {
       }
     }, 1000);
   } catch (e: any) {
-    message.error(e?.response?.data?.error || '发送失败');
+    const errMsg = e?.response?.data?.error || '发送失败';
+    message.error(errMsg);
+
+    if (shouldForceCaptchaRetry(errMsg)) {
+      captchaVerified.value = false;
+      if (captchaMode.value === 'local') {
+        captchaInput.value = '';
+        await fetchCaptcha();
+      } else if (captchaMode.value === 'turnstile') {
+        turnstileToken.value = '';
+        await nextTick();
+        await renderTurnstileWidget();
+      }
+      return;
+    }
+
     // 发送失败时刷新验证码
     if (!captchaVerified.value) {
       if (captchaMode.value === 'local') {

@@ -1,7 +1,7 @@
 <script setup lang="tsx">
 import type { MenuOptions } from '@imengyu/vue3-context-menu';
 import type { User } from '@satorijs/protocol';
-import { useChatStore } from '@/stores/chat';
+import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
 import { computed, ref, defineAsyncComponent } from 'vue';
 import Element from '@satorijs/element'
@@ -237,6 +237,71 @@ const canArchiveByRule = computed(() => {
 
 const showArchiveAction = computed(() => !isArchivedMessage.value && canArchiveByRule.value);
 const showUnarchiveAction = computed(() => isArchivedMessage.value && canArchiveByRule.value);
+const isPinnedMessage = computed(() => {
+  const raw: any = menuMessage.value.raw;
+  if (!raw) {
+    return false;
+  }
+  return Boolean(raw.isPinned ?? raw.is_pinned ?? false);
+});
+const resolveRoleRank = (uid: string): number => {
+  if (!uid || !channelId.value) {
+    return 0;
+  }
+  if (chat.isChannelOwner(channelId.value, uid)) {
+    return 4;
+  }
+  const roleIds = chat.channelMemberRoleMap[channelId.value]?.[uid] || [];
+  if (!Array.isArray(roleIds) || roleIds.length === 0) {
+    return 0;
+  }
+  let rank = 0;
+  roleIds.forEach((roleId) => {
+    if (typeof roleId !== 'string') {
+      return;
+    }
+    if (roleId.endsWith('-owner')) {
+      rank = Math.max(rank, 4);
+    } else if (roleId.endsWith('-admin')) {
+      rank = Math.max(rank, 3);
+    } else if (roleId.endsWith('-member')) {
+      rank = Math.max(rank, 2);
+    } else if (roleId.endsWith('-spectator')) {
+      rank = Math.max(rank, 1);
+    }
+  });
+  return rank;
+};
+const viewerRoleRank = computed(() => resolveRoleRank(currentUserId.value));
+const pinnerUserId = computed(() => {
+  const raw: any = menuMessage.value.raw;
+  return String(raw?.pinnedBy ?? raw?.pinned_by ?? '').trim();
+});
+const pinnerRoleRank = computed(() => resolveRoleRank(pinnerUserId.value));
+const canPinByRule = computed(() => {
+  if (!menuMessage.value.raw || !channelId.value) {
+    return false;
+  }
+  if (isPinnedMessage.value) {
+    return false;
+  }
+  return viewerRoleRank.value >= 2;
+});
+const canUnpinByRule = computed(() => {
+  if (!menuMessage.value.raw || !channelId.value) {
+    return false;
+  }
+  if (viewerRoleRank.value < 2) {
+    return false;
+  }
+  if (!isPinnedMessage.value) {
+    return false;
+  }
+  if (pinnerUserId.value && pinnerUserId.value === currentUserId.value) {
+    return true;
+  }
+  return viewerRoleRank.value > pinnerRoleRank.value;
+});
 const canRemoveMessage = computed(() => {
   if (!menuMessage.value.raw || !channelId.value || !targetUserId.value) {
     return false;
@@ -302,6 +367,62 @@ const clickUnarchive = async () => {
     message.success('消息已取消归档');
   } catch (error) {
     const errMsg = (error as Error)?.message || '取消归档失败';
+    message.error(errMsg);
+  } finally {
+    chat.messageMenu.show = false;
+  }
+};
+
+const clickPin = async () => {
+  if (!canPinByRule.value) {
+    return;
+  }
+  const targetId = menuMessage.value.raw?.id;
+  if (!channelId.value || !targetId) {
+    return;
+  }
+  try {
+    await chat.pinMessages([targetId]);
+    const raw: any = menuMessage.value.raw;
+    if (raw) {
+      raw.isPinned = true;
+      raw.is_pinned = true;
+      raw.pinnedBy = currentUserId.value;
+      raw.pinned_by = currentUserId.value;
+      raw.pinnedAt = Date.now();
+      raw.pinned_at = raw.pinnedAt;
+    }
+    message.success('消息已置顶');
+  } catch (error) {
+    const errMsg = (error as Error)?.message || '置顶失败';
+    message.error(errMsg);
+  } finally {
+    chat.messageMenu.show = false;
+  }
+};
+
+const clickUnpin = async () => {
+  if (!canUnpinByRule.value) {
+    return;
+  }
+  const targetId = menuMessage.value.raw?.id;
+  if (!channelId.value || !targetId) {
+    return;
+  }
+  try {
+    await chat.unpinMessages([targetId]);
+    const raw: any = menuMessage.value.raw;
+    if (raw) {
+      raw.isPinned = false;
+      raw.is_pinned = false;
+      raw.pinnedBy = '';
+      raw.pinned_by = '';
+      raw.pinnedAt = undefined;
+      raw.pinned_at = undefined;
+    }
+    message.success('消息已取消置顶');
+  } catch (error) {
+    const errMsg = (error as Error)?.message || '取消置顶失败';
     message.error(errMsg);
   } finally {
     chat.messageMenu.show = false;
@@ -414,6 +535,18 @@ const clickEdit = () => {
   });
   chat.messageMenu.show = false;
 }
+
+const clickResizeImage = () => {
+  if (!chat.curChannel?.id || !menuMessage.value.raw?.id) {
+    return;
+  }
+  const target = menuMessage.value.raw;
+  chatEvent.emit('message-image-resize-enter' as any, {
+    messageId: target.id,
+    channelId: chat.curChannel.id,
+  } as any);
+  chat.messageMenu.show = false;
+};
 
 const clickCopy = async () => {
   const content = menuMessage.value.raw?.content || '';
@@ -556,9 +689,12 @@ const clickCopyMessageLink = async () => {
     <context-menu-item label="复制消息链接" @click="clickCopyMessageLink" />
     <context-menu-item v-if="canWhisper" :label="t('whisper.menu')" @click="clickWhisper" />
     <context-menu-item label="回复" @click="clickReplyTo" />
+    <context-menu-item v-if="canPinByRule" label="置顶消息" @click="clickPin" />
+    <context-menu-item v-if="canUnpinByRule" label="取消置顶" @click="clickUnpin" />
     <context-menu-item v-if="showArchiveAction" label="归档" @click="clickArchive" />
     <context-menu-item v-if="showUnarchiveAction" label="取消归档" @click="clickUnarchive" />
     <context-menu-item label="编辑消息" @click="clickEdit" v-if="canEdit" />
+    <context-menu-item label="调整图片大小" @click="clickResizeImage" v-if="chat.messageMenu.hasImage && canEdit" />
     <context-menu-item label="多选" @click="clickMultiSelect" />
     <context-menu-item label="撤回" @click="clickDelete" v-if="isSelfMessage" />
     <context-menu-item label="删除" @click="clickRemove" v-if="canRemoveMessage" />

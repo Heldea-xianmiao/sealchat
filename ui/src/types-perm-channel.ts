@@ -20,6 +20,7 @@ export interface ChannelRolePermSheet {
   func_channel_manage_role: PermResult; // 频道 - 频道设置 - 权限管理
   func_channel_manage_role_root: PermResult; // 频道 - 频道设置 - 权限管理（Root管理员）
   func_channel_manage_gallery: PermResult; // 频道 - 频道设置 - 快捷表情资源管理
+  func_channel_message_pin: PermResult; // 频道 - 消息 - 置顶
   func_channel_message_archive: PermResult; // 频道 - 消息 - 归档
   func_channel_message_delete: PermResult; // 频道 - 消息 - 删除
   func_channel_iform_manage: PermResult; // 频道 - iForm - 配置管理

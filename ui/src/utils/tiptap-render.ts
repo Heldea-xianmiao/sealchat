@@ -110,6 +110,97 @@ function shouldFilterTextColor(value: string): boolean {
   return DAY_TEXT_BACKGROUNDS.some((bg) => colorDistance(rgb, bg) <= DAY_TEXT_DISTANCE_THRESHOLD);
 }
 
+const MENTION_TOKEN_REGEX = /<at\s+id=(['"])([^'"]*)\1(?:\s+name=(['"])(.*?)\3)?\s*\/?\s*>/g;
+const SPOILER_OPEN_TAG = '<span class="tiptap-spoiler" data-spoiler="true">';
+const SPOILER_CLOSE_TAG = '</span>';
+
+function unwrapSpoilerFragment(fragment: string): string | null {
+  if (!fragment.startsWith(SPOILER_OPEN_TAG) || !fragment.endsWith(SPOILER_CLOSE_TAG)) {
+    return null;
+  }
+  return fragment.slice(SPOILER_OPEN_TAG.length, -SPOILER_CLOSE_TAG.length);
+}
+
+function mergeAdjacentSpoilerFragments(fragments: string[]): string {
+  if (fragments.length <= 1) {
+    return fragments.join('');
+  }
+
+  const merged: string[] = [];
+
+  fragments.forEach((fragment) => {
+    if (!fragment) {
+      return;
+    }
+
+    const currentInner = unwrapSpoilerFragment(fragment);
+    const previous = merged.length > 0 ? merged[merged.length - 1] : '';
+    const previousInner = previous ? unwrapSpoilerFragment(previous) : null;
+
+    if (currentInner !== null && previousInner !== null) {
+      merged[merged.length - 1] = `${SPOILER_OPEN_TAG}${previousInner}${currentInner}${SPOILER_CLOSE_TAG}`;
+      return;
+    }
+
+    merged.push(fragment);
+  });
+
+  return merged.join('');
+}
+
+function decodeMentionText(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function renderMentionAwareText(text: string): string {
+  if (!text) {
+    return '';
+  }
+
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  let lastIndex = 0;
+  let result = '';
+  let match: RegExpExecArray | null;
+
+  while ((match = MENTION_TOKEN_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      result += escapeHtml(text.slice(lastIndex, match.index));
+    }
+
+    const atId = decodeMentionText(match[2] || '').trim();
+    const atName = decodeMentionText(match[4] || '').trim();
+    const displayName = atName || atId || '用户';
+    const className = atId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule';
+    result += `<span class="${className}">@${escapeHtml(displayName)}</span>`;
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    result += escapeHtml(text.slice(lastIndex));
+  }
+
+  return result;
+}
+
+function mentionAwarePlainText(text: string): string {
+  if (!text) {
+    return '';
+  }
+
+  MENTION_TOKEN_REGEX.lastIndex = 0;
+  return text.replace(MENTION_TOKEN_REGEX, (_full, _quote, id: string, _nameQuote, name: string) => {
+    const atId = decodeMentionText(id || '').trim();
+    const atName = decodeMentionText(name || '').trim();
+    return `@${atName || atId || '用户'}`;
+  });
+}
+
 /**
  * 渲染单个节点
  */
@@ -122,7 +213,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
   if (node.text !== undefined) {
     let text = options.textRenderer
       ? options.textRenderer(node.text)
-      : escapeHtml(node.text);
+      : renderMentionAwareText(node.text);
 
     // 应用文本标记
     if (node.marks && node.marks.length > 0) {
@@ -179,7 +270,9 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
   }
 
   // 渲染子节点
-  const childrenHtml = node.content ? node.content.map((child) => renderNode(child, options)).join('') : '';
+  const childrenHtml = node.content
+    ? mergeAdjacentSpoilerFragments(node.content.map((child) => renderNode(child, options)))
+    : '';
 
   // 渲染块级节点
   switch (node.type) {
@@ -238,6 +331,13 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       const title = node.attrs?.title || '';
 
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" ${title ? `title="${escapeHtml(title)}"` : ''} class="${imageClass}" />`;
+
+    case 'mention':
+      const mentionId = String(node.attrs?.id || '').trim();
+      const mentionName = String(node.attrs?.name || '').trim();
+      const mentionDisplay = mentionName || mentionId || '用户';
+      const mentionClassName = mentionId === 'all' ? 'mention-capsule mention-capsule--all' : 'mention-capsule';
+      return `<span class="${mentionClassName}">@${escapeHtml(mentionDisplay)}</span>`;
 
     default:
       // 未知节点类型，返回子内容
@@ -328,11 +428,17 @@ function extractText(node: TipTapNode): string {
   if (!node) return '';
 
   if (node.text !== undefined) {
-    return node.text;
+    return mentionAwarePlainText(node.text);
   }
 
   if (node.type === 'hardBreak') {
     return '\n';
+  }
+
+  if (node.type === 'mention') {
+    const mentionId = String(node.attrs?.id || '').trim();
+    const mentionName = String(node.attrs?.name || '').trim();
+    return `@${mentionName || mentionId || '用户'}`;
   }
 
   if (node.content && node.content.length > 0) {
@@ -359,15 +465,25 @@ export function plainTextToTiptapJson(text: string): TipTapNode {
     };
   }
 
-  const lines = text.split('\n');
-  const content = lines.map((line) => ({
-    type: 'paragraph' as const,
-    content: line ? [{ type: 'text' as const, text: line }] : [],
-  }));
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const paragraphContent: TipTapNode[] = [];
+
+  lines.forEach((line, index) => {
+    if (line) {
+      paragraphContent.push({ type: 'text', text: line });
+    }
+    if (index < lines.length - 1) {
+      paragraphContent.push({ type: 'hardBreak' });
+    }
+  });
 
   return {
     type: 'doc',
-    content,
+    content: [
+      paragraphContent.length
+        ? { type: 'paragraph', content: paragraphContent }
+        : { type: 'paragraph' },
+    ],
   };
 }
 

@@ -100,6 +100,18 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
   };
 
+  const clearBotCharacterDisabled = (channelId: string) => {
+    if (!channelId || botCharacterDisabledByChannel.value[channelId] !== true) {
+      return;
+    }
+    const next = { ...botCharacterDisabledByChannel.value };
+    delete next[channelId];
+    botCharacterDisabledByChannel.value = next;
+    if (isDebugEnabled()) {
+      console.warn('[CharacterCard] character api capability restored', { channelId });
+    }
+  };
+
   const maybeDisableFromResponse = (channelId: string, resp: any) => {
     const err = resp?.data?.error;
     if (resp?.data?.ok === false && err === characterApiUnsupportedText) {
@@ -507,6 +519,55 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       console.warn('Failed to get active card', e);
     }
     return null;
+  };
+
+  const revalidateCharacterApi = async (channelId: string) => {
+    const normalizedChannelId = (channelId || '').trim();
+    if (!normalizedChannelId) {
+      return { ok: false as const, error: '缺少频道ID' };
+    }
+
+    await chatStore.ensureConnectionReady();
+    const payload: Record<string, string> = {
+      group_id: normalizedChannelId,
+    };
+    const userId = getUserId();
+    if (userId) {
+      payload.user_id = userId;
+    }
+
+    try {
+      const resp = await chatStore.sendAPI<{ data?: { ok?: boolean; error?: string } }>('character.capability.test', payload);
+      const ok = resp?.data?.ok === true;
+      if (ok) {
+        clearBotCharacterDisabled(normalizedChannelId);
+        chatStore.patchChannelAttributes(normalizedChannelId, {
+          characterApiEnabled: true,
+          characterApiReason: '',
+        } as any);
+        return { ok: true as const };
+      }
+      const err = String(resp?.data?.error || characterApiUnsupportedText).trim() || characterApiUnsupportedText;
+      markBotCharacterDisabled(normalizedChannelId);
+      chatStore.patchChannelAttributes(normalizedChannelId, {
+        characterApiEnabled: false,
+        characterApiReason: err,
+      } as any);
+      return { ok: false as const, error: err };
+    } catch (e: any) {
+      const err = String(
+        e?.response?.data?.error
+        || e?.response?.err
+        || e?.message
+        || '人物卡 API 验证失败',
+      ).trim() || '人物卡 API 验证失败';
+      markBotCharacterDisabled(normalizedChannelId);
+      chatStore.patchChannelAttributes(normalizedChannelId, {
+        characterApiEnabled: false,
+        characterApiReason: err,
+      } as any);
+      return { ok: false as const, error: err };
+    }
   };
 
   // Create a new character card
@@ -923,6 +984,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     unbindIdentity,
     requestBadgeSnapshot,
     broadcastActiveBadge,
+    revalidateCharacterApi,
     isBotCharacterDisabled,
     getCharacterApiDisabledReason,
   };

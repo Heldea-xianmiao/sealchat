@@ -66,6 +66,7 @@
                 <div class="iform-card__actions">
                   <n-button quaternary size="tiny" @click="iform.openPanel(form.id)">面板</n-button>
                   <n-button quaternary size="tiny" @click="openFloating(form.id)">弹出</n-button>
+                  <n-button quaternary size="tiny" @click="copyEmbedLink(form)">复制嵌入</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canBroadcast" @click="pushSingle(form)">推送</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="openFormModal(form)">编辑</n-button>
                   <n-button quaternary size="tiny" :disabled="!iform.canManage" @click="confirmDelete(form)">
@@ -181,12 +182,16 @@ import { computed, reactive, ref } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { useIFormStore } from '@/stores/iform';
 import { useChatStore } from '@/stores/chat';
+import { useUtilsStore } from '@/stores/utils';
 import { useMessage, useDialog } from 'naive-ui';
 import { TrashOutline } from '@vicons/ionicons5';
 import type { ChannelIForm } from '@/types/iform';
+import { copyTextWithFallback } from '@/utils/clipboard';
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 
 const iform = useIFormStore();
 const chat = useChatStore();
+const utils = useUtilsStore();
 iform.bootstrap();
 
 const message = useMessage();
@@ -364,6 +369,47 @@ const openFloating = (formId: string) => {
   }
   const windowId = iform.createWindowId(formId);
   iform.openFloating(formId, { windowId });
+};
+
+const resolveEmbedLinkBase = () => {
+  const domain = utils.config?.domain?.trim() || '';
+  if (!domain) {
+    return undefined;
+  }
+  const webUrl = utils.config?.webUrl?.trim() || '';
+  let base = domain;
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`;
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`;
+  }
+  return base;
+};
+
+const copyEmbedLink = async (form: ChannelIForm) => {
+  const worldId = chat.currentWorldId;
+  const channelId = chat.curChannel?.id;
+  if (!worldId || !channelId || !form?.id) {
+    message.warning('无法生成嵌入链接');
+    return;
+  }
+  const link = generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: form.id,
+      width: form.defaultWidth,
+      height: form.defaultHeight,
+    },
+    { base: resolveEmbedLinkBase() },
+  );
+  const copied = await copyTextWithFallback(link);
+  if (copied) {
+    message.success('嵌入链接已复制');
+  } else {
+    message.error('复制失败');
+  }
 };
 
 const pushSingle = async (form: ChannelIForm) => {

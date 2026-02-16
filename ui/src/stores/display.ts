@@ -56,6 +56,9 @@ export interface CustomThemeColors {
   // 术语高亮
   keywordBg?: string        // 术语高亮背景
   keywordBorder?: string    // 术语高亮下划线
+  inlineCodeBg?: string     // 行内代码背景
+  inlineCodeFg?: string     // 行内代码文字
+  inlineCodeBorder?: string // 行内代码边框
 }
 
 export interface CustomTheme {
@@ -69,12 +72,15 @@ export interface CustomTheme {
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
+  sidebarWidth: number         // 左侧频道栏宽度 (px)
+  channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
   showInputPreview: boolean
   autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
+  showPinnedMessages: boolean
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
   maxExportMessages: number
@@ -151,6 +157,14 @@ const MESSAGE_PADDING_X_MAX = 48
 const MESSAGE_PADDING_Y_DEFAULT = 14
 const MESSAGE_PADDING_Y_MIN = 4
 const MESSAGE_PADDING_Y_MAX = 32
+const SIDEBAR_WIDTH_DEFAULT = 272
+const SIDEBAR_WIDTH_MIN = 220
+const SIDEBAR_WIDTH_MAX = 520
+export const SIDEBAR_WIDTH_LIMITS = {
+  DEFAULT: SIDEBAR_WIDTH_DEFAULT,
+  MIN: SIDEBAR_WIDTH_MIN,
+  MAX: SIDEBAR_WIDTH_MAX,
+}
 const INPUT_AREA_HEIGHT_DEFAULT = 0  // 0 means auto (use default autosize)
 const INPUT_AREA_HEIGHT_MIN = 80
 const INPUT_AREA_HEIGHT_MAX = 600
@@ -209,7 +223,7 @@ const coerceTimestampFormat = (value?: string): TimestampFormat => {
 }
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
-const coercePalette = (value?: string): DisplayPalette => (value === 'night' ? 'night' : 'day')
+const coercePalette = (value?: string): DisplayPalette => (value === 'day' ? 'day' : 'night')
 const coerceBoolean = (value: any): boolean => value !== false
 const coerceNumberInRange = (value: any, fallback: number, min: number, max: number): number => {
   const num = Number(value)
@@ -368,13 +382,16 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
 
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
-  palette: 'day',
+  palette: 'night',
+  sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
+  channelNameWrapEnabled: false,
   showAvatar: true,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
   showInputPreview: true,
   autoScrollTypingPreview: false,
   mergeNeighbors: true,
+  showPinnedMessages: true,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
@@ -393,7 +410,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   favoriteChannelIdsByWorld: {},
   favoriteChannelHotkeysByWorld: {},
   worldKeywordHighlightEnabled: true,
-  worldKeywordUnderlineOnly: false,
+  worldKeywordUnderlineOnly: true,
   worldKeywordTooltipEnabled: true,
   worldKeywordDeduplicateEnabled: true,
   worldKeywordTooltipTextIndent: KEYWORD_TOOLTIP_TEXT_INDENT_DEFAULT,
@@ -517,6 +534,13 @@ const loadSettings = (): DisplaySettings => {
     return {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
+      sidebarWidth: coerceNumberInRange(
+        (parsed as any)?.sidebarWidth,
+        SIDEBAR_WIDTH_DEFAULT,
+        SIDEBAR_WIDTH_MIN,
+        SIDEBAR_WIDTH_MAX,
+      ),
+      channelNameWrapEnabled: coerceBoolean((parsed as any)?.channelNameWrapEnabled ?? false),
       showAvatar: coerceBoolean(parsed.showAvatar),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
@@ -533,6 +557,7 @@ const loadSettings = (): DisplaySettings => {
       showInputPreview: coerceBoolean(parsed.showInputPreview),
       autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
+      showPinnedMessages: coerceBoolean((parsed as any)?.showPinnedMessages ?? true),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
       maxExportMessages: coerceNumberInRange(
@@ -586,7 +611,7 @@ const loadSettings = (): DisplaySettings => {
       favoriteChannelIdsByWorld,
       favoriteChannelHotkeysByWorld,
       worldKeywordHighlightEnabled: coerceBoolean((parsed as any)?.worldKeywordHighlightEnabled ?? true),
-      worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? false),
+      worldKeywordUnderlineOnly: coerceBoolean((parsed as any)?.worldKeywordUnderlineOnly ?? true),
       worldKeywordTooltipEnabled: coerceBoolean((parsed as any)?.worldKeywordTooltipEnabled ?? true),
       worldKeywordDeduplicateEnabled: coerceBoolean((parsed as any)?.worldKeywordDeduplicateEnabled ?? true),
       worldKeywordTooltipTextIndent: coerceFloatInRange(
@@ -619,6 +644,14 @@ const loadSettings = (): DisplaySettings => {
 const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>): DisplaySettings => ({
   layout: patch && patch.layout ? coerceLayout(patch.layout) : base.layout,
   palette: patch && patch.palette ? coercePalette(patch.palette) : base.palette,
+  sidebarWidth:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'sidebarWidth')
+      ? coerceNumberInRange((patch as any).sidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
+      : base.sidebarWidth,
+  channelNameWrapEnabled:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'channelNameWrapEnabled')
+      ? coerceBoolean((patch as any).channelNameWrapEnabled)
+      : base.channelNameWrapEnabled,
   showAvatar:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
@@ -643,6 +676,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
       : base.mergeNeighbors,
+  showPinnedMessages:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'showPinnedMessages')
+      ? coerceBoolean((patch as any)?.showPinnedMessages)
+      : base.showPinnedMessages,
   alwaysShowTimestamp:
     patch && Object.prototype.hasOwnProperty.call(patch, 'alwaysShowTimestamp')
       ? coerceBoolean((patch as any)?.alwaysShowTimestamp)
@@ -816,6 +853,8 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
 export const useDisplayStore = defineStore('display', {
   state: () => ({
     settings: loadSettings(),
+    customThemePreviewEnabled: false,
+    customThemePreviewColors: {} as CustomThemeColors,
   }),
   getters: {
     layout: (state) => state.settings.layout,
@@ -1027,48 +1066,80 @@ export const useDisplayStore = defineStore('display', {
         '--chat-text-primary', '--chat-text-secondary',
         '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
         '--sc-border-mute', '--sc-border-strong',
-        '--primary-color', '--primary-color-hover'
+        '--primary-color', '--primary-color-hover',
+        '--custom-keyword-bg', '--custom-keyword-border',
+        '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border'
       ]
       // Clear previous custom colors first
       customColorVars.forEach(v => removeVar(v))
 
-      if (effective.customThemeEnabled && effective.activeCustomThemeId) {
-        const activeTheme = effective.customThemes.find(t => t.id === effective.activeCustomThemeId)
-        if (activeTheme?.colors) {
-          const c = activeTheme.colors
-          if (c.bgSurface) setVar('--sc-bg-surface', c.bgSurface)
-          if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
-          if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
-          if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
-          if (c.textPrimary) {
-            setVar('--sc-text-primary', c.textPrimary)
-            // Also set --chat-text-primary for chat message content area
-            setVar('--chat-text-primary', c.textPrimary)
-          }
-          if (c.textSecondary) {
-            setVar('--sc-text-secondary', c.textSecondary)
-            // Also set --chat-text-secondary for chat message content area
-            setVar('--chat-text-secondary', c.textSecondary)
-          }
-          // Use --custom-* prefix for chat colors so they can override scoped class variables
-          if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
-          if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
-          const stageBg = c.chatStageBg || c.chatIcBg
-          if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
-          if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
-          if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
-          if (c.borderMute) setVar('--sc-border-mute', c.borderMute)
-          if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
-          if (c.primaryColor) setVar('--primary-color', c.primaryColor)
-          if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
-          // Keyword highlight colors
-          if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
-          if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
-          // Mark custom theme active for CSS selectors
-          root.dataset.customTheme = 'true'
+      const activeThemeColors =
+        effective.customThemeEnabled && effective.activeCustomThemeId
+          ? effective.customThemes.find(t => t.id === effective.activeCustomThemeId)?.colors
+          : null
+
+      const previewColors = this.customThemePreviewEnabled ? this.customThemePreviewColors : null
+      const sourceColors = previewColors || activeThemeColors
+
+      if (sourceColors) {
+        const c = sourceColors
+        if (c.bgSurface) setVar('--sc-bg-surface', c.bgSurface)
+        if (c.bgElevated) setVar('--sc-bg-elevated', c.bgElevated)
+        if (c.bgInput) setVar('--sc-bg-input', c.bgInput)
+        if (c.bgHeader) setVar('--sc-bg-header', c.bgHeader)
+        if (c.textPrimary) {
+          setVar('--sc-text-primary', c.textPrimary)
+          // Also set --chat-text-primary for chat message content area
+          setVar('--chat-text-primary', c.textPrimary)
         }
+        if (c.textSecondary) {
+          setVar('--sc-text-secondary', c.textSecondary)
+          // Also set --chat-text-secondary for chat message content area
+          setVar('--chat-text-secondary', c.textSecondary)
+        }
+        // Use --custom-* prefix for chat colors so they can override scoped class variables
+        if (c.chatIcBg) setVar('--custom-chat-ic-bg', c.chatIcBg)
+        if (c.chatOocBg) setVar('--custom-chat-ooc-bg', c.chatOocBg)
+        const stageBg = c.chatStageBg || c.chatIcBg
+        if (stageBg) setVar('--custom-chat-stage-bg', stageBg)
+        if (c.chatPreviewBg) setVar('--custom-chat-preview-bg', c.chatPreviewBg)
+        if (c.chatPreviewDot) setVar('--custom-chat-preview-dot', c.chatPreviewDot)
+        if (c.borderMute) setVar('--sc-border-mute', c.borderMute)
+        if (c.borderStrong) setVar('--sc-border-strong', c.borderStrong)
+        if (c.primaryColor) setVar('--primary-color', c.primaryColor)
+        if (c.primaryColorHover) setVar('--primary-color-hover', c.primaryColorHover)
+        // Keyword highlight colors
+        if (c.keywordBg) setVar('--custom-keyword-bg', c.keywordBg)
+        if (c.keywordBorder) setVar('--custom-keyword-border', c.keywordBorder)
+        if (c.inlineCodeBg) setVar('--chat-inline-code-bg', c.inlineCodeBg)
+        if (c.inlineCodeFg) setVar('--chat-inline-code-fg', c.inlineCodeFg)
+        if (c.inlineCodeBorder) setVar('--chat-inline-code-border', c.inlineCodeBorder)
+        // Mark custom theme active for CSS selectors
+        root.dataset.customTheme = 'true'
       } else {
         delete root.dataset.customTheme
+      }
+    },
+    startCustomThemePreview(colors?: CustomThemeColors) {
+      this.customThemePreviewEnabled = true
+      this.customThemePreviewColors = { ...(colors || {}) }
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
+      }
+    },
+    updateCustomThemePreview(colors?: CustomThemeColors) {
+      if (!this.customThemePreviewEnabled) return
+      this.customThemePreviewColors = { ...(colors || {}) }
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
+      }
+    },
+    stopCustomThemePreview() {
+      if (!this.customThemePreviewEnabled && Object.keys(this.customThemePreviewColors).length === 0) return
+      this.customThemePreviewEnabled = false
+      this.customThemePreviewColors = {}
+      if (typeof this.applyTheme === 'function') {
+        this.applyTheme()
       }
     },
     // Custom theme management

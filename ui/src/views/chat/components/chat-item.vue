@@ -1,12 +1,14 @@
 <script setup lang="tsx">
 import dayjs from 'dayjs';
 import Element from '@satorijs/element'
-import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick } from 'vue';
+import { onMounted, ref, h, computed, watch, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue';
 import type { PropType } from 'vue';
 import { urlBase } from '@/stores/_config';
 import DOMPurify from 'dompurify';
 import { useUserStore } from '@/stores/user';
 import { useChatStore } from '@/stores/chat';
+import { useStickyNoteStore, type StickyNote, type StickyNoteType, type StickyNoteEmbedLayoutState } from '@/stores/stickyNote';
+import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
 import { Howl, Howler } from 'howler';
 import { useMessage } from 'naive-ui';
@@ -14,19 +16,25 @@ import Avatar from '@/components/avatar.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
-import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
+import { normalizeAttachmentId, resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { onLongPress } from '@vueuse/core';
 import Viewer from 'viewerjs';
 import 'viewerjs/dist/viewer.css';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary'
 import { useDisplayStore, type TimestampFormat } from '@/stores/display'
+import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { refreshWorldKeywordHighlights } from '@/utils/worldKeywordHighlighter'
 import { createKeywordTooltip } from '@/utils/keywordTooltip'
 import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLinkRenderer'
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
+import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
+import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import CharacterCardBadge from './CharacterCardBadge.vue'
 import MessageReactions from './MessageReactions.vue'
+import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import type { ChannelIForm } from '@/types/iform';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -42,10 +50,13 @@ type EditingPreviewInfo = {
 
 const user = useUserStore();
 const chat = useChatStore();
+const stickyNoteStore = useStickyNoteStore();
+const iFormStore = useIFormStore();
 const utils = useUtilsStore();
 const { t } = useI18n();
 const worldGlossary = useWorldGlossaryStore();
 const displayStore = useDisplayStore();
+const channelImageLayout = useChannelImageLayoutStore();
 
 const isMobileUa = typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -79,10 +90,296 @@ const messageContentRef = ref<HTMLElement | null>(null);
 let stopMessageLongPress: (() => void) | null = null;
 let inlineImageViewer: Viewer | null = null;
 
+const IMAGE_LAYOUT_MIN_SIZE = 48;
+const IMAGE_LAYOUT_MAX_SIZE = 4096;
+
+const imageResizeMode = ref(false);
+const imageResizeSelectedAttachmentId = ref('');
+const imageResizeDraftLayouts = ref<Record<string, { width: number; height: number }>>({});
+const imageResizeFreeScaling = ref(false);
+let imageResizePointerState: {
+  pointerId: number;
+  pointerType: string;
+  moveThreshold: number;
+  movementScale: number;
+  attachmentId: string;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+  aspectRatio: number;
+  moved: boolean;
+} | null = null;
+
 const diceChipHtmlPattern = /<span[^>]*class="[^"]*dice-chip[^"]*"/i;
+
+const MESSAGE_IFORM_MIN_WIDTH = 120;
+const MESSAGE_IFORM_MIN_HEIGHT = 72;
+const MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE = 480;
+const StickyNoteCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteCounter.vue'));
+const StickyNoteListEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteList.vue'));
+const StickyNoteSliderEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteSlider.vue'));
+const StickyNoteTimerEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteTimer.vue'));
+const StickyNoteClockEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteClock.vue'));
+const StickyNoteRoundCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteRoundCounter.vue'));
+
+const resolveStickyNoteAccent = (color: string): string => {
+  const colorMap: Record<string, string> = {
+    yellow: '#ffc107',
+    pink: '#e91e63',
+    green: '#4caf50',
+    blue: '#2196f3',
+    purple: '#9c27b0',
+    orange: '#ff9800',
+  };
+  return colorMap[color] || '#64748b';
+};
+
+const resolveStickyNoteContentText = (note: any): string => {
+  const contentText = String(note?.contentText || '').trim();
+  if (contentText) {
+    return contentText;
+  }
+  const rawContent = String(note?.content || '').trim();
+  if (!rawContent) {
+    return '';
+  }
+  if (isTipTapJson(rawContent)) {
+    try {
+      return tiptapJsonToPlainText(rawContent).trim();
+    } catch {
+      return rawContent;
+    }
+  }
+  return rawContent;
+};
+
+const resolveStickyNoteEmbedComponent = (type: StickyNoteType) => {
+  switch (type) {
+    case 'counter':
+      return StickyNoteCounterEmbed;
+    case 'list':
+      return StickyNoteListEmbed;
+    case 'slider':
+      return StickyNoteSliderEmbed;
+    case 'timer':
+      return StickyNoteTimerEmbed;
+    case 'clock':
+      return StickyNoteClockEmbed;
+    case 'roundCounter':
+      return StickyNoteRoundCounterEmbed;
+    default:
+      return null;
+  }
+};
+
+const STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH = 150;
+const STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT = 60;
+const STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH = 760;
+const STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT = 680;
+
+const clampStickyNoteEmbedSize = (value: number, min: number, max: number): number => {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+};
+
+const handleStickyNoteEmbedResizePersist = (noteId: string, event: Event) => {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) {
+    return;
+  }
+  const width = clampStickyNoteEmbedSize(target.clientWidth, STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH, STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH);
+  const height = clampStickyNoteEmbedSize(target.clientHeight, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT);
+  const current = stickyNoteStore.getEmbedLayoutState(noteId);
+  if (current.width === width && current.height === height) {
+    return;
+  }
+  const patch: StickyNoteEmbedLayoutState = { width, height };
+  void stickyNoteStore.updateEmbedLayoutState(noteId, patch);
+};
+
+const resolveSingleIFormLinkFromContent = (content: string) => {
+  let singleIFormLink = parseSingleIFormEmbedLinkText(content);
+  if (!singleIFormLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleIFormLink = parseSingleIFormEmbedLinkText(plainText);
+  }
+  return singleIFormLink;
+};
+
+const resolveSingleStickyNoteLinkFromContent = (content: string) => {
+  let singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(content);
+  if (!singleStickyNoteLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleStickyNoteLink = parseSingleStickyNoteEmbedLinkText(plainText);
+  }
+  return singleStickyNoteLink;
+};
 
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
+  if (singleStickyNoteLink) {
+    const isCurrentChannel = chat.curChannel?.id === singleStickyNoteLink.channelId;
+    if (isCurrentChannel) {
+      const liveNote = stickyNoteStore.notes[singleStickyNoteLink.noteId];
+      const noteType = (liveNote?.noteType || 'text') as StickyNoteType;
+      const embedComponent = resolveStickyNoteEmbedComponent(noteType);
+      const isInteractiveType = Boolean(embedComponent && liveNote);
+      const title = String(liveNote?.title || '').trim() || '未命名便签';
+      const fullText = resolveStickyNoteContentText(liveNote);
+      const accentColor = resolveStickyNoteAccent(liveNote?.color || 'blue');
+      const previewTitle = fullText || '点击打开便签';
+      const noteId = singleStickyNoteLink.noteId;
+      const embedState = stickyNoteStore.getEmbedLayoutState(noteId);
+      const isCollapsed = embedState.collapsed === true;
+      const widgetWidth = Number.isFinite(embedState.width)
+        ? clampStickyNoteEmbedSize(embedState.width as number, STICKY_NOTE_EMBED_RESIZE_MIN_WIDTH, STICKY_NOTE_EMBED_RESIZE_MAX_WIDTH)
+        : undefined;
+      const widgetHeight = Number.isFinite(embedState.height)
+        ? clampStickyNoteEmbedSize(embedState.height as number, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT)
+        : undefined;
+      const openStickyNote = (event?: MouseEvent | KeyboardEvent) => {
+        event?.preventDefault();
+        event?.stopPropagation();
+        void handleStickyNoteEmbedClick(singleStickyNoteLink);
+      };
+      return h(
+        'details',
+        {
+          class: ['message-sticky-note-embed', isInteractiveType ? 'message-sticky-note-embed--interactive' : ''],
+          open: !isCollapsed,
+          title: previewTitle,
+          'data-sticky-note-link': singleStickyNoteLink.rawLink,
+          style: {
+            '--sticky-note-accent': accentColor,
+          } as Record<string, string>,
+          onToggle: (event: Event) => {
+            const target = event.currentTarget as HTMLDetailsElement | null;
+            const collapsed = !(target?.open ?? true);
+            const patch: StickyNoteEmbedLayoutState = { collapsed };
+            void stickyNoteStore.updateEmbedLayoutState(noteId, patch);
+          },
+          onClick: (event: MouseEvent) => {
+            event.stopPropagation();
+          },
+        },
+        [
+          h('summary', { class: 'message-sticky-note-embed__summary-row' }, [
+            h('span', { class: 'message-sticky-note-embed__fold-icon' }, '▾'),
+            h('span', { class: 'message-sticky-note-embed__body' }, [
+              isInteractiveType
+                ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'message-sticky-note-embed__title-btn',
+                    onClick: openStickyNote,
+                  },
+                  title,
+                )
+                : h('span', { class: 'message-sticky-note-embed__title' }, title),
+            ]),
+            h('span', { class: 'message-sticky-note-embed__side' }, [
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'message-sticky-note-embed__copy-btn',
+                  title: '打开便签',
+                  onClick: openStickyNote,
+                },
+                '↗',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'message-sticky-note-embed__copy-btn',
+                  title: '复制便签链接',
+                  onClick: (event: MouseEvent) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void copyStickyNoteEmbedLinkFromCard(singleStickyNoteLink.rawLink);
+                  },
+                },
+                '⧉',
+              ),
+            ]),
+          ]),
+          h('div', { class: 'message-sticky-note-embed__panel' }, [
+            h(
+              'div',
+              {
+                class: 'message-sticky-note-embed__widget',
+                style: {
+                  width: widgetWidth ? `${widgetWidth}px` : undefined,
+                  height: widgetHeight ? `${widgetHeight}px` : undefined,
+                } as Record<string, string | undefined>,
+                onClick: (event: MouseEvent) => event.stopPropagation(),
+                onPointerdown: (event: PointerEvent) => event.stopPropagation(),
+                onMouseup: (event: MouseEvent) => handleStickyNoteEmbedResizePersist(noteId, event),
+                onPointerup: (event: PointerEvent) => handleStickyNoteEmbedResizePersist(noteId, event),
+              },
+              [
+                isInteractiveType && liveNote && embedComponent
+                  ? h(embedComponent, { note: liveNote as StickyNote, isEditing: false })
+                  : h('span', { class: 'message-sticky-note-embed__content' }, fullText || '（空便签）'),
+              ],
+            ),
+          ]),
+        ],
+      );
+    }
+  }
+
+  const singleIFormLink = resolveSingleIFormLinkFromContent(content);
+  if (singleIFormLink) {
+    const targetChannelForms = singleIFormLink.channelId
+      ? (iFormStore.formsByChannel[singleIFormLink.channelId] || [])
+      : [];
+    const matchedForm = targetChannelForms.find((item) => item.id === singleIFormLink.formId);
+    const width = Math.max(
+      MESSAGE_IFORM_MIN_WIDTH,
+      Math.round(singleIFormLink.width || matchedForm?.defaultWidth || 640),
+    );
+    const height = Math.max(
+      MESSAGE_IFORM_MIN_HEIGHT,
+      Math.round(singleIFormLink.height || matchedForm?.defaultHeight || 360),
+    );
+    const runtimeForm: ChannelIForm = {
+      id: singleIFormLink.formId,
+      channelId: singleIFormLink.channelId,
+      name: matchedForm?.name || '消息嵌入窗',
+      url: matchedForm?.url,
+      embedCode: matchedForm?.embedCode,
+      defaultWidth: width,
+      defaultHeight: height,
+      defaultCollapsed: false,
+      defaultFloating: false,
+      allowPopout: false,
+      orderIndex: 0,
+      mediaOptions: matchedForm?.mediaOptions,
+    };
+    return h(
+      'div',
+      {
+        class: 'message-iform-embed',
+        'data-iform-link': singleIFormLink.rawLink,
+        'data-message-id': payload?.id || '',
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          minWidth: `${MESSAGE_IFORM_MIN_WIDTH}px`,
+          minHeight: `${MESSAGE_IFORM_MIN_HEIGHT}px`,
+        },
+      },
+      [h(IFormEmbedFrame, { form: runtimeForm })],
+    );
+  }
 
   // 检测是否为 TipTap JSON 格式
   if (isTipTapJson(content)) {
@@ -112,6 +409,10 @@ const parseContent = (payload: any, overrideContent?: string) => {
     switch (item.type) {
       case 'img':
         if (item.attrs.src) {
+          const attachmentId = normalizeAttachmentId(item.attrs.src || '');
+          if (attachmentId) {
+            item.attrs['data-attachment-id'] = attachmentId;
+          }
           item.attrs.src = resolveAttachmentUrl(item.attrs.src);
         }
         // 添加 lazy loading 优化性能
@@ -200,6 +501,199 @@ const parseContent = (payload: any, overrideContent?: string) => {
   </span>
 }
 
+
+let messageIFormResizeObserver: ResizeObserver | null = null;
+let messageIFormResizePersistTimer: ReturnType<typeof setTimeout> | null = null;
+let messageIFormPersistInFlight = false;
+let messageIFormQueuedSize: { width: number; height: number } | null = null;
+let messageIFormLastSyncKey = '';
+let messageIFormResizePointerActive = false;
+
+const cleanupMessageIFormResizeSync = () => {
+  if (messageIFormResizeObserver) {
+    messageIFormResizeObserver.disconnect();
+    messageIFormResizeObserver = null;
+  }
+  if (messageIFormResizePersistTimer) {
+    clearTimeout(messageIFormResizePersistTimer);
+    messageIFormResizePersistTimer = null;
+  }
+  messageIFormQueuedSize = null;
+  messageIFormResizePointerActive = false;
+};
+
+const resolveMessageUpdateOptions = () => {
+  const tone = props.tone;
+  if (tone === 'ic' || tone === 'ooc') {
+    return { icMode: tone as 'ic' | 'ooc' };
+  }
+  return undefined;
+};
+
+const persistMessageIFormSize = async (width: number, height: number) => {
+  const item = props.item as any;
+  const messageId = item?.id;
+  const channelId = item?.channel?.id || item?.channelId || chat.curChannel?.id;
+  if (!messageId || !channelId) {
+    return;
+  }
+  if (!canEdit.value) {
+    return;
+  }
+
+  const singleIFormLink = resolveSingleIFormLinkFromContent(displayContent.value || '');
+  if (!singleIFormLink) {
+    return;
+  }
+
+  const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(width));
+  const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(height));
+  const currentLinkWidth = singleIFormLink.width ? Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(singleIFormLink.width)) : undefined;
+  const currentLinkHeight = singleIFormLink.height ? Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(singleIFormLink.height)) : undefined;
+  if (typeof currentLinkWidth === 'number' && typeof currentLinkHeight === 'number') {
+    if (Math.abs(nextWidth - currentLinkWidth) < 2 && Math.abs(nextHeight - currentLinkHeight) < 2) {
+      return;
+    }
+  }
+
+  const nextLink = updateIFormEmbedLinkSize(singleIFormLink.rawLink, nextWidth, nextHeight);
+  if (!nextLink || nextLink === singleIFormLink.rawLink) {
+    return;
+  }
+
+  const syncKey = `${messageId}:${nextLink}`;
+  if (syncKey === messageIFormLastSyncKey) {
+    return;
+  }
+
+  if (messageIFormPersistInFlight) {
+    messageIFormQueuedSize = { width: nextWidth, height: nextHeight };
+    return;
+  }
+
+  messageIFormPersistInFlight = true;
+  try {
+    const options = resolveMessageUpdateOptions();
+    await chat.messageUpdate(channelId, messageId, nextLink, options);
+    messageIFormLastSyncKey = syncKey;
+  } catch (error) {
+    console.error('同步消息 iForm 尺寸失败', error);
+  } finally {
+    messageIFormPersistInFlight = false;
+    if (messageIFormQueuedSize) {
+      const queuedSize = messageIFormQueuedSize;
+      messageIFormQueuedSize = null;
+      if (queuedSize.width !== nextWidth || queuedSize.height !== nextHeight) {
+        void persistMessageIFormSize(queuedSize.width, queuedSize.height);
+      }
+    }
+  }
+};
+
+const schedulePersistMessageIFormSize = (width: number, height: number) => {
+  if (messageIFormResizePersistTimer) {
+    clearTimeout(messageIFormResizePersistTimer);
+  }
+  messageIFormResizePersistTimer = setTimeout(() => {
+    void persistMessageIFormSize(width, height);
+  }, MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE);
+};
+
+const resetMessageIFormSyncBaseline = () => {
+  const item = props.item as any;
+  const messageId = item?.id || '';
+  const singleIFormLink = resolveSingleIFormLinkFromContent(displayContent.value || '');
+  messageIFormLastSyncKey = messageId && singleIFormLink
+    ? `${messageId}:${singleIFormLink.rawLink}`
+    : '';
+};
+
+const setupMessageIFormResizeSync = () => {
+  cleanupMessageIFormResizeSync();
+  const host = messageContentRef.value;
+  if (!host || typeof ResizeObserver === 'undefined') {
+    return;
+  }
+  const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
+  if (!embedEl) {
+    return;
+  }
+  messageIFormResizeObserver = new ResizeObserver((entries) => {
+    if (!messageIFormResizePointerActive) {
+      return;
+    }
+    const entry = entries[0];
+    if (!entry) {
+      return;
+    }
+    const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(entry.contentRect.width));
+    const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(entry.contentRect.height));
+    schedulePersistMessageIFormSize(nextWidth, nextHeight);
+  });
+  messageIFormResizeObserver.observe(embedEl);
+};
+
+
+const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (imageResizeMode.value) {
+    const host = messageContentRef.value;
+    const image = target?.closest<HTMLImageElement>('img');
+    if (host && image && host.contains(image)) {
+      if ('button' in event && typeof event.button === 'number' && event.button !== 0) {
+        return;
+      }
+      const attachmentId = normalizeAttachmentId(image.dataset.attachmentId || image.getAttribute('data-attachment-id') || image.getAttribute('src') || '');
+      if (attachmentId) {
+        imageResizeSelectedAttachmentId.value = attachmentId;
+        if ('pointerId' in event) {
+          startImageResizePointer(event as PointerEvent, image, attachmentId);
+        }
+        if (event.cancelable) {
+          event.preventDefault();
+        }
+        event.stopPropagation();
+        return;
+      }
+    }
+  }
+  if (!canEdit.value) {
+    return;
+  }
+  if (!target?.closest('.message-iform-embed')) {
+    return;
+  }
+  messageIFormResizePointerActive = true;
+};
+
+const flushMessageIFormSizeFromDom = () => {
+  const host = messageContentRef.value;
+  if (!host) {
+    return;
+  }
+  const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
+  if (!embedEl) {
+    return;
+  }
+  const nextWidth = Math.max(MESSAGE_IFORM_MIN_WIDTH, Math.round(embedEl.getBoundingClientRect().width));
+  const nextHeight = Math.max(MESSAGE_IFORM_MIN_HEIGHT, Math.round(embedEl.getBoundingClientRect().height));
+  schedulePersistMessageIFormSize(nextWidth, nextHeight);
+};
+
+const handleMessageIFormPointerUp = () => {
+  handleImageResizePointerUp();
+  if (!messageIFormResizePointerActive) {
+    return;
+  }
+  flushMessageIFormSizeFromDom();
+  messageIFormResizePointerActive = false;
+};
+
+const resetMessageIFormPointerState = () => {
+  messageIFormResizePointerActive = false;
+  clearImageResizePointerState();
+};
+
 const destroyImageViewer = () => {
   if (inlineImageViewer) {
     inlineImageViewer.destroy();
@@ -209,6 +703,10 @@ const destroyImageViewer = () => {
 
 const setupImageViewer = async () => {
   await nextTick();
+  if (imageResizeMode.value) {
+    destroyImageViewer();
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) {
     destroyImageViewer();
@@ -259,6 +757,10 @@ const ensureImageViewer = () => {
 };
 
 const handleContentDblclick = async (event: MouseEvent) => {
+  if (imageResizeMode.value) {
+    event.preventDefault();
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) return;
   const target = event.target as HTMLElement | null;
@@ -281,6 +783,20 @@ const handleContentDblclick = async (event: MouseEvent) => {
 const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  const host = messageContentRef.value;
+  if (imageResizeMode.value && host) {
+    const image = target.closest<HTMLImageElement>('img');
+    if (image && host.contains(image)) {
+      const attachmentId = normalizeAttachmentId(image.dataset.attachmentId || image.getAttribute('data-attachment-id') || image.getAttribute('src') || '');
+      if (attachmentId) {
+        imageResizeSelectedAttachmentId.value = attachmentId;
+        event.preventDefault();
+        event.stopPropagation();
+        void applyImageLayoutToDom();
+      }
+      return;
+    }
+  }
   if (target.closest('a')) return;
   const spoiler = target.closest('.tiptap-spoiler') as HTMLElement | null;
   if (!spoiler) return;
@@ -344,6 +860,8 @@ const props = defineProps({
     default: () => [],
   },
 })
+
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change']);
 
 const timestampTicker = ref(Date.now());
 const inlineTimestampText = computed(() => {
@@ -693,6 +1211,374 @@ const displayContent = computed(() => {
   return props.item?.content ?? props.content ?? '';
 });
 
+const resolveMessageChannelId = () => {
+  const raw = props.item as any;
+  return String(raw?.channel?.id || raw?.channelId || chat.curChannel?.id || '').trim();
+};
+
+const currentMessageId = computed(() => String((props.item as any)?.id || '').trim());
+const currentMessageChannelId = computed(() => resolveMessageChannelId());
+
+const imageAttachmentIDPattern = /id:([a-zA-Z0-9_-]+)/g;
+const imageTagIDPattern = /<(?:img|image)[^>]+src=["']id:([a-zA-Z0-9_-]+)["'][^>]*>/gi;
+
+const extractImageAttachmentIds = (content: string): string[] => {
+  if (!content) {
+    return [];
+  }
+  imageTagIDPattern.lastIndex = 0;
+  imageAttachmentIDPattern.lastIndex = 0;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = imageTagIDPattern.exec(content)) !== null) {
+    const id = normalizeAttachmentId(match[1] || '');
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  if (ids.length > 0) {
+    return ids;
+  }
+  while ((match = imageAttachmentIDPattern.exec(content)) !== null) {
+    const id = normalizeAttachmentId(match[1] || '');
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+};
+
+const messageImageAttachmentIds = computed(() => extractImageAttachmentIds(displayContent.value || ''));
+const imageResizeHasChanges = computed(() => Object.keys(imageResizeDraftLayouts.value).length > 0);
+
+const clampImageLayoutSize = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return IMAGE_LAYOUT_MIN_SIZE;
+  }
+  return Math.max(IMAGE_LAYOUT_MIN_SIZE, Math.min(IMAGE_LAYOUT_MAX_SIZE, Math.round(value)));
+};
+
+const resolveStoredImageLayout = (attachmentId: string) => {
+  const channelId = currentMessageChannelId.value;
+  if (!channelId || !attachmentId) {
+    return null;
+  }
+  return channelImageLayout.getLayout(channelId, attachmentId);
+};
+
+const resolveImageLayoutByAttachmentId = (attachmentId: string) => {
+  if (!attachmentId) {
+    return null;
+  }
+  const draft = imageResizeDraftLayouts.value[attachmentId];
+  if (draft) {
+    return {
+      width: clampImageLayoutSize(draft.width),
+      height: clampImageLayoutSize(draft.height),
+    };
+  }
+  const stored = resolveStoredImageLayout(attachmentId);
+  if (stored) {
+    return {
+      width: clampImageLayoutSize(stored.width),
+      height: clampImageLayoutSize(stored.height),
+    };
+  }
+  return null;
+};
+
+const resolveImageAttachmentIdFromElement = (
+  image: HTMLImageElement,
+  fallbackIds: string[],
+  index: number,
+): string => {
+  const datasetId = normalizeAttachmentId(image.dataset.attachmentId || '');
+  if (datasetId) {
+    return datasetId;
+  }
+  const attrId = normalizeAttachmentId(image.getAttribute('data-attachment-id') || '');
+  if (attrId) {
+    image.dataset.attachmentId = attrId;
+    return attrId;
+  }
+  const srcId = normalizeAttachmentId(image.getAttribute('src') || '');
+  if (srcId) {
+    image.dataset.attachmentId = srcId;
+    return srcId;
+  }
+  if (index < fallbackIds.length) {
+    const fallback = normalizeAttachmentId(fallbackIds[index]);
+    if (fallback) {
+      image.dataset.attachmentId = fallback;
+      return fallback;
+    }
+  }
+  return '';
+};
+
+const applyImageLayoutToDom = async () => {
+  await nextTick();
+  const host = messageContentRef.value;
+  if (!host) {
+    return;
+  }
+  const images = Array.from(host.querySelectorAll<HTMLImageElement>('img'));
+  const fallbackIds = messageImageAttachmentIds.value;
+  images.forEach((image, index) => {
+    const attachmentId = resolveImageAttachmentIdFromElement(image, fallbackIds, index);
+    const layout = resolveImageLayoutByAttachmentId(attachmentId);
+    const unlock = Boolean(layout);
+
+    image.classList.toggle('message-image-adjustable', imageResizeMode.value && !!attachmentId);
+    image.classList.toggle('message-image-selected', imageResizeMode.value && !!attachmentId && attachmentId === imageResizeSelectedAttachmentId.value);
+    image.classList.toggle('message-image-unlocked', unlock && !!attachmentId);
+    image.draggable = false;
+
+    if (layout && attachmentId) {
+      image.style.width = String(layout.width) + 'px';
+      image.style.height = String(layout.height) + 'px';
+      image.style.maxWidth = 'none';
+      image.style.maxHeight = 'none';
+      image.style.touchAction = imageResizeMode.value && attachmentId === imageResizeSelectedAttachmentId.value ? 'none' : '';
+      return;
+    }
+
+    image.style.width = '';
+    image.style.height = '';
+    image.style.maxWidth = '';
+    image.style.maxHeight = '';
+    image.style.touchAction = '';
+  });
+};
+
+const ensureMessageImageLayoutsLoaded = async () => {
+  const channelId = currentMessageChannelId.value;
+  if (!channelId) {
+    return;
+  }
+  const attachmentIds = messageImageAttachmentIds.value;
+  if (!attachmentIds.length) {
+    return;
+  }
+  await channelImageLayout.ensureLayouts(channelId, attachmentIds);
+};
+
+const clearImageResizePointerState = () => {
+  imageResizePointerState = null;
+};
+
+const emitImageResizeState = (active: boolean) => {
+  const messageId = currentMessageId.value;
+  if (!messageId) {
+    return;
+  }
+  emit('image-layout-edit-state-change', { messageId, active });
+};
+
+const stopImageResizeMode = async (emitState = true, restoreViewer = true) => {
+  imageResizeMode.value = false;
+  imageResizeFreeScaling.value = false;
+  imageResizeSelectedAttachmentId.value = '';
+  imageResizeDraftLayouts.value = {};
+  clearImageResizePointerState();
+  if (emitState) {
+    emitImageResizeState(false);
+  }
+  await applyImageLayoutToDom();
+  if (restoreViewer) {
+    ensureImageViewer();
+  }
+};
+
+const enterImageResizeMode = async () => {
+  if (!canEdit.value || !hasImage.value) {
+    return;
+  }
+  const attachmentIds = messageImageAttachmentIds.value;
+  if (!attachmentIds.length) {
+    return;
+  }
+  if (!imageResizeSelectedAttachmentId.value || !attachmentIds.includes(imageResizeSelectedAttachmentId.value)) {
+    imageResizeSelectedAttachmentId.value = attachmentIds[0] || '';
+  }
+  imageResizeMode.value = true;
+  imageResizeFreeScaling.value = false;
+  destroyImageViewer();
+  emitImageResizeState(true);
+  await ensureMessageImageLayoutsLoaded();
+  await applyImageLayoutToDom();
+};
+
+const toggleImageResizeScaleMode = () => {
+  imageResizeFreeScaling.value = !imageResizeFreeScaling.value;
+};
+
+const cancelImageResize = () => {
+  void stopImageResizeMode(true, true);
+};
+
+const saveImageResizedLayout = async () => {
+  if (!imageResizeMode.value) {
+    return;
+  }
+  const channelId = currentMessageChannelId.value;
+  const messageId = currentMessageId.value;
+  if (!channelId || !messageId) {
+    return;
+  }
+  const attachmentSet = new Set(messageImageAttachmentIds.value);
+  const payload = Object.entries(imageResizeDraftLayouts.value)
+    .filter(([attachmentId]) => attachmentSet.has(attachmentId))
+    .map(([attachmentId, layout]) => ({
+      attachmentId,
+      width: clampImageLayoutSize(layout.width),
+      height: clampImageLayoutSize(layout.height),
+    }));
+
+  if (payload.length === 0) {
+    await stopImageResizeMode(true, true);
+    return;
+  }
+
+  try {
+    await channelImageLayout.saveMessageLayouts(channelId, messageId, payload);
+    message.success('图片尺寸已保存');
+    await stopImageResizeMode(true, true);
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.message || error?.message || '保存图片尺寸失败';
+    message.error(errMsg);
+  }
+};
+
+const handleImageResizeEnterRequest = (payload?: any) => {
+  const targetMessageId = String(payload?.messageId || payload?.message_id || '').trim();
+  if (!targetMessageId) {
+    return;
+  }
+  if (targetMessageId !== currentMessageId.value) {
+    if (imageResizeMode.value) {
+      void stopImageResizeMode(true, true);
+    }
+    return;
+  }
+  void enterImageResizeMode();
+};
+
+const startImageResizePointer = (event: PointerEvent, image: HTMLImageElement, attachmentId: string) => {
+  const rect = image.getBoundingClientRect();
+  const pointerType = event.pointerType || 'mouse';
+  const isTouchPointer = pointerType === 'touch';
+  imageResizePointerState = {
+    pointerId: event.pointerId,
+    pointerType,
+    moveThreshold: isTouchPointer ? 4 : 1.5,
+    movementScale: isTouchPointer ? 0.82 : 1,
+    attachmentId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: rect.width,
+    startHeight: rect.height,
+    aspectRatio: rect.height > 0 ? rect.width / rect.height : 1,
+    moved: false,
+  };
+};
+
+const handleImageResizePointerMove = (event: PointerEvent) => {
+  if (!imageResizeMode.value || !imageResizePointerState) {
+    return;
+  }
+  if (event.pointerId !== imageResizePointerState.pointerId) {
+    return;
+  }
+  const rawDx = event.clientX - imageResizePointerState.startX;
+  const rawDy = event.clientY - imageResizePointerState.startY;
+  const threshold = imageResizePointerState.moveThreshold;
+  if (!imageResizePointerState.moved && Math.abs(rawDx) < threshold && Math.abs(rawDy) < threshold) {
+    return;
+  }
+  imageResizePointerState.moved = true;
+
+  const scale = imageResizePointerState.movementScale;
+  const dx = rawDx * scale;
+  const dy = rawDy * scale;
+
+  const nextWidthByPointer = clampImageLayoutSize(imageResizePointerState.startWidth + dx);
+  const nextHeightByPointer = clampImageLayoutSize(imageResizePointerState.startHeight + dy);
+  let nextWidth = nextWidthByPointer;
+  let nextHeight = nextHeightByPointer;
+
+  if (!imageResizeFreeScaling.value) {
+    const aspectRatio = imageResizePointerState.aspectRatio > 0 ? imageResizePointerState.aspectRatio : 1;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      nextWidth = nextWidthByPointer;
+      nextHeight = clampImageLayoutSize(nextWidth / aspectRatio);
+    } else {
+      nextHeight = nextHeightByPointer;
+      nextWidth = clampImageLayoutSize(nextHeight * aspectRatio);
+    }
+  }
+
+  const attachmentId = imageResizePointerState.attachmentId;
+  imageResizeDraftLayouts.value = {
+    ...imageResizeDraftLayouts.value,
+    [attachmentId]: {
+      width: nextWidth,
+      height: nextHeight,
+    },
+  };
+  if (event.cancelable) {
+    event.preventDefault();
+  }
+  void applyImageLayoutToDom();
+};
+
+const handleImageResizePointerUp = () => {
+  clearImageResizePointerState();
+};
+
+const imageResizeLayoutSignature = computed(() => {
+  const channelId = currentMessageChannelId.value;
+  const parts = messageImageAttachmentIds.value.map((attachmentId) => {
+    const draft = imageResizeDraftLayouts.value[attachmentId];
+    if (draft) {
+      return attachmentId + ':' + draft.width + 'x' + draft.height + ':d';
+    }
+    const stored = channelImageLayout.getLayout(channelId, attachmentId);
+    if (!stored) {
+      return attachmentId + ':none';
+    }
+    return attachmentId + ':' + stored.width + 'x' + stored.height + ':' + String(stored.updatedAt || 0);
+  });
+  return [
+    imageResizeMode.value ? '1' : '0',
+    imageResizeSelectedAttachmentId.value,
+    parts.join('|'),
+  ].join('||');
+});
+
+watch([currentMessageChannelId, messageImageAttachmentIds], () => {
+  void ensureMessageImageLayoutsLoaded();
+}, { immediate: true });
+
+watch(imageResizeLayoutSignature, () => {
+  void applyImageLayoutToDom();
+}, { immediate: true });
+
+watch(messageImageAttachmentIds, (ids) => {
+  if (!ids.length && imageResizeMode.value) {
+    void stopImageResizeMode(true, true);
+    return;
+  }
+  if (imageResizeSelectedAttachmentId.value && !ids.includes(imageResizeSelectedAttachmentId.value)) {
+    imageResizeSelectedAttachmentId.value = ids[0] || '';
+  }
+});
+
 const compiledKeywords = computed(() => {
   const worldId = chat.currentWorldId
   if (!worldId) {
@@ -992,6 +1878,271 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
   }
 };
 
+const STATE_WIDGET_REGEX = /\[([^\]\|]+(?:\|[^\]\|]+)+)\]/g;
+
+type StateWidgetTextSegment = {
+  node: Text;
+  start: number;
+  end: number;
+  text: string;
+};
+
+type StateWidgetRange = {
+  start: number;
+  end: number;
+  isMarkdownLink: boolean;
+};
+
+type StateWidgetRenderItem = {
+  node: Text;
+  from: number;
+  to: number;
+  keepText?: string;
+  widgetIndex?: number;
+};
+
+const collectStateWidgetTextSegments = (host: HTMLElement): StateWidgetTextSegment[] => {
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, null);
+  const segments: StateWidgetTextSegment[] = [];
+  let cursor = 0;
+  let textNode: Text | null;
+
+  while ((textNode = walker.nextNode() as Text | null)) {
+    const parent = textNode.parentElement;
+    if (parent?.closest('.state-text-widget, a')) {
+      continue;
+    }
+    const text = textNode.textContent || '';
+    if (!text) {
+      continue;
+    }
+    const start = cursor;
+    const end = start + text.length;
+    segments.push({ node: textNode, start, end, text });
+    cursor = end;
+  }
+
+  return segments;
+};
+
+const collectStateWidgetRanges = (fullText: string): StateWidgetRange[] => {
+  const ranges: StateWidgetRange[] = [];
+  STATE_WIDGET_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = STATE_WIDGET_REGEX.exec(fullText)) !== null) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const isMarkdownLink = end < fullText.length && fullText[end] === '(';
+    ranges.push({ start, end, isMarkdownLink });
+  }
+  return ranges;
+};
+
+const buildStateWidgetRenderMap = (
+  segments: StateWidgetTextSegment[],
+  ranges: StateWidgetRange[],
+  entries: Array<{ type: string; options: string[]; index: number }>,
+): Map<Text, StateWidgetRenderItem[]> => {
+  const renderMap = new Map<Text, StateWidgetRenderItem[]>();
+  const pushItem = (node: Text, item: StateWidgetRenderItem) => {
+    const list = renderMap.get(node) || [];
+    list.push(item);
+    renderMap.set(node, list);
+  };
+
+  let widgetCounter = 0;
+  for (const range of ranges) {
+    const targetWidgetIndex = !range.isMarkdownLink && widgetCounter < entries.length
+      ? widgetCounter
+      : undefined;
+    let widgetInserted = false;
+
+    for (const seg of segments) {
+      if (seg.end <= range.start || seg.start >= range.end) {
+        continue;
+      }
+      const from = Math.max(seg.start, range.start) - seg.start;
+      const to = Math.min(seg.end, range.end) - seg.start;
+      if (from >= to) {
+        continue;
+      }
+      if (range.isMarkdownLink) {
+        const keepText = seg.text.slice(from, to);
+        pushItem(seg.node, { node: seg.node, from, to, keepText });
+        continue;
+      }
+
+      if (!widgetInserted && targetWidgetIndex !== undefined) {
+        pushItem(seg.node, { node: seg.node, from, to, widgetIndex: targetWidgetIndex });
+        widgetInserted = true;
+      } else {
+        // 非首段：删除匹配区间，避免跨节点重复插入 widget
+        pushItem(seg.node, { node: seg.node, from, to, keepText: '' });
+      }
+    }
+
+    if (!range.isMarkdownLink && targetWidgetIndex !== undefined) {
+      widgetCounter++;
+    }
+  }
+
+  return renderMap;
+};
+
+const atTokenRegexForPermission = /<at\s+id=(?:\\?"|')([^"'>]+)(?:\\?"|')(?:\s+name=(?:\\?"|')([^"']*)(?:\\?"|'))?\s*\/?\s*>/g;
+
+const collectMentionIdsFromText = (content: string, output: Set<string>) => {
+  atTokenRegexForPermission.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = atTokenRegexForPermission.exec(content)) !== null) {
+    const id = String(match[1] || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+};
+
+const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
+  if (!node) {
+    return;
+  }
+
+  if (typeof node.text === 'string' && node.text) {
+    collectMentionIdsFromText(node.text, output);
+  }
+
+  if (node.type === 'mention') {
+    const id = String(node.attrs?.id || '').trim();
+    if (id) {
+      output.add(id);
+    }
+  }
+
+  if (Array.isArray(node.content)) {
+    node.content.forEach((child: any) => collectMentionIdsFromTipTapNode(child, output));
+  }
+};
+
+const collectMentionIdsFromContent = (content: string) => {
+  const output = new Set<string>();
+  if (!content) {
+    return output;
+  }
+
+  collectMentionIdsFromText(content, output);
+
+  if (isTipTapJson(content)) {
+    try {
+      const json = JSON.parse(content);
+      collectMentionIdsFromTipTapNode(json, output);
+    } catch {
+      // ignore
+    }
+  }
+
+  return output;
+};
+
+const processStateTextWidgets = () => {
+  nextTick(() => {
+    const host = messageContentRef.value;
+    if (!host) return;
+    const item = props.item as any;
+    if (!item?.widgetData) return;
+
+    let entries: Array<{ type: string; options: string[]; index: number }>;
+    try {
+      entries = typeof item.widgetData === 'string' ? JSON.parse(item.widgetData) : item.widgetData;
+    } catch { return; }
+    if (!entries?.length) return;
+
+    // Permission pre-check
+    const userId = user.info.id;
+    const isSender = item.user?.id === userId || item.userId === userId || item.user_id === userId;
+    const content = item.content || '';
+    const mentionIds = collectMentionIdsFromContent(content);
+    const hasMention = mentionIds.size > 0;
+    const isMentioned = mentionIds.has(userId) || mentionIds.has('all');
+
+    const worldId = chat.currentWorldId;
+    const detail = worldId ? chat.worldDetailMap[worldId] : null;
+    const memberRole = detail?.memberRole;
+    const ownerId = detail?.world?.ownerId || (worldId ? chat.worldMap[worldId]?.ownerId : undefined);
+    const isAdmin = memberRole === 'owner' || memberRole === 'admin' || ownerId === userId;
+
+    const canDefaultInteract = !chat.observerMode;
+    const canInteract = hasMention
+      ? (isSender || isMentioned || isAdmin)
+      : canDefaultInteract;
+
+    const segments = collectStateWidgetTextSegments(host);
+    if (!segments.length) {
+      return;
+    }
+
+    const fullText = segments.map(seg => seg.text).join('');
+    const ranges = collectStateWidgetRanges(fullText);
+    if (!ranges.length) {
+      return;
+    }
+
+    const renderMap = buildStateWidgetRenderMap(segments, ranges, entries);
+    renderMap.forEach((items, node) => {
+      const text = node.textContent || '';
+      const fragment = document.createDocumentFragment();
+      let lastIndex = 0;
+
+      const sorted = items.slice().sort((a, b) => a.from - b.from || a.to - b.to);
+      for (const renderItem of sorted) {
+        if (renderItem.from > lastIndex) {
+          fragment.appendChild(document.createTextNode(text.slice(lastIndex, renderItem.from)));
+        }
+
+        if (renderItem.keepText !== undefined) {
+          if (renderItem.keepText) {
+            fragment.appendChild(document.createTextNode(renderItem.keepText));
+          }
+          lastIndex = renderItem.to;
+          continue;
+        }
+
+        const widgetIdx = renderItem.widgetIndex;
+        if (widgetIdx === undefined || widgetIdx >= entries.length) {
+          fragment.appendChild(document.createTextNode(text.slice(renderItem.from, renderItem.to)));
+          lastIndex = renderItem.to;
+          continue;
+        }
+
+        const entry = entries[widgetIdx];
+
+        const span = document.createElement('span');
+        span.className = 'state-text-widget' + (canInteract ? ' state-text-widget--active' : '');
+        span.dataset.widgetIndex = String(widgetIdx);
+        const currentIndex = entry.index ?? 0;
+        span.textContent = entry.options[currentIndex] || entry.options[0] || '';
+
+        if (canInteract) {
+          const msgId = item.id;
+          const wIdx = widgetIdx;
+          span.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            chat.interactWithWidget(msgId, wIdx);
+          });
+        }
+
+        fragment.appendChild(span);
+        lastIndex = renderItem.to;
+      }
+
+      if (lastIndex < text.length) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+      }
+      node.replaceWith(fragment);
+    });
+  });
+};
+
 const handleMessageLinkClick = async (info: { worldId: string; channelId: string; messageId: string; isCurrentWorld: boolean }) => {
   // 内联跳转，不开新标签页
   if (!info.isCurrentWorld) {
@@ -1018,7 +2169,48 @@ const handleMessageLinkClick = async (info: { worldId: string; channelId: string
   });
 };
 
+const handleStickyNoteEmbedClick = async (info: StickyNoteEmbedLinkParams) => {
+  if (!info.worldId || !info.channelId || !info.noteId) {
+    return;
+  }
+
+  if (chat.currentWorldId !== info.worldId || chat.curChannel?.id !== info.channelId) {
+    message.warning('仅支持当前频道便签链接');
+    return;
+  }
+
+  await nextTick();
+  if (stickyNoteStore.currentChannelId !== info.channelId || !stickyNoteStore.notes[info.noteId]) {
+    await stickyNoteStore.loadChannelNotes(info.channelId);
+  }
+
+  const targetNote = stickyNoteStore.notes[info.noteId];
+  if (!targetNote) {
+    message.warning('便签不存在或无权限访问');
+    return;
+  }
+
+  stickyNoteStore.setVisible(true);
+  stickyNoteStore.openNote(info.noteId);
+  chatEvent.emit('sticky-note-highlight' as any, { noteId: info.noteId, ttlMs: 3000 } as any);
+};
+
+const copyStickyNoteEmbedLinkFromCard = async (rawLink: string) => {
+  if (!rawLink) {
+    return;
+  }
+  const copied = await copyTextWithFallback(rawLink);
+  if (copied) {
+    message.success('便签链接已复制');
+    return;
+  }
+  message.error('复制失败');
+};
+
 const openContextMenu = (point: { x: number, y: number }, item: any) => {
+  if (imageResizeMode.value) {
+    return;
+  }
   chat.avatarMenu.show = false;
   chat.messageMenu.optionsComponent.x = point.x;
   chat.messageMenu.optionsComponent.y = point.y;
@@ -1029,10 +2221,18 @@ const openContextMenu = (point: { x: number, y: number }, item: any) => {
 
 const onContextMenu = (e: MouseEvent, item: any) => {
   e.preventDefault();
+  if (imageResizeMode.value) {
+    e.stopPropagation();
+    return;
+  }
   openContextMenu({ x: e.clientX, y: e.clientY }, item);
 };
 
 const onMessageLongPress = (event: PointerEvent | MouseEvent | TouchEvent, item: any) => {
+  if (imageResizeMode.value) {
+    event.preventDefault?.();
+    return;
+  }
   const resolvePoint = (): { x: number, y: number } => {
     if ('clientX' in event && typeof event.clientX === 'number') {
       return { x: event.clientX, y: event.clientY };
@@ -1127,8 +2327,6 @@ const handleEditCancel = (e: MouseEvent) => {
   e.stopPropagation();
   emit('edit-cancel', props.item);
 }
-
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click']);
 
 const handleSelectToggle = (e: MouseEvent) => {
   e.stopPropagation();
@@ -1242,7 +2440,10 @@ onMounted(() => {
 
   applyDiceTone();
   ensureImageViewer();
+  void ensureMessageImageLayoutsLoaded();
+  void applyImageLayoutToDom();
   processMessageLinks();
+  processStateTextWidgets();
 
   timestampInterval = setInterval(() => {
     timestampTicker.value = Date.now();
@@ -1256,17 +2457,51 @@ onMounted(() => {
   if (isMobileUa) {
     document.addEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  chatEvent.on('message-image-resize-enter' as any, handleImageResizeEnterRequest as any);
+  window.addEventListener('pointermove', handleImageResizePointerMove, true);
+  window.addEventListener('pointerup', handleMessageIFormPointerUp, true);
+  window.addEventListener('mouseup', handleMessageIFormPointerUp, true);
+  window.addEventListener('pointercancel', resetMessageIFormPointerState, true);
+  window.addEventListener('blur', resetMessageIFormPointerState);
 })
 
 watch([displayContent, () => props.tone], () => {
   applyDiceTone();
   ensureImageViewer();
+  void ensureMessageImageLayoutsLoaded();
+  void applyImageLayoutToDom();
   processMessageLinks();
+  processStateTextWidgets();
+  resetMessageIFormSyncBaseline();
+  nextTick(() => {
+    setupMessageIFormResizeSync();
+  });
 }, { immediate: true });
+
+watch(() => (props.item as any)?.widgetData, (newData) => {
+  nextTick(() => {
+    const host = messageContentRef.value;
+    if (!host || !newData) return;
+    let entries: Array<{ type: string; options: string[]; index: number }>;
+    try {
+      entries = typeof newData === 'string' ? JSON.parse(newData) : newData;
+    } catch { return; }
+    if (!entries?.length) return;
+    const spans = host.querySelectorAll<HTMLSpanElement>('.state-text-widget');
+    spans.forEach((span) => {
+      const idx = parseInt(span.dataset.widgetIndex || '', 10);
+      if (isNaN(idx) || idx >= entries.length) return;
+      const entry = entries[idx];
+      const currentIndex = entry.index ?? 0;
+      span.textContent = entry.options[currentIndex] || entry.options[0] || '';
+    });
+  });
+});
 
 watch(() => otherEditingPreview.value?.previewHtml, () => {
   applyDiceTone();
   ensureImageViewer();
+  void applyImageLayoutToDom();
 });
 
 watch(
@@ -1313,6 +2548,14 @@ onBeforeUnmount(() => {
   if (isMobileUa) {
     document.removeEventListener('click', handleGlobalClickForTimestamp, true);
   }
+  chatEvent.off('message-image-resize-enter' as any, handleImageResizeEnterRequest as any);
+  window.removeEventListener('pointermove', handleImageResizePointerMove, true);
+  window.removeEventListener('pointerup', handleMessageIFormPointerUp, true);
+  window.removeEventListener('mouseup', handleMessageIFormPointerUp, true);
+  window.removeEventListener('pointercancel', resetMessageIFormPointerState, true);
+  window.removeEventListener('blur', resetMessageIFormPointerState);
+  cleanupMessageIFormResizeSync();
+  clearImageResizePointerState();
   destroyImageViewer();
   keywordTooltipInstance.hideAll()
   keywordTooltipInstance.destroy()
@@ -1450,7 +2693,7 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
         <span v-if="props.item?.user?.is_bot || props.item?.user_id?.startsWith('BOT:')"
           class=" bg-blue-500 rounded-md px-2 text-white">bot</span>
       </span>
-      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick"
+      <div class="content break-all relative" ref="messageContentRef" @contextmenu="onContextMenu($event, item)" @dblclick="handleContentDblclick" @click="handleContentClick" @pointerdown="handleMessageIFormPointerDown" @mousedown="handleMessageIFormPointerDown"
         :class="contentClassList">
         <div v-if="canEdit && !selfEditingPreview" class="message-action-bar"
           :class="{ 'message-action-bar--active': isEditing }">
@@ -1489,6 +2732,30 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
               </div>
             </div>
             <component :is="parseContent(props, displayContent)" />
+            <div v-if="imageResizeMode" class="image-resize-actions">
+              <n-button size="tiny" type="primary" :disabled="!imageResizeHasChanges" @click.stop="saveImageResizedLayout">
+                保存调整后的大小
+              </n-button>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <n-button
+                    size="tiny"
+                    quaternary
+                    circle
+                    class="image-resize-actions__ratio-toggle"
+                    :class="{ 'is-free': imageResizeFreeScaling }"
+                    @click.stop="toggleImageResizeScaleMode"
+                  >
+                    <n-icon :component="Lock" size="14" />
+                  </n-button>
+                </template>
+                {{ imageResizeFreeScaling ? '自由缩放：开（再次点击切回锁定比例）' : '锁定比例：开（点击后可自由缩放）' }}
+              </n-tooltip>
+              <n-button size="tiny" tertiary @click.stop="cancelImageResize">
+                取消
+              </n-button>
+              <span v-if="messageImageAttachmentIds.length > 1" class="image-resize-actions__tip">单击后拖动已选图片可调整</span>
+            </div>
           </div>
           <div v-if="selfEditingPreview" class="editing-self-actions">
             <n-button quaternary size="tiny" class="editing-self-actions__btn editing-self-actions__btn--save" @click.stop="handleEditSave">
@@ -1853,6 +3120,56 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
   margin: 0 0.25rem;
 }
 
+.content .message-image-adjustable {
+  user-select: none;
+  outline: 2px dashed color-mix(in srgb, var(--chat-accent, #3b82f6) 68%, white 32%);
+  outline-offset: 2px;
+  transition: box-shadow 0.16s ease, transform 0.16s ease, outline-color 0.16s ease;
+}
+
+.content .message-image-adjustable:not(.message-image-selected) {
+  cursor: pointer;
+}
+
+.content .message-image-selected {
+  cursor: nwse-resize;
+  outline-style: solid;
+  outline-width: 2px;
+  outline-color: var(--chat-accent, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--chat-accent, #3b82f6) 82%, white 18%);
+  touch-action: none;
+}
+
+.content .message-image-unlocked {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.image-resize-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.image-resize-actions__tip {
+  font-size: 0.72rem;
+  color: var(--chat-text-secondary, #64748b);
+}
+
+.image-resize-actions__ratio-toggle {
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+}
+
+.image-resize-actions__ratio-toggle.is-free {
+  color: var(--chat-warning, #f97316);
+  border-color: color-mix(in srgb, var(--chat-warning, #f97316) 50%, transparent 50%);
+}
+
 .content .rich-inline-image {
   max-width: 100%;
   max-height: 12rem;
@@ -1917,7 +3234,9 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 }
 
 .content code {
-  background-color: #f3f4f6;
+  background-color: var(--chat-inline-code-bg, #f3f4f6);
+  color: var(--chat-inline-code-fg, inherit);
+  border: 1px solid var(--chat-inline-code-border, transparent);
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
   font-family: 'Courier New', monospace;
@@ -2294,5 +3613,342 @@ const senderIdentityId = computed(() => props.item?.identity?.id || props.item?.
 
 :root[data-display-palette='night'] .mention-capsule--all:hover {
   background-color: rgba(239, 68, 68, 0.3);
+}
+
+.state-text-widget {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border-bottom: 2px dashed var(--primary-color, #4098fc);
+  background-color: rgba(64, 152, 252, 0.08);
+  font-weight: 500;
+  user-select: none;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.state-text-widget--active {
+  cursor: pointer;
+}
+
+.state-text-widget--active:hover {
+  background-color: rgba(64, 152, 252, 0.18);
+  border-bottom-style: solid;
+}
+
+.message-sticky-note-embed {
+  --sticky-note-accent: #64748b;
+  display: block;
+  max-width: min(500px, 100%);
+  width: auto;
+  padding: 0.05rem 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity 0.15s ease;
+}
+
+.message-sticky-note-embed:hover {
+  opacity: 0.96;
+}
+
+.message-sticky-note-embed--interactive {
+  cursor: default;
+}
+
+.message-sticky-note-embed:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--primary-color, #4098fc) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.message-sticky-note-embed__summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.32rem;
+  list-style: none;
+  cursor: pointer;
+}
+
+.message-sticky-note-embed__summary-row::-webkit-details-marker {
+  display: none;
+}
+
+.message-sticky-note-embed__fold-icon {
+  margin-top: 0.1rem;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--chat-text-secondary, #64748b);
+  transition: transform 0.16s ease;
+}
+
+.message-sticky-note-embed:not([open]) .message-sticky-note-embed__fold-icon {
+  transform: rotate(-90deg);
+}
+
+.message-sticky-note-embed__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.message-sticky-note-embed__title {
+  display: block;
+  white-space: normal;
+  font-weight: 600;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--sticky-note-accent) 78%, currentColor);
+}
+
+.message-sticky-note-embed__title-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  white-space: normal;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--sticky-note-accent) 78%, currentColor);
+  cursor: pointer;
+}
+
+.message-sticky-note-embed__title-btn:hover {
+  text-decoration: underline;
+}
+
+.message-sticky-note-embed__content {
+  display: block;
+  font-size: 0.71rem;
+  color: var(--chat-text-secondary, #64748b);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-sticky-note-embed__panel {
+  margin-left: 0.92rem;
+  margin-top: 0.08rem;
+}
+
+.message-sticky-note-embed__widget {
+  width: min(430px, 100%);
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 680px;
+  resize: both;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter),
+.message-sticky-note-embed__widget :deep(.sticky-note-slider),
+.message-sticky-note-embed__widget :deep(.sticky-note-list),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer),
+.message-sticky-note-embed__widget :deep(.sticky-note-clock),
+.message-sticky-note-embed__widget :deep(.sticky-note-round) {
+  padding: 4px 0;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__btn) {
+  width: 34px;
+  height: 34px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__value) {
+  width: 80px;
+  height: 34px;
+  font-size: 18px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-counter__hint) {
+  margin-top: 6px;
+  font-size: 10px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__value-input) {
+  width: 58px;
+  padding: 4px;
+  font-size: 14px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__settings-trigger) {
+  height: 18px;
+  margin-top: 4px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-slider__settings-hint) {
+  font-size: 10px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list) {
+  max-height: 200px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__item) {
+  padding: 4px 6px;
+  gap: 6px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__content),
+.message-sticky-note-embed__widget :deep(.sticky-note-list__edit-input) {
+  font-size: 12px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-list__footer-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-list__add-btn) {
+  font-size: 11px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__display) {
+  font-size: 24px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__dir-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__adj-btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-timer__set-reset) {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__circle) {
+  width: 92px;
+  height: 92px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__count) {
+  font-size: 9px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-clock__adj) {
+  font-size: 11px;
+  padding: 3px 7px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__value) {
+  font-size: 26px;
+  min-width: 62px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__nav) {
+  width: 30px;
+  height: 30px;
+}
+
+.message-sticky-note-embed__widget :deep(.sticky-note-round__btn),
+.message-sticky-note-embed__widget :deep(.sticky-note-round__limit),
+.message-sticky-note-embed__widget :deep(.sticky-note-round__limit-input) {
+  font-size: 11px;
+}
+
+.message-sticky-note-embed__side {
+  margin-top: 0.02rem;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.message-sticky-note-embed__copy-btn {
+  width: 1rem;
+  height: 1rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: color-mix(in srgb, var(--chat-text-secondary, #64748b) 90%, transparent);
+  font-size: 0.66rem;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.72;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.message-sticky-note-embed__copy-btn:hover {
+  opacity: 1;
+  color: var(--chat-text-primary, #0f172a);
+}
+
+.message-iform-embed {
+  position: relative;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.08)) 88%, transparent);
+  background: color-mix(in srgb, var(--chat-ic-bg, #f5f5f5) 88%, transparent);
+  resize: both;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.message-iform-embed::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.message-iform-embed::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.message-iform-embed:hover {
+  scrollbar-color: color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.24)) 85%, transparent) transparent;
+}
+
+.message-iform-embed:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.24)) 85%, transparent);
+}
+
+.message-iform-embed :deep(.iform-frame) {
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-iform-embed :deep(.iform-frame__iframe),
+.message-iform-embed :deep(.iform-frame__html) {
+  border-radius: 10px;
+}
+
+:root[data-display-palette='night'] .message-iform-embed {
+  border-color: color-mix(in srgb, var(--chat-border-mute, rgba(148, 163, 184, 0.35)) 85%, transparent);
+  background: color-mix(in srgb, var(--chat-ic-bg, rgba(15, 23, 42, 0.45)) 75%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed {
+  background: transparent;
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__content {
+  color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 95%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__copy-btn {
+  color: color-mix(in srgb, var(--chat-text-secondary, #94a3b8) 92%, transparent);
+}
+
+:root[data-display-palette='night'] .message-sticky-note-embed__copy-btn:hover {
+  color: color-mix(in srgb, var(--chat-text-primary, #e2e8f0) 96%, transparent);
+}
+
+.state-text-widget--active:active {
+  background-color: rgba(64, 152, 252, 0.28);
+}
+
+:root[data-display-palette='night'] .state-text-widget {
+  background-color: rgba(64, 152, 252, 0.12);
+  border-bottom-color: rgba(64, 152, 252, 0.6);
+}
+
+:root[data-display-palette='night'] .state-text-widget--active:hover {
+  background-color: rgba(64, 152, 252, 0.25);
 }
 </style>

@@ -6,10 +6,13 @@
       class="sticky-note"
       :class="[
         `sticky-note--${note.color || 'yellow'}`,
-        { 'sticky-note--editing': isEditing }
+        { 'sticky-note--editing': isEditing, 'sticky-note--highlight': isHighlighted }
       ]"
       :style="noteStyle"
       @pointerdown="handlePointerDown"
+      @focusout="handleNoteFocusOut"
+      @keydown.capture="markEditingActivity"
+      @pointerdown.capture="markEditingActivity"
     >
       <!-- 头部 -->
       <div
@@ -18,6 +21,7 @@
         @pointerdown="startDrag"
       >
         <div class="sticky-note__title">
+          <div v-if="editingByOtherName" class="sticky-note__lock-indicator">{{ editingByOtherName }} 正在编辑</div>
           <input
             v-if="isEditing"
             v-model="localTitle"
@@ -33,7 +37,9 @@
         <div class="sticky-note__actions">
           <button
             class="sticky-note__action-btn"
+            :class="{ 'sticky-note__action-btn--disabled': isLockedByOther }"
             title="编辑"
+            :disabled="isLockedByOther"
             @click="toggleEdit"
             @pointerdown.stop
           >
@@ -87,6 +93,17 @@
               </div>
             </div>
           </n-popover>
+          <button
+            class="sticky-note__action-btn"
+            :disabled="!defaultStickyNoteEmbedLink"
+            :title="defaultStickyNoteEmbedLink ? '复制便签嵌入链接' : '无法生成便签链接'"
+            @click="copyStickyNoteEmbedLink"
+            @pointerdown.stop
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3zM5 5h6v2H7v10h10v-4h2v6H5V5z"/>
+            </svg>
+          </button>
           <button
             class="sticky-note__action-btn"
             title="复制内容"
@@ -146,6 +163,8 @@
               v-model="localContent"
               :channel-id="note?.channelId"
               @update:model-value="debouncedSaveContent"
+              @focus="markEditingActivity"
+              @blur="handleEditorBlur"
             />
             <!-- 简单模式 -->
             <div v-else class="sticky-note__simple-editor">
@@ -160,12 +179,25 @@
                     <path d="M5 4v3h5.5v12h3V7H19V4H5z"/>
                   </svg>
                 </button>
+                <button
+                  class="sticky-note__toolbar-btn"
+                  :disabled="!defaultIFormEmbedLink"
+                  @click="copyIFormEmbedLink"
+                  :title="defaultIFormEmbedLink ? '复制首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+                >⧉</button>
+                <button
+                  class="sticky-note__toolbar-btn"
+                  :disabled="!defaultIFormEmbedLink"
+                  @click="insertIFormEmbedLinkToSimple"
+                  :title="defaultIFormEmbedLink ? '插入首个 iForm 嵌入链接' : '当前频道暂无 iForm'"
+                >↘</button>
               </div>
               <textarea
                 v-model="localContent"
                 class="sticky-note__textarea"
                 placeholder="在此输入内容..."
                 @input="debouncedSaveContent"
+                @blur="handleEditorBlur"
               ></textarea>
             </div>
           </div>
@@ -216,11 +248,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onUnmounted, defineAsyncComponent, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useStickyNoteStore, type StickyNote, type StickyNotePushLayout, type StickyNoteUserState, type StickyNoteType } from '@/stores/stickyNote'
-import { useChatStore } from '@/stores/chat'
+import { useChatStore, chatEvent } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
+import { useIFormStore } from '@/stores/iform'
+import { useUtilsStore } from '@/stores/utils'
+import { generateIFormEmbedLink } from '@/utils/iformEmbedLink'
+import { generateStickyNoteEmbedLink } from '@/utils/stickyNoteEmbedLink'
+import { copyTextWithFallback } from '@/utils/clipboard'
 import StickyNoteEditor from './StickyNoteEditor.vue'
 import { isTipTapJson, tiptapJsonToHtml } from '@/utils/tiptap-render'
 
@@ -252,7 +289,10 @@ const props = defineProps<{
 const stickyNoteStore = useStickyNoteStore()
 const chatStore = useChatStore()
 const userStore = useUserStore()
+const iFormStore = useIFormStore()
+const utilsStore = useUtilsStore()
 const message = useMessage()
+iFormStore.bootstrap()
 
 const noteEl = ref<HTMLElement | null>(null)
 const headerEl = ref<HTMLElement | null>(null)
@@ -267,6 +307,11 @@ const MIN_NOTE_WIDTH = 200
 const MIN_NOTE_HEIGHT = 150
 const VIEWPORT_PADDING = 8
 const richMode = ref(false) // 富文本模式，默认关闭
+const currentEditSessionId = ref<string | null>(null)
+const autoSaveTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const AUTO_SAVE_IDLE_MS = 10_000
+const isHighlighted = ref(false)
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
 
 // 拖拽状态
 const isDragging = ref(false)
@@ -301,6 +346,17 @@ watch(isEditing, (editing) => {
   }
 })
 
+watch(() => note.value?.editingLock, (lock) => {
+  const currentUserId = userStore.info?.id
+  if (!currentUserId) return
+  if (!isEditing.value) return
+  if (!lock || lock.userId !== currentUserId) {
+    clearAutoSaveTimer()
+    stickyNoteStore.stopEditing(props.noteId)
+    currentEditSessionId.value = null
+  }
+})
+
 const isOwner = computed(() => {
   const userId = userStore.info?.id
   if (!userId) return false
@@ -319,10 +375,296 @@ const isTextType = computed(() => {
   return type === 'text' || type === 'chat'
 })
 
+const defaultStickyNoteEmbedLink = computed(() => {
+  const currentNote = note.value
+  if (!currentNote?.id) {
+    return ''
+  }
+  const worldId = (currentNote.worldId || '').trim()
+  const channelId = (currentNote.channelId || '').trim()
+  if (!worldId || !channelId) {
+    return ''
+  }
+  return generateStickyNoteEmbedLink(
+    {
+      worldId,
+      channelId,
+      noteId: currentNote.id,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  )
+})
+
+const copyStickyNoteEmbedLink = async () => {
+  const link = defaultStickyNoteEmbedLink.value
+  if (!link) {
+    message.warning('无法生成便签嵌入链接')
+    return
+  }
+  const copied = await copyTextWithFallback(link)
+  if (copied) {
+    message.success('便签嵌入链接已复制')
+  } else {
+    message.error('复制失败')
+  }
+}
+
+const clearHighlightTimer = () => {
+  if (!highlightTimer) {
+    return
+  }
+  clearTimeout(highlightTimer)
+  highlightTimer = null
+}
+
+const triggerHighlight = (ttlMs = 3000) => {
+  isHighlighted.value = true
+  clearHighlightTimer()
+  highlightTimer = setTimeout(() => {
+    isHighlighted.value = false
+    highlightTimer = null
+  }, Math.max(300, Number(ttlMs) || 3000))
+}
+
+const handleStickyNoteHighlight = (event: any) => {
+  if (!event || event.noteId !== props.noteId) {
+    return
+  }
+  triggerHighlight(event.ttlMs)
+}
+
+chatEvent.on('sticky-note-highlight' as any, handleStickyNoteHighlight as any)
+
+
+const resolveIFormEmbedLinkBase = () => {
+  const domain = utilsStore.config?.domain?.trim() || ''
+  if (!domain) {
+    return undefined
+  }
+  const webUrl = utilsStore.config?.webUrl?.trim() || ''
+  let base = domain
+  if (!/^(https?:)?\/\//i.test(base)) {
+    base = `${window.location.protocol}//${base}`
+  }
+  if (webUrl) {
+    base = `${base}${webUrl.startsWith('/') ? '' : '/'}${webUrl}`
+  }
+  return base
+}
+
+const defaultIFormEmbedLink = computed(() => {
+  const channelId = (note.value?.channelId || '').trim()
+  const worldId = (chatStore.currentWorldId || '').trim()
+  if (!channelId || !worldId) {
+    return ''
+  }
+  const firstForm = iFormStore.formsByChannel[channelId]?.[0]
+  if (!firstForm?.id) {
+    return ''
+  }
+  return generateIFormEmbedLink(
+    {
+      worldId,
+      channelId,
+      formId: firstForm.id,
+      width: firstForm.defaultWidth,
+      height: firstForm.defaultHeight,
+    },
+    { base: resolveIFormEmbedLinkBase() },
+  )
+})
+
+const copyIFormEmbedLink = async () => {
+  const link = defaultIFormEmbedLink.value
+  if (!link) {
+    message.warning('当前频道暂无可复制 iForm')
+    return
+  }
+  const copied = await copyTextWithFallback(link)
+  if (copied) {
+    message.success('iForm 嵌入链接已复制')
+  } else {
+    message.error('复制失败')
+  }
+}
+
+const insertIFormEmbedLinkToSimple = () => {
+  const link = defaultIFormEmbedLink.value
+  if (!link) {
+    message.warning('当前频道暂无可插入 iForm')
+    return
+  }
+  localContent.value = localContent.value
+    ? `${localContent.value}
+${link}`
+    : link
+  debouncedSaveContent()
+}
+
 const creatorName = computed(() => {
   const creator = note.value?.creator
   return creator?.nickname || creator?.nick || creator?.name || '未知用户'
 })
+
+const lockOwnerName = computed(() => {
+  const lockUser = note.value?.editingLock?.user
+  return lockUser?.nickname || lockUser?.nick || lockUser?.name || lockUser?.id || ''
+})
+
+const isLockedByOther = computed(() => {
+  const lock = note.value?.editingLock
+  const userId = userStore.info?.id
+  if (!lock || !userId) return false
+  return lock.userId !== userId
+})
+
+const editingByOtherName = computed(() => {
+  if (!isLockedByOther.value) return ''
+  return lockOwnerName.value || '其他用户'
+})
+
+function generateEditingSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function clearAutoSaveTimer() {
+  if (autoSaveTimer.value) {
+    clearTimeout(autoSaveTimer.value)
+    autoSaveTimer.value = null
+  }
+}
+
+function scheduleAutoSaveAndRelease() {
+  clearAutoSaveTimer()
+  if (!isEditing.value) return
+  autoSaveTimer.value = setTimeout(() => {
+    void saveAndReleaseEditing({ autoReason: 'idle' })
+  }, AUTO_SAVE_IDLE_MS)
+}
+
+function markEditingActivity() {
+  if (!isEditing.value) return
+  scheduleAutoSaveAndRelease()
+}
+
+function getActiveSessionId() {
+  return currentEditSessionId.value || stickyNoteStore.getEditingSessionId(props.noteId) || undefined
+}
+
+async function saveTitleWithSession() {
+  if (!note.value || localTitle.value === note.value.title) return
+  const sessionId = getActiveSessionId()
+  const result = await stickyNoteStore.updateNoteWithOptions(props.noteId, { title: localTitle.value }, {
+    lockSessionId: sessionId
+  })
+  if (result.ok === false && result.conflict) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+  }
+}
+
+async function saveContentNowWithSession() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+    saveTimeout = null
+  }
+  if (!note.value || localContent.value === note.value.content) return
+  const sessionId = getActiveSessionId()
+  const result = await stickyNoteStore.updateNoteWithOptions(props.noteId, {
+    content: localContent.value,
+    contentText: localContent.value.replace(/<[^>]*>/g, '')
+  }, {
+    lockSessionId: sessionId
+  })
+  if (result.ok === false && result.conflict) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+  }
+}
+
+async function saveAndReleaseEditing(options?: { autoReason?: 'idle' | 'blur' | 'close' }) {
+  if (!isEditing.value) return
+  clearAutoSaveTimer()
+  await saveTitleWithSession()
+  await saveContentNowWithSession()
+  const sessionId = getActiveSessionId()
+  if (sessionId) {
+    await stickyNoteStore.releaseEditLock(props.noteId, sessionId)
+  }
+  stickyNoteStore.stopEditing(props.noteId)
+  currentEditSessionId.value = null
+  if (options?.autoReason === 'idle') {
+    message.info('便签已自动保存并释放编辑锁')
+  }
+}
+
+async function beginEditing() {
+  if (!note.value) return
+  if (isLockedByOther.value) {
+    message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+    return
+  }
+  localTitle.value = note.value.title || ''
+  localContent.value = note.value.content || ''
+  const sessionId = generateEditingSessionId()
+  const lockResult = await stickyNoteStore.acquireEditLock(props.noteId, sessionId)
+  if (!lockResult.ok) {
+    if (lockResult.conflict) {
+      message.warning(`${editingByOtherName.value || '其他用户'}正在编辑`)
+    } else {
+      message.error('获取编辑锁失败，请稍后重试')
+    }
+    return
+  }
+  currentEditSessionId.value = sessionId
+  stickyNoteStore.startEditing(props.noteId, sessionId)
+  scheduleAutoSaveAndRelease()
+  nextTick(() => {
+    markEditingActivity()
+  })
+}
+
+function handleEditorBlur() {
+  if (!isEditing.value) return
+  window.setTimeout(() => {
+    const root = noteEl.value
+    if (!root) return
+    const activeEl = document.activeElement as Node | null
+    if (activeEl && root.contains(activeEl)) {
+      return
+    }
+    void saveAndReleaseEditing({ autoReason: 'blur' })
+  }, 0)
+}
+
+function handleNoteFocusOut(event: FocusEvent) {
+  if (!isEditing.value) return
+  const root = noteEl.value
+  if (!root) return
+  const nextFocus = event.relatedTarget as Node | null
+  if (nextFocus && root.contains(nextFocus)) {
+    return
+  }
+  window.setTimeout(() => {
+    const activeEl = document.activeElement as Node | null
+    if (activeEl && root.contains(activeEl)) {
+      return
+    }
+    void saveAndReleaseEditing({ autoReason: 'blur' })
+  }, 0)
+}
+
+function handleWindowBlur() {
+  if (!isEditing.value) return
+  void saveAndReleaseEditing({ autoReason: 'blur' })
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState !== 'hidden') return
+  if (!isEditing.value) return
+  void saveAndReleaseEditing({ autoReason: 'blur' })
+}
 
 function buildPushTargetsKey() {
   const userId = userStore.info?.id
@@ -491,41 +833,31 @@ function handlePointerDown(e: PointerEvent) {
 
 function toggleEdit() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   } else {
-    localTitle.value = note.value?.title || ''
-    localContent.value = note.value?.content || ''
-    stickyNoteStore.startEditing(props.noteId)
+    void beginEditing()
   }
 }
 
 function saveTitle() {
-  if (note.value && localTitle.value !== note.value.title) {
-    stickyNoteStore.updateNote(props.noteId, { title: localTitle.value })
-  }
+  void saveTitleWithSession()
 }
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 function debouncedSaveContent() {
   if (saveTimeout) clearTimeout(saveTimeout)
+  markEditingActivity()
   saveTimeout = setTimeout(() => {
-    saveContentNow()
+    void saveContentNow()
   }, 500)
 }
 
-function saveContentNow() {
+async function saveContentNow() {
   if (saveTimeout) {
     clearTimeout(saveTimeout)
     saveTimeout = null
   }
-  if (note.value && localContent.value !== note.value.content) {
-    stickyNoteStore.updateNote(props.noteId, {
-      content: localContent.value,
-      contentText: localContent.value.replace(/<[^>]*>/g, '')
-    })
-  }
+  await saveContentNowWithSession()
 }
 
 function copyContent() {
@@ -569,23 +901,21 @@ async function pushToTargets() {
 }
 
 function changeColor(color: string) {
-  stickyNoteStore.updateNote(props.noteId, { color })
+  void stickyNoteStore.updateNoteWithOptions(props.noteId, { color }, {
+    lockSessionId: getActiveSessionId()
+  })
 }
 
 function minimize() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   }
   stickyNoteStore.minimizeNote(props.noteId)
 }
 
 function close() {
   if (isEditing.value) {
-    saveTitle()
-    saveContentNow()
-    stickyNoteStore.stopEditing()
+    void saveAndReleaseEditing({ autoReason: 'close' })
   }
   stickyNoteStore.closeNote(props.noteId)
 }
@@ -729,9 +1059,15 @@ watch(() => allTargetIds.value, () => {
 })
 
 onUnmounted(() => {
+  clearHighlightTimer()
+  chatEvent.off('sticky-note-highlight' as any, handleStickyNoteHighlight as any)
   if (saveTimeout) {
     clearTimeout(saveTimeout)
     saveTimeout = null
+  }
+  clearAutoSaveTimer()
+  if (isEditing.value) {
+    void saveAndReleaseEditing({ autoReason: 'close' })
   }
   document.removeEventListener('pointermove', onDrag)
   document.removeEventListener('pointerup', stopDrag)
@@ -739,7 +1075,14 @@ onUnmounted(() => {
   document.removeEventListener('pointermove', onResize)
   document.removeEventListener('pointerup', stopResize)
   document.removeEventListener('pointercancel', stopResize)
+  window.removeEventListener('blur', handleWindowBlur)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('blur', handleWindowBlur)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+}
 </script>
 
 <style scoped>
@@ -765,6 +1108,22 @@ onUnmounted(() => {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
 }
 
+.sticky-note--highlight {
+  animation: sticky-note-highlight-pulse 3s ease-out 1;
+}
+
+@keyframes sticky-note-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(64, 152, 252, 0.55), 0 6px 24px rgba(0, 0, 0, 0.24);
+  }
+  28% {
+    box-shadow: 0 0 0 4px rgba(64, 152, 252, 0.42), 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+}
+
 /* 颜色主题 */
 .sticky-note--yellow { background: linear-gradient(135deg, #fff9c4 0%, #fff59d 100%); }
 .sticky-note--pink { background: linear-gradient(135deg, #f8bbd9 0%, #f48fb1 100%); }
@@ -787,6 +1146,13 @@ onUnmounted(() => {
 .sticky-note__title {
   flex: 1;
   min-width: 0;
+}
+
+.sticky-note__lock-indicator {
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: #c62828;
+  font-weight: 600;
 }
 
 .sticky-note__title-text {
@@ -832,6 +1198,14 @@ onUnmounted(() => {
 .sticky-note__action-btn:hover {
   background: rgba(0, 0, 0, 0.15);
   color: rgba(0, 0, 0, 0.8);
+}
+
+.sticky-note__action-btn--disabled,
+.sticky-note__action-btn--disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.6);
 }
 
 .sticky-note__action-btn--close:hover {

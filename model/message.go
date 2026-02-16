@@ -11,7 +11,8 @@ const displayOrderBaseGap = 1024.0
 
 type MessageModel struct {
 	StringPKBaseModel
-	Content      string  `json:"content"`
+	Content    string `json:"content"`
+	WidgetData string `json:"widget_data" gorm:"type:text;not null;default:''"`
 	ChannelID    string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1"`
 	GuildID      string  `json:"guild_id" gorm:"null;size:100"`
 	MemberID     string  `json:"member_id" gorm:"null;size:100"`
@@ -40,6 +41,9 @@ type MessageModel struct {
 	ArchivedAt    *time.Time `json:"archived_at"`
 	ArchivedBy    string     `json:"archived_by" gorm:"size:100"`
 	ArchiveReason string     `json:"archive_reason" gorm:"size:255"`
+	IsPinned      bool       `json:"is_pinned" gorm:"default:false;index:idx_msg_pinned"`
+	PinnedAt      *time.Time `json:"pinned_at"`
+	PinnedBy      string     `json:"pinned_by" gorm:"size:100"`
 	IsDeleted     bool       `json:"is_deleted" gorm:"default:false;index:idx_msg_deleted"` // 删除后不再展示
 	DeletedAt     *time.Time `json:"deleted_at"`
 	DeletedBy     string     `json:"deleted_by" gorm:"size:100"`
@@ -82,6 +86,10 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	if m.DeletedAt != nil {
 		deletedAt = m.DeletedAt.UnixMilli()
 	}
+	var pinnedAt int64
+	if m.PinnedAt != nil {
+		pinnedAt = m.PinnedAt.UnixMilli()
+	}
 	msg := &protocol.Message{
 		ID:               m.ID,
 		Content:          m.Content,
@@ -99,9 +107,13 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 		ArchivedAt:       archivedAt,
 		ArchivedBy:       m.ArchivedBy,
 		ArchiveReason:    m.ArchiveReason,
+		IsPinned:         m.IsPinned,
+		PinnedAt:         pinnedAt,
+		PinnedBy:         m.PinnedBy,
 		IsDeleted:        m.IsDeleted,
 		DeletedAt:        deletedAt,
 		DeletedBy:        m.DeletedBy,
+		WidgetData:       m.WidgetData,
 		WhisperTo: func() *protocol.User {
 			if m.WhisperTarget != nil {
 				return m.WhisperTarget.ToProtocolType()

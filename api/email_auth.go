@@ -372,6 +372,18 @@ func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"error": "邮箱认证功能未启用"})
 	}
 
+	if model.UserExistsByUsername(req.Username) {
+		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "用户名已存在"})
+	}
+
+	exists, err := model.UserExistsByEmail(req.Email)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "邮箱检查失败，请稍后再试"})
+	}
+	if exists {
+		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "该邮箱已被注册"})
+	}
+
 	if err := svc.VerifySignupCode(req.Email, req.Code); err != nil {
 		switch err {
 		case model.ErrCodeNotFound, model.ErrCodeInvalid:
@@ -383,18 +395,6 @@ func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 		default:
 			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "验证失败，请稍后再试"})
 		}
-	}
-
-	if model.UserExistsByUsername(req.Username) {
-		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "用户名已存在"})
-	}
-
-	exists, err := model.UserExistsByEmail(req.Email)
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "邮箱检查失败，请稍后再试"})
-	}
-	if exists {
-		return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "该邮箱已被注册"})
 	}
 
 	nickname := req.Nickname

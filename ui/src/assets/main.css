@@ -24,6 +24,9 @@
   --chat-archived-border: rgba(203, 213, 225, 0.45);
   --chat-whisper-bg: #eef2ff;
   --chat-whisper-border: rgba(99, 102, 241, 0.35);
+  --chat-inline-code-bg: rgba(15, 23, 42, 0.08);
+  --chat-inline-code-fg: #0f172a;
+  --chat-inline-code-border: rgba(15, 23, 42, 0.12);
 
   --sc-bg-page: #f5f5f7;
   --sc-bg-surface: #ffffff;
@@ -77,6 +80,9 @@
   --chat-archived-border: rgba(255, 255, 255, 0.12);
   --chat-whisper-bg: #3b3248;
   --chat-whisper-border: rgba(210, 197, 255, 0.35);
+  --chat-inline-code-bg: rgba(248, 250, 252, 0.14);
+  --chat-inline-code-fg: #f4f4f5;
+  --chat-inline-code-border: rgba(244, 244, 245, 0.24);
 
   --sc-bg-page: #141418;
   --sc-bg-surface: #1b1b20;
@@ -113,6 +119,9 @@
 :root[data-custom-theme='true'] {
   --chat-dice-result-shadow: 0 1px 2px color-mix(in srgb, #000 22%, transparent),
     0 4px 10px color-mix(in srgb, #000 18%, transparent);
+  --chat-inline-code-bg: color-mix(in srgb, var(--chat-text-primary, #0f172a) 12%, transparent);
+  --chat-inline-code-fg: var(--chat-text-primary, #0f172a);
+  --chat-inline-code-border: color-mix(in srgb, var(--chat-text-primary, #0f172a) 24%, transparent);
 }
 
 :root[data-display-layout='compact'] {
